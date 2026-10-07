@@ -96,6 +96,10 @@ static void port_stage_replace_init(void) {
 int __wrap_Progress_Main(int arg) {
     const char *path;
     PortStages_Init();
+    {
+        extern void PortCharas_Init(void); /* plat_charas.c: the characters folder */
+        PortCharas_Init();
+    }
     PortSongs_Init();
     port_stage_replace_init();
     path = getenv("BT3_REPLAY");

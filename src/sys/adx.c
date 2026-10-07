@@ -304,9 +304,9 @@ void Voice_PlayCharaEx(s32 voice, s32 chara, s32 line, s32 vol, s32 pan) {
     s32 id;
 
     if (gSaveData->flags & SAVE_FLAG_ALT_VOICE) {
-        id = VOICE_CHARA_BASE_ALT + (chara * VOICE_CHARA_LINES + line);
+        id = VOICE_CHARA_BASE_ALT + (CHARA_T(chara) * VOICE_CHARA_LINES + line);
     } else {
-        id = VOICE_CHARA_BASE + (chara * VOICE_CHARA_LINES + line);
+        id = VOICE_CHARA_BASE + (CHARA_T(chara) * VOICE_CHARA_LINES + line);
     }
     Adx_Play(voice + ADX_CH_VOICE0, id, vol, pan);
 }

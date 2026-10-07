@@ -229,7 +229,8 @@ int Port_StageBufSize(void) {
    would overrun the buffer and corrupt the game's heap, which showed as a crash seconds later). */
 int Port_StageFits(const char *rel, long size) {
     int index = -1;
-    if (strncmp(rel, "pzs3us2/", 8) == 0 && sscanf(rel + 8, "%d", &index) == 1 && index >= PORT_STAGE_FILE_INDEX) {
+    if (strncmp(rel, "pzs3us2/", 8) == 0 && sscanf(rel + 8, "%d", &index) == 1 && index >= PORT_STAGE_FILE_INDEX &&
+        index < PORT_STAGE_FILE_INDEX + PORT_STAGE_MAX) {
         return size <= Port_StageBufSize(); /* an added stage */
     }
     if (strncmp(rel, "pzs3us1/", 8) != 0 || sscanf(rel + 8, "%d", &index) != 1) {

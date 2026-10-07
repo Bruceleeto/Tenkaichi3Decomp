@@ -645,7 +645,7 @@ void BtlPartner_HandleEvents(FxObj *obj, FxChr *chr) {
         }
     }
     if (kind >= 0) {
-        BtlCharSnd_RequestAt(&pos, 7, sound + obj->chara * 100 + kind, 200.0f, 1500.0f);
+        BtlCharSnd_RequestAt(&pos, 7, sound + CHARA_T(obj->chara) * 100 + kind, 200.0f, 1500.0f);
     }
     if (mask >= 0) {
         BtlObj_SetSubState(obj, 2, mask);
@@ -663,11 +663,11 @@ void BtlPartner_HandleEvents(FxObj *obj, FxChr *chr) {
     }
     if (on >= 0) {
         if (BtlObjAnim_TestEvent(obj, 0x8000)) {
-            BtlCharSnd_RequestAt(&pos, 7, sound + *BtlMember_GetActive(chr) * 100 + on, 200.0f, 1500.0f);
+            BtlCharSnd_RequestAt(&pos, 7, sound + CHARA_T(*BtlMember_GetActive(chr)) * 100 + on, 200.0f, 1500.0f);
             BtlObj_SetSubState(obj, 2, on);
         }
         if (BtlObjAnim_TestEvent(obj, 0x8000000000)) {
-            BtlCharSnd_RequestAt(&pos, 7, sound + (on + *BtlMember_GetActive(chr) * 100) + 1, 200.0f, 1500.0f);
+            BtlCharSnd_RequestAt(&pos, 7, sound + (on + CHARA_T(*BtlMember_GetActive(chr)) * 100) + 1, 200.0f, 1500.0f);
             BtlObj_SetSubState(obj, 2, on + 1);
         }
     }

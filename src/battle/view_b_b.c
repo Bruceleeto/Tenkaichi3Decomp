@@ -21,10 +21,10 @@ s32 ChrTbl_WrapCostume(s32 chara, s32 *costume) {
     ChrTblFile *file = CHRTBL_FILE;
     ChrTblEntry *table = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
 
-    if (costume != NULL && !(*costume < table[chara].costumes)) {
+    if (costume != NULL && !(*costume < table[CHARA_T(chara)].costumes)) {
         *costume = 0;
     }
-    return table[chara].costumes;
+    return table[CHARA_T(chara)].costumes;
 }
 
 /* The character's cost. */
@@ -32,7 +32,7 @@ s32 ChrTbl_GetCost(s32 chara) {
     ChrTblFile *file = CHRTBL_FILE;
     ChrTblEntry *table = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
 
-    return table[chara].cost;
+    return table[CHARA_T(chara)].cost;
 }
 
 /* The character's level: the table's base plus the saved level of a customisation slot or of a record. */
@@ -48,7 +48,7 @@ s32 ChrTbl_GetLevel(s32 chara, s32 slot, s32 fromRec) {
     }
     file = CHRTBL_FILE;
     table = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
-    return table[chara].baseLevel + level;
+    return table[CHARA_T(chara)].baseLevel + level;
 }
 
 /* The experience value of the level the customisation slot has reached. */
@@ -56,7 +56,7 @@ s32 ChrTbl_GetExp(s32 chara, s32 slot) {
     ChrTblFile *file = CHRTBL_FILE;
     ChrTblEntry *table = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
 
-    return table[chara].exp[gSaveData->custom[slot].level];
+    return table[CHARA_T(chara)].exp[gSaveData->custom[slot].level];
 }
 
 /* The last experience value of the character's list. */
@@ -67,8 +67,8 @@ s32 ChrTbl_GetMaxExp(s32 chara) {
     s32 max = 0;
 
     for (i = 0; i < CHRTBL_EXP_COUNT; i++) {
-        if (table[chara].exp[i] != 0) {
-            max = table[chara].exp[i];
+        if (table[CHARA_T(chara)].exp[i] != 0) {
+            max = table[CHARA_T(chara)].exp[i];
         } else {
             break;
         }
@@ -188,7 +188,7 @@ void ItemSet_GetStats(u16 *ids, s32 *stats, s32 *ability, s32 chara) {
         if (chara < 0) {
             stats[4] = 0;
         } else {
-            stats[4] = charas[chara].aiType;
+            stats[4] = charas[CHARA_T(chara)].aiType;
         }
     }
 }
@@ -237,7 +237,7 @@ s32 ItemTbl_CanEquip(s32 item, s32 chara, ItemTblEntry *table) {
     }
     file = CHRTBL_FILE;
     charas = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
-    if (charas[chara].flags & CHRTBL_FLAG_0) {
+    if (charas[CHARA_T(chara)].flags & CHRTBL_FLAG_0) {
         if (flags & ITEMTBL_FLAG_8) {
             return 1;
         }

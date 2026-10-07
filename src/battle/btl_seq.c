@@ -816,21 +816,21 @@ s32 BtlSeqIntroTalk_Setup(BtlSeqTalkCtx *ctx) {
     u8 *tbl1 = obj1->talkTbl;
 
     if (tbl0 != NULL && tbl1 != NULL) {
-        if (tbl0[obj1->chara * 4] != 0xFF) {
-            if (tbl0[obj1->chara * 4 + 1] == 0) {
+        if (tbl0[CHARA_T(obj1->chara) * 4] != 0xFF) {
+            if (tbl0[CHARA_T(obj1->chara) * 4 + 1] == 0) {
                 ctx->side[0] = 0;
                 ctx->side[1] = 1;
                 ctx->chara[0] = obj0->chara;
                 ctx->chara[1] = obj1->chara;
-                ctx->line[0] = tbl0[obj1->chara * 4] + 6;
-                ctx->line[1] = tbl1[obj0->chara * 4] + 6;
+                ctx->line[0] = tbl0[CHARA_T(obj1->chara) * 4] + 6;
+                ctx->line[1] = tbl1[CHARA_T(obj0->chara) * 4] + 6;
             } else {
                 ctx->side[1] = 0;
                 ctx->side[0] = 1;
                 ctx->chara[0] = obj1->chara;
                 ctx->chara[1] = obj0->chara;
-                ctx->line[0] = tbl1[obj0->chara * 4] + 6;
-                ctx->line[1] = tbl0[obj1->chara * 4] + 6;
+                ctx->line[0] = tbl1[CHARA_T(obj0->chara) * 4] + 6;
+                ctx->line[1] = tbl0[CHARA_T(obj1->chara) * 4] + 6;
             }
         } else {
             ctx->side[0] = 0;
@@ -986,10 +986,10 @@ s32 BtlSeqWinTalk_Setup(BtlSeqTalkCtx *ctx) {
             ctx->line[0] = rand() % 2 + 3;
             ctx->step = 0;
         } else {
-            if (winTbl[loseObj->chara * 4 + 2] != 0xFF) {
+            if (winTbl[CHARA_T(loseObj->chara) * 4 + 2] != 0xFF) {
                 ctx->side[0] = winner;
                 ctx->chara[0] = winObj->chara;
-                ctx->line[0] = winTbl[loseObj->chara * 4 + 2] + 0x1E;
+                ctx->line[0] = winTbl[CHARA_T(loseObj->chara) * 4 + 2] + 0x1E;
                 ctx->step = 0;
             } else {
                 ctx->side[0] = winner;

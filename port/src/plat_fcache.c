@@ -39,7 +39,9 @@ static int slot_of(const char *rel) {
         char target[256];
         fp = NULL;
         extern int PortSongs_Alias(const char *rel, char *out, unsigned n); /* plat_songs.c: the same for a song */
-        if (PortStages_Alias(rel, target, (unsigned)sizeof(target)) || PortSongs_Alias(rel, target, (unsigned)sizeof(target))) {
+        extern int PortCharas_Alias(const char *rel, char *out, unsigned n); /* plat_charas.c: an added character's files */
+        if (PortStages_Alias(rel, target, (unsigned)sizeof(target)) || PortSongs_Alias(rel, target, (unsigned)sizeof(target)) ||
+            PortCharas_Alias(rel, target, (unsigned)sizeof(target))) {
             snprintf(path, sizeof(path), "%s", target); /* as it is (the stages / songs folder), or in the data */
             fp = fopen(path, "rb");
             if (fp == NULL) {

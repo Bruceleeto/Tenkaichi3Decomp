@@ -453,7 +453,7 @@ void BtlObj_Setup(BtlObj *obj, s32 type, BtlResSlot *res, s32 id, s32 active) {
     BtlObjMdl_Create(type, obj, res);
     obj->active = active;
     obj->id = id;
-    obj->chara = (res->file[0].id - 0x590) / 10;
+    obj->chara = CHARA_FROM_FILE(res->file[0].id);
     BtlObj_InitChains(obj);
 }
 
@@ -514,11 +514,11 @@ s32 BtlObj_RequestCharaModel(s32 side, s32 chara, s32 costume, s32 variant) {
     s32 model;
 
     if (variant != 0) {
-        model = chara * 10 + costume + 0x594;
+        model = CHARA_FILE10(chara) + costume + 0x594;
     } else {
-        model = chara * 10 + costume + 0x590;
+        model = CHARA_FILE10(chara) + costume + 0x590;
     }
-    return BtlRes_Request(1, model, chara * 10 + 0x598, chara * 10 + 0x599);
+    return BtlRes_Request(1, model, CHARA_FILE10(chara) + 0x598, CHARA_FILE10(chara) + 0x599);
 }
 
 /* Returns the work block. */

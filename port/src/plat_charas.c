@@ -1,0 +1,221 @@
+/*
+ * Characters added from outside the disc.
+ *
+ * `characters/<Name>/` next to the game ($BT3_CHARACTERS names another folder) holds one character as the
+ * community's packs have it, files in the game's own format named by what they are:
+ *
+ *   *_1p.pak .. *_4p.pak            the model of costume 1..4       (the disc's file 0x590 + id * 10 + 0..3)
+ *   *_1p_dmg.pak .. *_4p_dmg.pak    the damaged model of the same   (+ 4..7)
+ *   *_anm.pak, *_eff.pak            animations, effects             (+ 8, + 9)
+ *   *_Voice_US.pak, *_Voice_JP.pak  the voice bank in each language (0xBDA + id, 0xC7B + id)
+ *
+ * (Seen in one pack, 2026-10-08: "Gokhan_0_1p.pak" and so on, eight files; the same layout as the disc's.) The
+ * folders, by name, become the characters 0xA5, 0xA6, ... (include/port_chara.h). The game asks for an added
+ * character's files by ids past the end of the second archive, and they are answered here: with the folder's
+ * file, or where it has none with the file of the character's BASE character, one of the disc's, which also
+ * stands for it in every table (health, cost, AI, what is said to whom). `base.txt` in the folder holds the base
+ * character's id (0..160); without it the base is character 0.
+ */
+#include <ctype.h>
+#include <dirent.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#include "plat_charas.h"
+
+extern int PortExtras_Dir(const char *kind, const char *env, char *out, unsigned size); /* plat_extras.c */
+
+enum { F_ANM = 8, F_EFF = 9, F_VOICE = 10, F_COUNT = 12 };
+
+typedef struct {
+    char name[64];
+    char file[F_COUNT][400]; /* "" where the folder has none */
+    int base;
+    int costumes;
+} Chara;
+
+static Chara sChara[PORT_CHARA_MAX];
+static int sCount;
+static int sInit;
+
+/* which of the twelve files a name is, by its ending; -1 if none */
+static int kind_of(const char *name) {
+    static const struct { const char *end; int kind; } kEnds[] = {
+        {"_1p.pak", 0}, {"_2p.pak", 1}, {"_3p.pak", 2}, {"_4p.pak", 3},
+        {"_1p_dmg.pak", 4}, {"_2p_dmg.pak", 5}, {"_3p_dmg.pak", 6}, {"_4p_dmg.pak", 7},
+        {"_anm.pak", F_ANM}, {"_eff.pak", F_EFF}, {"_voice_us.pak", F_VOICE}, {"_voice_jp.pak", F_VOICE + 1},
+    };
+    size_t l = strlen(name), i, k;
+    for (i = 0; i < sizeof(kEnds) / sizeof(kEnds[0]); i++) {
+        size_t el = strlen(kEnds[i].end);
+        if (l < el) {
+            continue;
+        }
+        for (k = 0; k < el && tolower((unsigned char)name[l - el + k]) == kEnds[i].end[k]; k++) {
+        }
+        if (k == el) {
+            return kEnds[i].kind;
+        }
+    }
+    return -1;
+}
+
+static int name_cmp(const void *a, const void *b) {
+    const unsigned char *x = a, *y = b;
+    for (; *x != '\0' && tolower(*x) == tolower(*y); x++, y++) {
+    }
+    return tolower(*x) != tolower(*y) ? tolower(*x) - tolower(*y) : strcmp(a, b);
+}
+
+static void add(const char *root, const char *name) {
+    Chara *c = &sChara[sCount];
+    char path[400];
+    DIR *d;
+    struct dirent *de;
+    FILE *f;
+    int k;
+
+    snprintf(path, sizeof(path), "%s/%s", root, name);
+    d = opendir(path);
+    if (d == NULL) {
+        return;
+    }
+    memset(c, 0, sizeof(*c));
+    snprintf(c->name, sizeof(c->name), "%s", name);
+    while ((de = readdir(d)) != NULL) {
+        k = kind_of(de->d_name);
+        if (k >= 0 && c->file[k][0] == '\0') {
+            snprintf(c->file[k], sizeof(c->file[k]), "%s/%s", path, de->d_name);
+        }
+    }
+    closedir(d);
+    if (c->file[0][0] == '\0') { /* no first costume: not a character's folder */
+        return;
+    }
+    for (c->costumes = 1; c->costumes < 4 && c->file[c->costumes][0] != '\0'; c->costumes++) {
+    }
+    snprintf(path, sizeof(path), "%s/%s/base.txt", root, name);
+    f = fopen(path, "r");
+    if (f != NULL) {
+        if (fscanf(f, "%d", &c->base) != 1 || c->base < 0 || c->base > 160) {
+            fprintf(stderr, "bt3: characters: %s: base.txt has no character id from 0 to 160; 0 is used\n", name);
+            c->base = 0;
+        }
+        fclose(f);
+    }
+    sCount++;
+}
+
+void PortCharas_Init(void) {
+    static char names[64][128];
+    char root[300];
+    DIR *d;
+    struct dirent *de;
+    int n = 0, i;
+
+    if (sInit) {
+        return;
+    }
+    sInit = 1;
+    if (!PortExtras_Dir("characters", "BT3_CHARACTERS", root, sizeof(root))) {
+        return;
+    }
+    d = opendir(root);
+    if (d == NULL) {
+        return;
+    }
+    while ((de = readdir(d)) != NULL && n < 64) {
+        if (de->d_name[0] != '.' && strlen(de->d_name) < 64) {
+            snprintf(names[n++], 128, "%s", de->d_name);
+        }
+    }
+    closedir(d);
+    qsort(names, (size_t)n, 128, name_cmp); /* by name: the same order on every machine */
+    for (i = 0; i < n && sCount < PORT_CHARA_MAX; i++) {
+        add(root, names[i]);
+    }
+    if (sCount > 0) {
+        fprintf(stderr, "bt3: characters: %d added from %s\n", sCount, root);
+        for (i = 0; i < sCount; i++) {
+            fprintf(stderr, "bt3: characters:   %s: id %d, %d costume%s, base character %d\n", sChara[i].name, PORT_CHARA_FIRST + i,
+                    sChara[i].costumes, sChara[i].costumes == 1 ? "" : "s", sChara[i].base);
+        }
+    }
+}
+
+int Port_CharaCount(void) {
+    PortCharas_Init();
+    return sCount;
+}
+
+int Port_CharaBase(int chara) {
+    PortCharas_Init();
+    if (chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + sCount) {
+        return sChara[chara - PORT_CHARA_FIRST].base;
+    }
+    return chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + PORT_CHARA_MAX ? 0 : chara; /* (an id nothing is behind) */
+}
+
+int Port_CharaCostumes(int chara) {
+    PortCharas_Init();
+    return chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + sCount ? sChara[chara - PORT_CHARA_FIRST].costumes : 0;
+}
+
+const char *Port_CharaName(int index) {
+    PortCharas_Init();
+    return index >= 0 && index < sCount ? sChara[index].name : "";
+}
+
+int PortCharas_Alias(const char *rel, char *out, unsigned n) {
+    int index = -1, who, k;
+    const Chara *c;
+
+    if (strncmp(rel, "pzs3us2/", 8) != 0 || sscanf(rel + 8, "%d", &index) != 1 || index < PORT_CHARA_FILE_INDEX) {
+        return 0;
+    }
+    PortCharas_Init();
+    if (index < PORT_CHARA_FILE_INDEX + PORT_CHARA_MAX * 10) {
+        who = (index - PORT_CHARA_FILE_INDEX) / 10;
+        k = (index - PORT_CHARA_FILE_INDEX) % 10;
+    } else if (index >= PORT_CHARA_VOICE_INDEX && index < PORT_CHARA_VOICE_INDEX + PORT_CHARA_MAX * 2) {
+        who = (index - PORT_CHARA_VOICE_INDEX) / 2;
+        k = F_VOICE + (index - PORT_CHARA_VOICE_INDEX) % 2;
+    } else {
+        return 0;
+    }
+    c = &sChara[who < sCount ? who : 0];
+    if (who >= sCount) { /* an id nothing is behind (a save or a replay of another set-up): the first character of the disc */
+        snprintf(out, n, k >= F_VOICE ? "pzs3us1/%05d.bin" : "pzs3us1/%05d.bin", k >= F_VOICE ? (k == F_VOICE ? 3033 : 3194) : 1423 + k);
+        return 1;
+    }
+    if (c->file[k][0] == '\0' && k >= 4 && k < 8 && c->file[k - 4][0] != '\0') {
+        k -= 4; /* no damaged model: the costume as it is */
+    }
+    if (c->file[k][0] == '\0' && k >= F_VOICE && c->file[F_VOICE + (F_VOICE + 1 - k)][0] != '\0') {
+        k = F_VOICE + (F_VOICE + 1 - k); /* one language only: that one for both */
+    }
+    if (c->file[k][0] != '\0') {
+        snprintf(out, n, "%s", c->file[k]);
+    } else if (k >= F_VOICE) { /* the base character's: the disc's 0xBDA + id and 0xC7B + id */
+        snprintf(out, n, "pzs3us1/%05d.bin", (k == F_VOICE ? 3033 : 3194) + c->base);
+    } else {                   /* the disc's 0x590 + id * 10 + k */
+        snprintf(out, n, "pzs3us1/%05d.bin", 1423 + c->base * 10 + k);
+    }
+    return 1;
+}
+
+/* BT3_TEST_CHARA=<id>[,<id>]: the first fighter of side 0 (and of side 1) of every battle the menus set up is
+   that character, whatever was chosen (testing: a recorded session then plays on an added character). */
+int Port_TestChara(int side) {
+    const char *e = getenv("BT3_TEST_CHARA"), *comma;
+    if (e == NULL || e[0] == '\0') {
+        return -1;
+    }
+    comma = strchr(e, ',');
+    if (side == 0) {
+        return (int)strtol(e, NULL, 0);
+    }
+    return comma != NULL ? (int)strtol(comma + 1, NULL, 0) : -1;
+}

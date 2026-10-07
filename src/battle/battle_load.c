@@ -329,9 +329,9 @@ s32 BtlLoad_StepObject(BtlJob *job) {
         id = job->chara + BTL_FILE_OBJECT;
         if (job->chara < 0x100) {
             if (job->unk1C != 0) {
-                id = job->chara * 10 + job->animChara + (BTL_FILE_CHARA + 4);
+                id = CHARA_FILE10(job->chara) + job->animChara + (BTL_FILE_CHARA + 4);
             } else {
-                id = job->chara * 10 + job->animChara + BTL_FILE_CHARA;
+                id = CHARA_FILE10(job->chara) + job->animChara + BTL_FILE_CHARA;
             }
         }
         gBtlLoadHandle = BtlRes_Request(0, id, -1, -1);
@@ -398,14 +398,14 @@ s32 BtlLoad_StepChara(BtlJob *job) {
     switch (job->state) {
     case 0:
         if (job->variant != 0) {
-            model = job->chara * 10 + job->costume + (BTL_FILE_CHARA + 4);
+            model = CHARA_FILE10(job->chara) + job->costume + (BTL_FILE_CHARA + 4);
         } else {
-            model = job->chara * 10 + job->costume + BTL_FILE_CHARA;
+            model = CHARA_FILE10(job->chara) + job->costume + BTL_FILE_CHARA;
         }
         if (job->modelOnly == 0) {
-            file8 = job->animChara * 10 + (BTL_FILE_CHARA + 8);
-            file9 = job->unk1C * 10 + (BTL_FILE_CHARA + 9);
-            voice = job->voiceChara + ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE);
+            file8 = CHARA_FILE10(job->animChara) + (BTL_FILE_CHARA + 8);
+            file9 = CHARA_FILE10(job->unk1C) + (BTL_FILE_CHARA + 9);
+            voice = CHARA_VOICE_FILE(job->voiceChara, ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE), gSaveData->flags & SAVE_FLAG_VOICE);
             BtlRes_Reload(BattleSide_GetModelSlot(job->side), model, file8, file9);
             res->bank = File_Request3(voice, res->bank, res->bankSize);
             if (!BtlCtrl_IsSwitching(job->side)) {
@@ -416,7 +416,7 @@ s32 BtlLoad_StepChara(BtlJob *job) {
                     member = BtlSide_GetActiveMember(job->side);
                 }
                 next = BattleSide_GetMember(job->side, member);
-                next->buf[1] = File_Request3(job->chara * 2 + job->side + BTL_FILE_CHARA_DATA, next->buf[1], BTL_MEMBER_BUF_SIZE);
+                next->buf[1] = File_Request3(CHARA_T(job->chara) * 2 + job->side + BTL_FILE_CHARA_DATA, next->buf[1], BTL_MEMBER_BUF_SIZE);
             }
         } else {
             BtlRes_Reload(BattleSide_GetModelSlot(job->side), model, -1, -1);
@@ -500,8 +500,8 @@ s32 BtlLoad_StepInitial(BtlJob *job) {
     case 0:
         res->sndCommon = File_Request3(BTL_FILE_SND_COMMON, NULL, 0);
         res->sndStage = File_Request3(BTL_STAGE_BANK(Battle_GetStartStage()), NULL, 0);
-        res->sndChara[0] = File_Request3(BattleSide_GetStartChara(0) + ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE), NULL, 0);
-        res->sndChara[1] = File_Request3(BattleSide_GetStartChara(1) + ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE), NULL, 0);
+        res->sndChara[0] = File_Request3(CHARA_VOICE_FILE(BattleSide_GetStartChara(0), ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE), gSaveData->flags & SAVE_FLAG_VOICE), NULL, 0);
+        res->sndChara[1] = File_Request3(CHARA_VOICE_FILE(BattleSide_GetStartChara(1), ((gSaveData->flags & SAVE_FLAG_VOICE) ? BTL_FILE_VOICE_ALT : BTL_FILE_VOICE), gSaveData->flags & SAVE_FLAG_VOICE), NULL, 0);
         job->state++;
         return 0;
     case 1:
@@ -590,7 +590,7 @@ s32 BtlLoad_StepInitial(BtlJob *job) {
         for (side = 0; side < 2; side++) {
             for (i = 0; (u32)i < (u32)BattleSide_GetMemberCount(side); i++) {
                 m = BattleSide_GetMember(side, i);
-                m->buf[0] = File_Request3(m->chara * 2 + side + BTL_FILE_CHARA_DATA, m->buf[0], BTL_MEMBER_BUF_SIZE);
+                m->buf[0] = File_Request3(CHARA_T(m->chara) * 2 + side + BTL_FILE_CHARA_DATA, m->buf[0], BTL_MEMBER_BUF_SIZE);
             }
         }
         res->unk8 = File_Request3(gProgress->unk0[0] + 6, NULL, 0);
@@ -1584,6 +1584,15 @@ void BattleSetup_SetMemberByItemIds(s32 sideNo, s32 idx, s32 chara, s32 costume,
 /* Sets one team member (items: 1-based u16 ids or NULL). */
 void BattleSetup_SetMember(s32 sideNo, s32 idx, s32 chara, s32 costume, s32 variant, s32 cpuLevel, f32 health,
                            BattleItemSet *items) {
+#ifdef PORT
+    {
+        extern int Port_TestChara(int side); /* port/src/plat_charas.c: BT3_TEST_CHARA=<id> (testing), else -1 */
+        if (idx == 0 && Port_TestChara(sideNo) >= 0) {
+            chara = Port_TestChara(sideNo);
+            costume = 0;
+        }
+    }
+#endif
     BtlMember_Init(Member(sideNo, idx), chara, costume, variant, cpuLevel, health, items);
 }
 

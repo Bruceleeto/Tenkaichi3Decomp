@@ -447,7 +447,7 @@ void BtlChar_OnModelLoaded(BtlMgrChr *chr) {
             }
             g->health += og->health;
             g->healthMax += og->healthMax;
-            g->blastMax = gBtlChars->tbl[4][m->chara * 4 + 3] * 100000;
+            g->blastMax = gBtlChars->tbl[4][CHARA_T(m->chara) * 4 + 3] * 100000;
             if (BtlParam_GetUnkAD(chr) & 1) {
                 g->health += 5000;
             }
