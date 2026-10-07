@@ -219,3 +219,9 @@ int Port_TestChara(int side) {
     }
     return comma != NULL ? (int)strtol(comma + 1, NULL, 0) : -1;
 }
+
+/* BT3_TEST_CELL: the character select starts with side 0's cursor on the first added character (testing). */
+int Port_TestCell(void) {
+    const char *e = getenv("BT3_TEST_CELL");
+    return e != NULL && e[0] != '\0';
+}

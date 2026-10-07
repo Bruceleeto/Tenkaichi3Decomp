@@ -292,6 +292,13 @@ typedef struct ViewProgress {
 #define CHRGRID_ID_CUSTOM 0xA3   /* the saved custom characters: selectable like a character */
 #define CHRGRID_ID_EMPTY 0xA4    /* filler: the cursor skips it */
 #define CHRGRID_ID_RANDOM 0xA1   /* the "random" cell (first marker id: ids >= 0xA1 are not characters) */
+/* `id >= first` of the cursor's tests, for the marker ids only: on PC the ids after the last marker (0xA4) are
+   the characters added from outside the disc (include/port_chara.h). */
+#ifdef PORT
+#define CHRGRID_IS_MARKER_FROM(id, first) ((id) >= (first) && (id) <= 0xA4)
+#else
+#define CHRGRID_IS_MARKER_FROM(id, first) ((id) >= (first))
+#endif
 #define CHRGRID_FORM_MAX 7
 
 /* A cell of the character grid. */

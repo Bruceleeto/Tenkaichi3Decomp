@@ -21,6 +21,16 @@ s32 ChrTbl_WrapCostume(s32 chara, s32 *costume) {
     ChrTblFile *file = CHRTBL_FILE;
     ChrTblEntry *table = (ChrTblEntry *)CHRTBL_SECTION(file, charaOffset);
 
+#ifdef PORT
+    if (PORT_CHARA_ADDED(chara)) { /* PC build: as many costumes as the character's folder has */
+        extern int Port_CharaCostumes(int chara);
+        s32 n = Port_CharaCostumes(chara);
+        if (costume != NULL && !(*costume < n)) {
+            *costume = 0;
+        }
+        return n;
+    }
+#endif
     if (costume != NULL && !(*costume < table[CHARA_T(chara)].costumes)) {
         *costume = 0;
     }

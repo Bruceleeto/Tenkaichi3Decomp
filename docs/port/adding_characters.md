@@ -8,7 +8,11 @@ community character pack as it comes, each taking a slot of its own instead of r
 - Battle side: works. With `BT3_TEST_CHARA=165` the recorded two-player session plays to its end with the pack's
   character on side 0: its model, animations, effects and voice bank are read from the folder, the rest from the
   base character; seen on screen (the model, its moves, hits).
-- Menus: nothing yet. The character select does not list an added character.
+- The duel's character select: an added character has a cell after the disc's (in the last row's filler cells,
+  then rows of its own), with its base character's chip, portrait and name for now, the folder's number of
+  costumes, and no item sets. Chosen there with a recorded session (`BT3_TEST_CELL=1` starts the cursor on it),
+  the fight is the same as with `BT3_TEST_CHARA`; seen on screen. With a character installed and not chosen,
+  the recorded session ends as it always does.
 
 ## The pack format (seen in one pack, "Gokhan", 2026-10-08)
 
@@ -68,7 +72,7 @@ no icon, no name, no parameter file and no streamed voice lines.
 
 ## Not done
 
-The character select (a cell, the chip, the portrait, the name, the costume count, no item sets, the id handed
-to the battle); the team select and the other screens; the HUD's face (the test run showed the recorded
+The character's own name, chip and portrait on the character select; the cursor reaching the cell by hand
+(only the test option was used); the team select and the other screens; the HUD's face (the test run showed the recorded
 choice's); transformations into or from an added character; hiding them in an online session; zip files; which
 base a pack expects.

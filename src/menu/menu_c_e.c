@@ -127,7 +127,7 @@ void CharSel_SetRowChips(s32 side) {
 
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, id + 1);
+        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -149,7 +149,7 @@ void CharSel_SetCellFormChips(s32 side) {
         }
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, id + 1);
+        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -166,7 +166,7 @@ void CharSel_SetCustomChips(s32 side) {
 
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, id + 1);
+        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -188,7 +188,7 @@ void CharSel_SetFormChips(s32 side) {
         }
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, id + 1);
+        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -213,7 +213,7 @@ void CharSel_UpdateFaceLoad(void) {
         break;
     case CHARSEL_LOAD_REQUEST:
         File_CancelRequests();
-        File_Request(gCharSel->side[gCharSel->faceSide]->chara + CHARSEL_FACE_FILE,
+        File_Request(CHARA_T(gCharSel->side[gCharSel->faceSide]->chara) + CHARSEL_FACE_FILE,
                      gCharSel->faceFile[gCharSel->faceSide], 0x16800);
         gCharSel->faceState = CHARSEL_LOAD_READ;
         break;
@@ -665,6 +665,31 @@ void CharSel_Init(s32 section) {
     for (i = 0, cols = MCHR_COLS; i < CHARSEL_SIDES; i++) {
         ChrGrid_Build(&gCharSel->cellCount[i], gCharSel->grid[i], &gCharSel->masterCount[i], gCharSel->cells[i],
                       &gCharSel->customCount[i], gCharSel->custom[i]);
+#ifdef PORT
+        {
+            /* PC build: the characters added from outside the disc (port/src/plat_charas.c), one cell each after
+               the disc's, in the place of the last row's filler cells and then in rows of their own. They are put
+               in here, after the game has made its list from the disc's and the save's unlocks, and are never
+               looked up in the save. Not in an online session: both players must have the same list. */
+            extern int Port_CharaCount(void);
+            extern int Port_NetSession(void);
+            s32 added = Port_NetSession() ? 0 : Port_CharaCount(), n = gCharSel->cellCount[i], k;
+            while (added > 0 && n > 0 && gCharSel->grid[i][n - 1].id == MCHR_EMPTY) {
+                n--;
+            }
+            for (k = 0; k < added && n < MCHR_CELL_MAX - MCHR_COLS; k++, n++) {
+                memset(&gCharSel->grid[i][n], 0, sizeof(gCharSel->grid[i][n]));
+                gCharSel->grid[i][n].id = PORT_CHARA_FIRST + k;
+            }
+            for (; added > 0 && n % MCHR_COLS != 0; n++) {
+                memset(&gCharSel->grid[i][n], 0, sizeof(gCharSel->grid[i][n]));
+                gCharSel->grid[i][n].id = MCHR_EMPTY;
+            }
+            if (added > 0) {
+                gCharSel->cellCount[i] = n;
+            }
+        }
+#endif
         gCharSel->masterCount[i] = gCharSel->cellCount[i];
         gCharSel->cells[i] = gCharSel->grid[i];
         gCharSel->rows[i] = gCharSel->masterCount[i] / cols;
@@ -686,6 +711,22 @@ void CharSel_Init(s32 section) {
     gCharSel->stage = &gCharSel->stageData;
     *(CharSelPick *)gCharSel->side[0] = CSPROG->side[0].pick;
     *(CharSelPick *)gCharSel->side[1] = CSPROG->side[1].pick;
+#ifdef PORT
+    {
+        /* PC build, testing (BT3_TEST_CELL): side 0's cursor starts on the first added character's cell, so that a
+           recorded session that only confirms chooses it. */
+        extern int Port_TestCell(void);
+        s32 k;
+        for (k = 0; Port_TestCell() && k < gCharSel->cellCount[0]; k++) {
+            if (PORT_CHARA_ADDED(gCharSel->cells[0][k].id)) {
+                memset(gCharSel->side[0], 0, 0x30);
+                gCharSel->side[0]->col = k % MCHR_COLS;
+                gCharSel->side[0]->row = k / MCHR_COLS;
+                break;
+            }
+        }
+    }
+#endif
     gCharSel->players = CSPROG->players;
     stageCols = 6;
     stageRows = 6;
@@ -718,7 +759,7 @@ void CharSel_Init(s32 section) {
     gCharSel->stage->bgmPlaying = gCharSel->stage->bgm;
 
     for (i = 0; i < CHARSEL_SIDES; i++) {
-        File_LoadSync(gCharSel->side[i]->chara + CHARSEL_FACE_FILE, gCharSel->faceFile[i], 0x16800);
+        File_LoadSync(CHARA_T(gCharSel->side[i]->chara) + CHARSEL_FACE_FILE, gCharSel->faceFile[i], 0x16800);
         Sprite_Unpack(gCharSel->faceFile[i], gCharSel->faceRes[i], NULL);
         res = gCharSel->faceRes[i];
         Res_RelocateOffsets(&res, res, res);
@@ -864,9 +905,9 @@ void CharSel_Draw(void) {
         Flash_ClipSetAlpha(f, &ref, gCharSel->faceAlpha[i]);
         Flash_ClipSetFlags(f, &ref, 0x80, (u8)gCharSel->faceMask);
         Flash_FindLabel(f, NULL, i ? "mc_name_text_r" : "mc_name_text_l", &ref);
-        TextBox_AttachLine(f, &ref, 0, 0, gCharSel->side[i]->chara, &gCharSel->nameBox[i]);
+        TextBox_AttachLine(f, &ref, 0, 0, CHARA_T(gCharSel->side[i]->chara), &gCharSel->nameBox[i]);
         Flash_FindLabel(f, NULL, i ? "mc_form_text_r" : "mc_form_text_l", &ref);
-        TextBox_AttachLine(f, &ref, 0, 0, gCharSel->side[i]->chara, &gCharSel->formBox[i]);
+        TextBox_AttachLine(f, &ref, 0, 0, CHARA_T(gCharSel->side[i]->chara), &gCharSel->formBox[i]);
     }
 
     uv.x0 = 0;
@@ -1493,6 +1534,14 @@ void CharSel_Input(s32 *running) {
                     Flash_GotoLabel(CS_PLATE, "fl_custom_in", 1);
                     CharSel_ClipGoto(CS_N + 1, CS_N, CHARSEL_CLIP_CHIP, "fl_ok");
                     gCharSel->customRows[CS_N] = 4;
+#ifdef PORT
+                    /* PC build: an added character has no item sets. They are kept in the save by the cell's place
+                       in the grid, 97 places, and its cell is past them. */
+                    if (PORT_CHARA_ADDED(CS_SIDE->chara)) {
+                        gCharSel->customRows[CS_N] = 1;
+                        CS_SIDE->customPlate = 0;
+                    }
+#endif
                     gCharSel->colorCount[CS_N] = ChrTbl_WrapCostume(CS_SIDE->chara, &CS_SIDE->colorPlate);
                     CharSel_ClipGoto(CS_N + 3, CS_N, CHARSEL_CLIP_CUSTOM_PLATE, "fl_on_start");
                     CS_SIDE->state = CHARSEL_ST_ITEMSET;

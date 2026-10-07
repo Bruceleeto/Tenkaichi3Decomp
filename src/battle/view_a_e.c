@@ -539,7 +539,7 @@ void Num_DrawEx(Flash *flash, NumStyle *style, char *a, char *b, s32 value) {
 s32 ChrGrid_IsSelectable(ChrGridCell *cells, s32 index) {
     s32 ok = 1;
 
-    if (cells[index].id >= CHRGRID_ID_LOCKED) {
+    if (CHRGRID_IS_MARKER_FROM(cells[index].id, CHRGRID_ID_LOCKED)) {
         ok = cells[index].id == CHRGRID_ID_CUSTOM;
     }
     return ok;
@@ -561,7 +561,7 @@ s32 ChrGrid_MoveRight(ChrGridCell *cells, s32 *col, s32 row) {
             break;
         }
         id = cells[row * CHRGRID_COLS + *col].id;
-        if (id < CHRGRID_ID_LOCKED) {
+        if (!CHRGRID_IS_MARKER_FROM(id, CHRGRID_ID_LOCKED)) {
             break;
         }
         if (id == CHRGRID_ID_CUSTOM) {
@@ -588,7 +588,7 @@ s32 ChrGrid_MoveLeft(ChrGridCell *cells, s32 *col, s32 row) {
             break;
         }
         id = cells[row * CHRGRID_COLS + *col].id;
-        if (id < CHRGRID_ID_LOCKED) {
+        if (!CHRGRID_IS_MARKER_FROM(id, CHRGRID_ID_LOCKED)) {
             break;
         }
         if (id == CHRGRID_ID_CUSTOM) {
@@ -609,7 +609,7 @@ void ChrGrid_MoveDown(ChrGridCell *cells, s32 *col, s32 *row, s32 rows) {
             *row = 0;
         }
         id = cells[*row * CHRGRID_COLS + *col].id;
-        if (id < CHRGRID_ID_LOCKED) {
+        if (!CHRGRID_IS_MARKER_FROM(id, CHRGRID_ID_LOCKED)) {
             return;
         }
         if (id == CHRGRID_ID_CUSTOM) {
@@ -628,7 +628,7 @@ void ChrGrid_MoveUp(ChrGridCell *cells, s32 *col, s32 *row, s32 rows) {
             *row = rows - 1;
         }
         id = cells[*row * CHRGRID_COLS + *col].id;
-        if (id < CHRGRID_ID_LOCKED) {
+        if (!CHRGRID_IS_MARKER_FROM(id, CHRGRID_ID_LOCKED)) {
             return;
         }
         if (id == CHRGRID_ID_CUSTOM) {
@@ -649,7 +649,7 @@ void ChrGrid_NextForm(s32 *forms, s32 *index) {
         if (start == *index) {
             break;
         }
-    } while (forms[*index] >= CHRGRID_ID_RANDOM);
+    } while (CHRGRID_IS_MARKER_FROM(forms[*index], CHRGRID_ID_RANDOM));
 }
 
 /* Steps to the previous form of a cell that is a character, wrapping in the seven slots. */
@@ -664,13 +664,13 @@ void ChrGrid_PrevForm(s32 *forms, s32 *index) {
         if (start == *index) {
             break;
         }
-    } while (forms[*index] >= CHRGRID_ID_RANDOM);
+    } while (CHRGRID_IS_MARKER_FROM(forms[*index], CHRGRID_ID_RANDOM));
 }
 
 /* Puts the cursor on a character if it is on a marker cell: right in the row first, then down.
  * Declared with a result that it never sets: the call of ChrGrid_MoveDown is not a tail call. */
 s32 ChrGrid_FixCursor(ChrGridCell *cells, s32 *col, s32 *row, s32 rows) {
-    if (cells[*row * CHRGRID_COLS + *col].id >= CHRGRID_ID_RANDOM) {
+    if (CHRGRID_IS_MARKER_FROM(cells[*row * CHRGRID_COLS + *col].id, CHRGRID_ID_RANDOM)) {
         if (ChrGrid_MoveRight(cells, col, *row) == 0) {
             ChrGrid_MoveDown(cells, col, row, rows);
         }
