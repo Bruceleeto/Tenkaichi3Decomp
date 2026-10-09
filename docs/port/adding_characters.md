@@ -95,8 +95,23 @@ What this means for an added character:
   (as the names of added stages are drawn by the port), or drawn by the port over the cell. Today `CHARA_T` gives
   the base character's.
 
-Not looked at: the name shown in a fight (the versus screen before it, the pause menu, the result), and the format
-of a chip's texture list and of a name line beyond what the code above shows.
+Located in the data (2026-10-09, read out of the disc's files with the game's own decompressor):
+
+- The menu archive `gMenuArc5` is file id 0x1C1 (`pzs3us1/00448.bin`): a pack of two screens, each BPE-packed
+  (`Bpe_Decode`: size, packed size, blocks). The second, 7,074,880 bytes unpacked, is the character select's pack
+  of 56 sections.
+- **Names**: its section 43 is itself a pack of 168 entries, one per id (0..160 the characters, then "Random",
+  "? ? ?", "Password Character", "Not selectable" and three more). An entry is 64 bytes: the UTF-16 byte order
+  mark FF FE, the name in UTF-16, zeros. Section 44, the same shape, is the form names.
+- **Chips**: its section 45 is a pack of 165 entries of 5,504 bytes each, one texture list per id (a header of
+  offsets, then the picture), all the same size.
+
+So a folder's `name.txt` becomes a 64-byte entry and a folder's chip is one 5,504-byte entry in the disc's own
+format: both can be put into the unpacked pack's tables (which then need room for more entries than the disc's
+168 and 165) or kept beside them and handed out for the added ids.
+
+Not looked at: the name shown in a fight (the versus screen before it, the pause menu, the result); the other
+screens' copies (same shapes expected, not checked); the layout inside a chip's 5,504 bytes.
 
 ## Not done
 
