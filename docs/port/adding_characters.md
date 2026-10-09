@@ -70,6 +70,34 @@ no icon, no name, no parameter file and no streamed voice lines.
   folder holds the id, 0 without it.
 - `BT3_TEST_CHARA=<id>[,<id>]`: the first fighter of side 0 (and 1) of any battle the menus set up.
 
+## Where a character's pictures and name come from (traced in the sources, 2026-10-09)
+
+Four things, in four places. Verified by reading the code unless marked.
+
+| what | where | used by |
+|---|---|---|
+| the face on the battle HUD | entry 1 of the character's own model file (`*_1p.pak` ..), relocated by `Res_RelocateOffsets`; the fighter object keeps it at +0x50 and `HudGauge_DrawFace` (hud_b.c) and the team HUD (hud_a_b.c) take it from there every frame | the fight |
+| the large picture | a file of its own, `0x2F9 + id` (`CHARSEL_FACE_FILE`), read into a 0x16800-byte buffer | character select (menu_c_e.c), tournament bracket (menu_k_f.c), entry select (menu_i_d.c), ranking (menu_n_c.c), character reference (menu_h_b.c) |
+| the chip (the small square of the roster) | a pack of texture lists inside the screen's resource pack, entry `id + 1`: section 45 of the character select's pack, section 6 of the ranking screens' | every screen with a roster; each screen's pack has its own copy |
+| the name | a text block inside the screen's resource pack, one line per id: section 43 of the character select's pack (`nameText`, drawn with `TextBox_Init(box, nameText, id + 1)`); sections 30, 28, 21, 22 in other screens | every screen that shows a name; each has its own copy |
+
+The screens' resource packs come from the menu archives: `gMenuArc5` is file `baseFile` and `gMenuArc6` file
+`baseFile + 13` (menu_g_b.c, menu_h_c.c); the character select takes its pack from one of them by section.
+
+What this means for an added character:
+
+- **The HUD face needs nothing more**: it comes with the model file. A pack whose model file has its own entry 1
+  shows its own face. (Seen 2026-10-09 with a converted character from a mod: the face on the HUD was the pack's.)
+- **The large picture** can be a file in the folder, answered for `0x2F9 + id` as the model files are
+  (`PortCharas_Alias`); today `CHARA_T` asks for the base character's.
+- **The chip and the name are not files**: they are entries of packs that each screen unpacks from the menu
+  archive, so a folder's own chip and name have to be put into the screen's tables after it has unpacked them
+  (as the names of added stages are drawn by the port), or drawn by the port over the cell. Today `CHARA_T` gives
+  the base character's.
+
+Not looked at: the name shown in a fight (the versus screen before it, the pause menu, the result), and the format
+of a chip's texture list and of a name line beyond what the code above shows.
+
 ## Not done
 
 The character's own name, chip and portrait on the character select; the cursor reaching the cell by hand
