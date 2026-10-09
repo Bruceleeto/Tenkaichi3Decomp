@@ -17,7 +17,7 @@ partners, and the forms of all of those (that can be many folders; the port take
 --stages copies the disc's stages (the single-screen model, file 0x171 + stage) as `<Name>.unk` files, which is
 what the `stages` folder next to the game takes (docs/port/adding_stages.md; 26 at once). The names are the places'
 names in the original game: a name on a disc is a picture, so what a changed stage is called there cannot be read;
-rename the files. With --against only the stages that differ from that disc's are copied.
+rename the files; `stage names.png`, written beside them, shows the disc's own names in the stages' order. With --against only the stages that differ from that disc's are copied.
 
 <data folder> may also be a disc image (.iso): its two archives are read in place, nothing is unpacked. --all makes
 a folder for every character of the disc, forms inside (more than the port takes at once: a shelf to pick from).
@@ -376,6 +376,62 @@ def source(path):
     return IsoData(path) if pathlib.Path(path).is_file() else pathlib.Path(path)
 
 
+# the PS2's memory layout of a picture (as port/src/gs/namefont.c, sheet_decode)
+_B32 = [[0, 1, 4, 5, 16, 17, 20, 21], [2, 3, 6, 7, 18, 19, 22, 23], [8, 9, 12, 13, 24, 25, 28, 29], [10, 11, 14, 15, 26, 27, 30, 31]]
+_C32 = [[0, 1, 4, 5, 8, 9, 12, 13], [2, 3, 6, 7, 10, 11, 14, 15], [16, 17, 20, 21, 24, 25, 28, 29], [18, 19, 22, 23, 26, 27, 30, 31], [32, 33, 36, 37, 40, 41, 44, 45], [34, 35, 38, 39, 42, 43, 46, 47], [48, 49, 52, 53, 56, 57, 60, 61], [50, 51, 54, 55, 58, 59, 62, 63]]
+_C8 = [[0, 4, 16, 20, 32, 36, 48, 52, 2, 6, 18, 22, 34, 38, 50, 54], [8, 12, 24, 28, 40, 44, 56, 60, 10, 14, 26, 30, 42, 46, 58, 62], [33, 37, 49, 53, 1, 5, 17, 21, 35, 39, 51, 55, 3, 7, 19, 23], [41, 45, 57, 61, 9, 13, 25, 29, 43, 47, 59, 63, 11, 15, 27, 31]]
+
+
+def name_sheet(sec, n):
+    """Texture n of the select's stage-name file (512 x 256, 8 bits with a colour table) as rows of RGBA."""
+    ent = struct.unpack_from("<I", sec, 4)[0] * 4 + n * 0x40
+    pix = struct.unpack_from("<I", sec, ent)[0] * 4 + 0x60
+    clut = struct.unpack_from("<I", sec, ent + 4)[0] * 4 + 0x60
+    if struct.unpack_from("<II", sec, ent + 8) != (0x60 + 512 * 256 + 0x20, 0x60 + 0x400 + 0x20):
+        raise ValueError("not the sheets of the usual kind")
+    mem = bytearray(512 * 256)
+    for y in range(128):
+        for x in range(256):
+            a = (((y & ~0x1F) * 4 + ((x >> 1) & ~0x1F) + _B32[(y >> 3) & 3][(x >> 3) & 7]) << 6) + _C32[y & 7][x & 7]
+            mem[a * 4:a * 4 + 4] = sec[pix + (y * 256 + x) * 4:pix + (y * 256 + x) * 4 + 4]
+    rows = []
+    for y in range(256):
+        row = bytearray()
+        col = (y & 15) >> 2
+        for x in range(512):
+            sx = ((x & 15) ^ 4) if col & 1 else (x & 15)
+            i = mem[((((y >> 1) & ~0x1F) * 4 + ((x >> 2) & ~0x1F) + _B32[(y >> 4) & 3][(x >> 4) & 7]) << 8)
+                    + _C8[y & 3][sx] + col * 64]
+            i = (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1)
+            c = sec[clut + i * 4:clut + i * 4 + 4]
+            row += bytes((c[0], c[1], c[2], min(255, c[3] * 2)))
+        rows.append(bytes(row))
+    return rows
+
+
+def stage_names_picture(data, path):
+    """The disc's 36 stage-name pictures, numbered by stage, in one PNG: what its stages are called."""
+    import zlib
+    arc = game_file(data, 0x1C1).read_bytes()
+    res = bpe(section(arc, table(arc), 2))
+    sec = section(res, table(res), 6)
+    rows = []
+    for n in range(9):
+        rows += name_sheet(sec, n)
+    # over a dark ground, as RGB
+    raw = bytearray()
+    for row in rows:
+        raw.append(0)
+        for x in range(512):
+            r, g, b, a = row[x * 4:x * 4 + 4]
+            raw += bytes(((r * a + 30 * (255 - a)) // 255, (g * a + 30 * (255 - a)) // 255, (b * a + 30 * (255 - a)) // 255))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 512, len(rows), 8, 2, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b""))
+
+
 def import_stages(data, out, against):
     out.mkdir(parents=True, exist_ok=True)
     made = same = 0
@@ -396,6 +452,11 @@ def import_stages(data, out, against):
         note = "  LARGER than the game's stage buffer: it would be cut off" if len(body.rstrip(b"\0")) > STAGE_BUF else ""
         print(f"{stage:2d}  {name}.unk  {len(body) / 1048576:.1f} MB{note}")
     print(f"{made} stages in {out}" + (f"; {same} are the same as the other disc's and were left" if against is not None else ""))
+    try:  # (the names as the disc shows them: stage n is the n-th picture from the top, 0 first, 64 pixels each)
+        stage_names_picture(data, out / "stage names.png")
+        print("`stage names.png`: this disc's names of its stages, in the order of the numbers above (0 at the top).")
+    except Exception as err:
+        print("the disc's stage names could not be drawn:", err)
     print("The game takes 26 added stages at once: copy the files wanted into `stages` and rename them as you like.")
 
 

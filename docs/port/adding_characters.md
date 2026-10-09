@@ -227,6 +227,9 @@ The script also takes a disc image (`.iso`) in place of the data folder, reading
 `--all` makes a folder for every character of the disc (seen: 161 characters in 141 folders, 2.2 GB): more than
 the port takes at once, a shelf to copy from.
 
+`--stages` also writes `stage names.png`: the disc's 36 stage-name pictures (section 6 of the select's pack, nine
+512 x 256 sheets of four, decoded as namefont.c does) one under another in the stages' order, to read the names from.
+
 `--stages` copies a disc's stages (file 0x171 + stage) as `<Name>.unk` files for the `stages` folder, named after
 the original's places (a stage's name on a disc is a picture); `--against <original>` leaves out the unchanged
 ones. Seen: 33 of a disc's 35, all within the stage buffer; two of them taken by the game as added stages. NOT seen: a fight on one (a windowless run with `BT3_TEST_STAGE` gave the same numbers for both, so it does not show the stage was used).
