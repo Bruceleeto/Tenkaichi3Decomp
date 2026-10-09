@@ -12,6 +12,13 @@ partners, and the forms of all of those (that can be many folders; the port take
 
     port/tools/import_chara.py <data folder or .iso> <folder of folders> --all
 
+    port/tools/import_chara.py <data folder or .iso> <folder> --stages [--against <original data folder or .iso>]
+
+--stages copies the disc's stages (the single-screen model, file 0x171 + stage) as `<Name>.unk` files, which is
+what the `stages` folder next to the game takes (docs/port/adding_stages.md; 26 at once). The names are the places'
+names in the original game: a name on a disc is a picture, so what a changed stage is called there cannot be read;
+rename the files. With --against only the stages that differ from that disc's are copied.
+
 <data folder> may also be a disc image (.iso): its two archives are read in place, nothing is unpacked. --all makes
 a folder for every character of the disc, forms inside (more than the port takes at once: a shelf to pick from).
 
@@ -354,18 +361,59 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
     print(f"{len(tables)} characters in {len(groups)} folder{'s' if len(groups) != 1 else ''} of {root}")
 
 
+STAGES = (  # the original's stages by id (port/src/gs/namefont.c, kStageNames)
+    "Wasteland - Noon", "Rocky Area - Noon", "Planet Namek", "Dying Namek", "World Tournament Stage - Noon",
+    "Kami's Lookout", "Cell Games Arena - Evening", "Supreme Kai's World", "Hyperbolic Time Chamber",
+    "City Ruins - Noon", "Mountain Road - Noon", "Islands", "Kame House", "Planet - Night", "Glacier", "Ruined Earth",
+    "Outer Space", "Penguin Village", "Hell", "Desert - Noon", "King's Castle", "Muscle Tower", "Mount Paozu",
+    "Wasteland - Evening", "Wasteland - Night", "Rocky Area - Evening", "Rocky Area - Night",
+    "World Tournament Stage - Evening", "Cell Game - Noon", "City Ruins - Evening", "City Ruins - Night",
+    "Desert - Evening", "Desert - Night", "Mountain Road - Evening", "Planet - Evening")
+STAGE_BUF = 0x6CB800  # BTL_STAGE_BUF_SIZE: the buffer a stage's model is read into
+
+
+def source(path):
+    return IsoData(path) if pathlib.Path(path).is_file() else pathlib.Path(path)
+
+
+def import_stages(data, out, against):
+    out.mkdir(parents=True, exist_ok=True)
+    made = same = 0
+    for stage, name in enumerate(STAGES):
+        src = game_file(data, 0x171 + stage)
+        if not src.exists():
+            continue
+        body = src.read_bytes()
+        if not body.strip(b"\0"):
+            continue
+        if against is not None:
+            other = game_file(against, 0x171 + stage)
+            if other.exists() and other.read_bytes().rstrip(b"\0") == body.rstrip(b"\0"):
+                same += 1
+                continue
+        (out / f"{name}.unk").write_bytes(body)
+        made += 1
+        note = "  LARGER than the game's stage buffer: it would be cut off" if len(body.rstrip(b"\0")) > STAGE_BUF else ""
+        print(f"{stage:2d}  {name}.unk  {len(body) / 1048576:.1f} MB{note}")
+    print(f"{made} stages in {out}" + (f"; {same} are the same as the other disc's and were left" if against is not None else ""))
+    print("The game takes 26 added stages at once: copy the files wanted into `stages` and rename them as you like.")
+
+
 def main():
-    flags = {f for f in ("--with-forms", "--with-fusions", "--all") if f in sys.argv}
+    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages") if f in sys.argv}
     args = [a for a in sys.argv[1:] if a not in flags]
     opt = {}
-    for key in ("--name", "--prefix"):
+    for key in ("--name", "--prefix", "--against"):
         if key in args:
             at = args.index(key)
             opt[key] = args[at + 1]
             del args[at:at + 2]
-    if len(args) != (2 if "--all" in flags else 3):
+    if len(args) != (2 if flags & {"--all", "--stages"} else 3):
         sys.exit(__doc__)
-    data = IsoData(args[0]) if pathlib.Path(args[0]).is_file() else pathlib.Path(args[0])
+    data = source(args[0])
+    if "--stages" in flags:
+        import_stages(data, pathlib.Path(args[1]), source(opt["--against"]) if "--against" in opt else None)
+        return
     if "--all" in flags:
         import_set(data, list(range(161)), pathlib.Path(args[1]), opt.get("--prefix", "C"), False, shelf=True)
         print("The port takes 57 characters at once (forms count): copy the folders wanted into `characters`.")
