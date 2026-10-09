@@ -291,6 +291,22 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         snprintf(out, n, "pzs3us2/%05d.bin", (alt ? 0xCC32 : 0x8D4E) - 0xD48 + (who < sCount ? sChara[who].base : 0) * 100 + line);
         return 1;
     }
+    if (index >= PORT_CHARA_MEMBER_INDEX && index < PORT_CHARA_MEMBER_INDEX + PORT_CHARA_MAX * 2) {
+        /* the fight's member block (the team mate's small picture): the folder's member_1p.bin / member_2p.bin, or
+           the base character's (the disc's 8 + id * 2 + side) */
+        FILE *f;
+        int side = (index - PORT_CHARA_MEMBER_INDEX) % 2;
+        who = (index - PORT_CHARA_MEMBER_INDEX) / 2;
+        if (who < sCount) {
+            snprintf(out, n, "%s/member_%dp.bin", sChara[who].dir, side + 1);
+            if ((f = fopen(out, "rb")) != NULL) {
+                fclose(f);
+                return 1;
+            }
+        }
+        snprintf(out, n, "pzs3us1/%05d.bin", 7 + (who < sCount ? sChara[who].base : 0) * 2 + side);
+        return 1;
+    }
     if (index >= PORT_CHARA_FACE_INDEX && index < PORT_CHARA_FACE_INDEX + PORT_CHARA_MAX) {
         /* the large picture: the folder's, or the base character's (the disc's 0x2F9 + id) */
         who = index - PORT_CHARA_FACE_INDEX;

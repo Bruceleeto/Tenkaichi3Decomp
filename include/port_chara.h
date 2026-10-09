@@ -41,6 +41,12 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
 /* the large picture of the menus: 0x2F9 + id on the disc; an added character's own file, answered from its folder
    (`portrait.bin`) or with its base character's */
 #define PORT_CHARA_FACE0 (0xD48 + 90000) /* (73000 is the added songs'; the spoken lines run from 74000 to 85400) */
+/* The member block of the fight (0x1000 bytes a side: the small picture of a team mate in the fight's display):
+   the disc's file 8 + id * 2 + side; an added character's is served from its folder (`member_1p.bin`,
+   `member_2p.bin`) or is its base character's. */
+#define PORT_CHARA_MEMBER0 (0xD48 + 91000)
+#define CHARA_MEMBER_FILE(c, side) \
+    (PORT_CHARA_ADDED(c) ? PORT_CHARA_MEMBER0 + ((s32)(c) - PORT_CHARA_FIRST) * 2 + (side) : (s32)(c) * 2 + (side) + 8)
 #define CHARA_FACE_FILE(c) (PORT_CHARA_ADDED(c) ? PORT_CHARA_FACE0 + ((s32)(c) - PORT_CHARA_FIRST) : (s32)(c) + 0x2F9)
 /* a spoken line (a sound stream): `base + id * 100 + line` on the disc, two sets (`alt` the second); an added
    character's own, answered from its folder (voice_us/NNN.adx, voice_jp/NNN.adx) or with its base character's */
@@ -85,6 +91,7 @@ extern int Port_CharaPool(void);
 #define PORT_SAVE_CHARA(c) (c)
 #define CHARA_LINE_FILE(c, base, alt, line) ((base) + ((c) * 100 + (line)))
 #define CHARA_FACE_FILE(c) ((c) + 0x2F9)
+#define CHARA_MEMBER_FILE(c, side) ((c) * 2 + (side) + 8)
 #define CHARA_T(c) (c)
 #define CHARA_FILE10(c) ((c) * 10)
 #define CHARA_FROM_FILE(id) (((id) - 0x590) / 10)

@@ -178,7 +178,15 @@ here, so the fusion could never be started. `forms.txt` takes `partner1=Folder,F
 The input (src/battle/btl_act_j.c): R3 HELD for 12 frames with left / up / right = fusion 1 / 2 / 3; a tap is the
 transformation. Team battle only, the partner present and alive, the blast stock the fusion costs.
 
-Checked: builds, the replay check, the folders are read. NOT seen: a fusion of added characters.
+Seen by the user (2026-10-10): a fusion of two added characters into a third. Two faults seen with it, both
+changed since and NOT seen again yet:
+
+- **The partner was not drawn in the fusion's scene.** The scene shows the character at +0xB7 of the table, again
+  its maker's number. For an added fighter the partner found on the team is shown (`BtlAct_QueueFusion`).
+- **Team mates had their base characters' small pictures in the fight.** That picture is the fight's member block
+  (file 8 + id * 2 + side, 0x1000 bytes, one for each side), which was asked for by the base character. A folder's
+  `member_1p.bin` / `member_2p.bin` are served now (`CHARA_MEMBER_FILE`, file index 91000 + n * 2 + side); without
+  them the base character's.
 
 ## The save and replays (audit of the sources, 2026-10-10)
 

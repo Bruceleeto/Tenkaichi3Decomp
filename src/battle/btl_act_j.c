@@ -419,6 +419,14 @@ s32 BtlAct_QueueFusion(BtlActJChr *chr, s32 index, s32 partner) {
             return 0;
         }
     }
+#ifdef PORT
+    /* PC build: who stands beside the fighter in the fusion's scene. The table (+0xB7) names a character by the
+       number its maker gave it; for a character from outside the disc that number is someone else here (the scene
+       showed nobody). The partner found on the team is shown. */
+    if (PORT_CHARA_ADDED(BtlMember_GetActive(chr)->chara)) {
+        unk24 = BtlMember_Get(chr, partner)->chara;
+    }
+#endif
     chr->form.index = index;
     chr->form.cost = cost;
     chr->form.kind = 5;
