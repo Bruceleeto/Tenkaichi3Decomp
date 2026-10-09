@@ -33,6 +33,12 @@ void *Port_CharaChip(int chara);
    Port_CharaFormTarget gives the id for a slot (0..3 transformations, 4..6 fusions): the folder's id if it is
    installed, 0xFF (none) if it is not, and -1 where forms.txt says nothing (the table's own number counts). */
 int Port_CharaFormTarget(int chara, int slot);
+/* For the character select, where the disc shows a character's forms under one cell: the forms of an added
+   character, itself first, then those its transformations lead to (through forms.txt), at most `max`. Returns
+   their number (1: a character on its own), or -1 if `chara` is itself a form of another installed character and
+   has no cell of its own. A character nobody transforms into is the head of its group; "down" is not counted as
+   leading to a form (it is how a form goes back). */
+int Port_CharaForms(int chara, int *out, int max);
 void *Port_CharaNamePack(void *pack);
 int Port_CharaNameLine(int chara);
 

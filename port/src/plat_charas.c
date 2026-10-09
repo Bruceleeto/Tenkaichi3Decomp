@@ -306,6 +306,68 @@ int Port_CharaFormTarget(int chara, int slot) {
     return index >= 0 && index < sCount && slot >= 0 && slot < 7 ? sChara[index].target[slot] : -1;
 }
 
+/* whether added character j is reached by a transformation (left, up, right) of another added one */
+static int reached(int j) {
+    int i, k;
+    for (i = 0; i < sCount; i++) {
+        for (k = 0; k < 3; k++) {
+            if (i != j && sChara[i].target[k] == PORT_CHARA_FIRST + j) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* the added characters reached from `head` through transformations (any slot), `head` first */
+static int closure(int head, int *out, int max) {
+    int n = 0, at, k, i;
+    out[n++] = head;
+    for (at = 0; at < n; at++) {
+        for (k = 0; k < 4; k++) {
+            int t = sChara[out[at]].target[k] - PORT_CHARA_FIRST;
+            if (t < 0 || t >= sCount) {
+                continue;
+            }
+            for (i = 0; i < n && out[i] != t; i++) {
+            }
+            if (i == n && n < max) {
+                out[n++] = t;
+            }
+        }
+    }
+    return n;
+}
+
+int Port_CharaForms(int chara, int *out, int max) {
+    int index = chara - PORT_CHARA_FIRST, group[PORT_CHARA_MAX], n, i, head = -1, lowest = PORT_CHARA_MAX;
+    PortCharas_Init();
+    if (index < 0 || index >= sCount || max < 1) {
+        return 0;
+    }
+    if (reached(index)) {
+        /* a form: it has no cell, unless its whole group has no head (forms that only lead to each other), in
+           which case the first of them in the folder order is taken as the head */
+        n = closure(index, group, PORT_CHARA_MAX);
+        for (i = 0; i < n; i++) {
+            if (!reached(group[i])) {
+                head = group[i];
+            }
+            if (group[i] < lowest) {
+                lowest = group[i];
+            }
+        }
+        if (head >= 0 || lowest != index) {
+            return -1;
+        }
+    }
+    n = closure(index, group, max < PORT_CHARA_MAX ? max : PORT_CHARA_MAX);
+    for (i = 0; i < n; i++) {
+        out[i] = PORT_CHARA_FIRST + group[i];
+    }
+    return n;
+}
+
 void *Port_CharaChipLoad(int index) {
     FILE *f;
     PortCharas_Init();
