@@ -1430,7 +1430,7 @@ s32 BtlParam_GetUnkB7(BtlTechChr *chr, s32 n) {
 
 /* Parameter +0xBA + n * 4 + m: partner m of fusion n. */
 s32 BtlParam_GetUnkBA(BtlTechChr *chr, s32 n, s32 m) {
-    return BtlChar_GetObj(chr)->param->fusionPartner[n][m];
+    return BtlParam_PortTarget(chr, 7 + n * 4 + m, BtlChar_GetObj(chr)->param->fusionPartner[n][m]);
 }
 
 /* Parameter +0xAE + n, times 100000: blast gauge fusion n costs. */

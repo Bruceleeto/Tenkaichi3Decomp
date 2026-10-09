@@ -167,6 +167,19 @@ the array).
 Seen without a window: the computer playing an added character through a recorded fight (it moves, attacks and
 is hit; its behaviour is its base character's). Seen by the user on 2026-10-10: a random draw landing on an added character, and added characters among a tournament's entrants.
 
+## Fusion partners (2026-10-10)
+
+A fusion needs a partner on the team, and the character's own table (entry 18, +0xBA, four ids for each of the three
+fusions) names it by the numbers of whoever made the pack. For an added partner those numbers mean someone else
+here, so the fusion could never be started. `forms.txt` takes `partner1=Folder,Folder,...` (also `partner2`,
+`partner3`; up to four, `disc:<id>` for a character of the disc), resolved like the form lines
+(`Port_CharaFormTarget` slots 7..18, used by `BtlParam_GetUnkBA`). Without the line the table's own ids are used.
+
+The input (src/battle/btl_act_j.c): R3 HELD for 12 frames with left / up / right = fusion 1 / 2 / 3; a tap is the
+transformation. Team battle only, the partner present and alive, the blast stock the fusion costs.
+
+Checked: builds, the replay check, the folders are read. NOT seen: a fusion of added characters.
+
 ## The save and replays (audit of the sources, 2026-10-10)
 
 Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and

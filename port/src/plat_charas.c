@@ -36,8 +36,9 @@ typedef struct {
     int costumes;
     char chip[400], portrait[400]; /* "" where the folder has none */
     char dir[400];                 /* the folder */
-    char form[7][64];              /* forms.txt: the folder (or "disc:<id>") of each slot; "" = not said */
-    int target[7];                 /* ... as an id: -1 not said, 0xFF not installed */
+    char form[19][64];             /* forms.txt: the folder (or "disc:<id>") of each slot; "" = not said. 0..3 the
+                                      transformations, 4..6 the fusions, 7 + n * 4 + m partner m of fusion n */
+    int target[19];                /* ... as an id: -1 not said, 0xFF not installed */
     char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
 } Chara;
 
@@ -133,6 +134,18 @@ static void add(const char *root, const char *name) {
                     snprintf(c->form[k], sizeof(c->form[k]), "%s", eq + 1);
                 }
             }
+            if (strncmp(line, "partner", 7) == 0 && line[7] >= '1' && line[7] <= '3' && line[8] == '\0') {
+                /* partnerN=Folder,Folder,...: who must be on the team for fusion N (up to four; the character's own
+                   table has ids, which for an added partner are not known until the folders are counted) */
+                int n = line[7] - '1', m = 0;
+                char *at = eq + 1;
+                while (m < 4 && *at != '\0') {
+                    size_t len = strcspn(at, ",");
+                    snprintf(c->form[7 + n * 4 + m], sizeof(c->form[0]), "%.*s", (int)len, at);
+                    at += len + (at[len] == ',');
+                    m++;
+                }
+            }
         }
         fclose(f);
     }
@@ -200,7 +213,7 @@ void PortCharas_Init(void) {
     }
     for (i = 0; i < sCount; i++) { /* forms.txt: folders to ids, now that every folder has its id */
         int k, j;
-        for (k = 0; k < 7; k++) {
+        for (k = 0; k < 19; k++) {
             const char *want = sChara[i].form[k];
             sChara[i].target[k] = -1;
             if (want[0] == '\0') {
@@ -217,7 +230,7 @@ void PortCharas_Init(void) {
                     sChara[i].target[k] = PORT_CHARA_FIRST + j;
                 }
             }
-            if (sChara[i].target[k] == 0xFF) {
+            if (sChara[i].target[k] == 0xFF && k < 7) {
                 fprintf(stderr, "bt3: characters: %s: its form %s is not installed; that transformation is left out\n", sChara[i].name, want);
             }
         }
@@ -321,7 +334,7 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
 int Port_CharaFormTarget(int chara, int slot) {
     int index = chara - PORT_CHARA_FIRST;
     PortCharas_Init();
-    return index >= 0 && index < sCount && slot >= 0 && slot < 7 ? sChara[index].target[slot] : -1;
+    return index >= 0 && index < sCount && slot >= 0 && slot < 19 ? sChara[index].target[slot] : -1;
 }
 
 /* whether added character j is reached by a transformation (left, up, right) of another added one */
