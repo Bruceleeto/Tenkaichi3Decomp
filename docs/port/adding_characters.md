@@ -204,8 +204,12 @@ changed since and NOT seen again yet:
   portrait, member blocks, chip, name, `base.txt`. From the player's own game it makes a copy of a character to
   start a pack from. It says which other ids the character's table names (forms, fusions).
 
+- **`--with-forms`** imports the transformations too, and theirs, a folder each (`<prefix><id>`) with a `forms.txt`
+  naming the others; `--with-fusions` follows the fusions, their partners and the forms of those (refused past 57).
+
 Checked: three characters of that disc imported, read by the port, and a recorded fight with the 1.15 MB one run
-to its end windowless; the replay check. NOT seen: any of it on a screen.
+to its end windowless; the replay check. Seen by the user (2026-10-10): a set of two made with `--with-forms` from
+that disc, chosen and transformed in a fight. NOT seen: the disc's data run whole on a screen; `--with-fusions`.
 
 ## The save and replays (audit of the sources, 2026-10-10)
 
