@@ -34,7 +34,16 @@ typedef struct {
     char file[F_COUNT][400]; /* "" where the folder has none */
     int base;
     int costumes;
+    char chip[400], portrait[400]; /* "" where the folder has none */
+    char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
 } Chara;
+
+enum { CHIP_SIZE = 5504, NAME_ENTRY = 128, NAME_LINES_MAX = 256 };
+/* (static: the program lies below 4 GB, where the game's 32-bit pointers reach) */
+static unsigned char sChip[PORT_CHARA_MAX][CHIP_SIZE] __attribute__((aligned(64)));
+static unsigned char sChipHave[PORT_CHARA_MAX];
+static unsigned char sNames[64 + 4 * (NAME_LINES_MAX + PORT_CHARA_MAX + 2) + (NAME_LINES_MAX + PORT_CHARA_MAX) * NAME_ENTRY] __attribute__((aligned(64)));
+static int sNameFirst = -1; /* the line of the first added character in sNames */
 
 static Chara sChara[PORT_CHARA_MAX];
 static int sCount;
@@ -93,6 +102,28 @@ static void add(const char *root, const char *name) {
     closedir(d);
     if (c->file[0][0] == '\0') { /* no first costume: not a character's folder */
         return;
+    }
+    snprintf(path, sizeof(path), "%s/%s/chip.bin", root, name);
+    if ((f = fopen(path, "rb")) != NULL) {
+        fclose(f);
+        snprintf(c->chip, sizeof(c->chip), "%s", path);
+    }
+    snprintf(path, sizeof(path), "%s/%s/portrait.bin", root, name);
+    if ((f = fopen(path, "rb")) != NULL) {
+        fclose(f);
+        snprintf(c->portrait, sizeof(c->portrait), "%s", path);
+    }
+    snprintf(c->shown, sizeof(c->shown), "%s", name);
+    snprintf(path, sizeof(path), "%s/%s/name.txt", root, name);
+    if ((f = fopen(path, "r")) != NULL) {
+        char line[64];
+        if (fgets(line, sizeof(line), f) != NULL) {
+            line[strcspn(line, "\r\n")] = '\0';
+            if (line[0] != '\0') {
+                snprintf(c->shown, sizeof(c->shown), "%s", line);
+            }
+        }
+        fclose(f);
     }
     for (c->costumes = 1; c->costumes < 4 && c->file[c->costumes][0] != '\0'; c->costumes++) {
     }
@@ -176,6 +207,16 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         return 0;
     }
     PortCharas_Init();
+    if (index >= PORT_CHARA_FACE_INDEX && index < PORT_CHARA_FACE_INDEX + PORT_CHARA_MAX) {
+        /* the large picture: the folder's, or the base character's (the disc's 0x2F9 + id) */
+        who = index - PORT_CHARA_FACE_INDEX;
+        if (who < sCount && sChara[who].portrait[0] != '\0') {
+            snprintf(out, n, "%s", sChara[who].portrait);
+        } else {
+            snprintf(out, n, "pzs3us1/%05d.bin", 0x2F8 + (who < sCount ? sChara[who].base : 0));
+        }
+        return 1;
+    }
     if (index < PORT_CHARA_FILE_INDEX + PORT_CHARA_MAX * 10) {
         who = (index - PORT_CHARA_FILE_INDEX) / 10;
         k = (index - PORT_CHARA_FILE_INDEX) % 10;
@@ -204,6 +245,72 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         snprintf(out, n, "pzs3us1/%05d.bin", 1423 + c->base * 10 + k);
     }
     return 1;
+}
+
+void *Port_CharaChipLoad(int index) {
+    FILE *f;
+    PortCharas_Init();
+    if (index < 0 || index >= sCount) {
+        return NULL;
+    }
+    sChipHave[index] = 0;
+    if (sChara[index].chip[0] != '\0' && (f = fopen(sChara[index].chip, "rb")) != NULL) {
+        memset(sChip[index], 0, CHIP_SIZE);
+        sChipHave[index] = fread(sChip[index], 1, CHIP_SIZE, f) >= 64;
+        fclose(f);
+    }
+    return sChipHave[index] ? sChip[index] : NULL;
+}
+
+void *Port_CharaChip(int chara) {
+    int index = chara - PORT_CHARA_FIRST;
+    return index >= 0 && index < sCount && sChipHave[index] ? sChip[index] : NULL;
+}
+
+void *Port_CharaNamePack(void *pack) {
+    const unsigned char *src = pack;
+    unsigned count, total, head, i, k;
+    unsigned *words = (unsigned *)sNames;
+
+    PortCharas_Init();
+    memcpy(&count, src, 4);
+    if (sCount == 0 || count == 0 || count > NAME_LINES_MAX) {
+        sNameFirst = -1;
+        return pack;
+    }
+    total = count + (unsigned)sCount;
+    head = (4 * (total + 2) + 63) & ~63u;
+    memset(sNames, 0, sizeof(sNames));
+    words[0] = total;
+    for (i = 0; i < total; i++) {
+        unsigned char *e = sNames + head + i * NAME_ENTRY;
+        words[i + 1] = head + i * NAME_ENTRY;
+        if (i < count) {
+            unsigned a, b;
+            memcpy(&a, src + 4 * (i + 1), 4);
+            memcpy(&b, src + 4 * (i + 2), 4);
+            a &= ~3u;
+            b &= ~3u;
+            if (b > a) {
+                memcpy(e, src + a, b - a < NAME_ENTRY - 2 ? b - a : NAME_ENTRY - 2);
+            }
+        } else {
+            const char *name = sChara[i - count].shown;
+            e[0] = 0xFF;
+            e[1] = 0xFE;
+            for (k = 0; name[k] != '\0' && k < (NAME_ENTRY - 4) / 2; k++) {
+                e[2 + k * 2] = (unsigned char)name[k] < 0x80 ? (unsigned char)name[k] : '?';
+            }
+        }
+    }
+    words[total + 1] = head + total * NAME_ENTRY;
+    sNameFirst = (int)count;
+    return sNames;
+}
+
+int Port_CharaNameLine(int chara) {
+    int index = chara - PORT_CHARA_FIRST;
+    return sNameFirst >= 0 && index >= 0 && index < sCount ? sNameFirst + index : Port_CharaBase(chara);
 }
 
 /* BT3_TEST_CHARA=<id>[,<id>]: the first fighter of side 0 (and of side 1) of every battle the menus set up is

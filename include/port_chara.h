@@ -33,7 +33,12 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
     ((id) >= PORT_CHARA_FILE0 && (id) < PORT_CHARA_FILE0 + PORT_CHARA_MAX * 10 ? PORT_CHARA_FIRST + ((id) - PORT_CHARA_FILE0) / 10 : ((id) - 0x590) / 10)
 /* the voice bank: `base` is one of the two languages' first file ids, `alt` says whether it is the second */
 #define CHARA_VOICE_FILE(c, base, alt) (PORT_CHARA_ADDED(c) ? PORT_CHARA_VOICE0 + ((s32)(c) - PORT_CHARA_FIRST) * 2 + ((alt) ? 1 : 0) : (s32)(c) + (base))
+/* the large picture of the menus: 0x2F9 + id on the disc; an added character's own file, answered from its folder
+   (`portrait.bin`) or with its base character's */
+#define PORT_CHARA_FACE0 (0xD48 + 73000)
+#define CHARA_FACE_FILE(c) (PORT_CHARA_ADDED(c) ? PORT_CHARA_FACE0 + ((s32)(c) - PORT_CHARA_FIRST) : (s32)(c) + 0x2F9)
 #else
+#define CHARA_FACE_FILE(c) ((c) + 0x2F9)
 #define CHARA_T(c) (c)
 #define CHARA_FILE10(c) ((c) * 10)
 #define CHARA_FROM_FILE(id) (((id) - 0x590) / 10)

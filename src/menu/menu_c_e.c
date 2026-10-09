@@ -81,6 +81,19 @@ extern void ItemHelp_Init(void *data);
 extern void ItemHelp_Term(void);
 extern void ItemHelp_Draw(s32 arg);
 
+/* PC build: an added character's own chip, large picture and name where its folder has them (plat_charas.c); the
+   base character's otherwise, and the disc's for every other id. */
+#ifdef PORT
+extern void *Port_CharaChipLoad(int index), *Port_CharaChip(int chara), *Port_CharaNamePack(void *pack);
+extern int Port_CharaNameLine(int chara), Port_CharaCount(void);
+#define CS_CHIP(id) \
+    (PORT_CHARA_ADDED(id) && Port_CharaChip(id) != NULL ? (MTexRes *)Port_CharaChip(id) : (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1))
+#define CS_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
+#else
+#define CS_CHIP(id) ((MTexRes *)MPACK_AT(gCharSel->chipPack, (id) + 1))
+#define CS_NAME_LINE(c) (c)
+#endif
+
 /* The six chips of the stage reel show the cursor's row of the stage grid. */
 void CharSel_SetStageChips(void) {
     s32 slot[6] = { 8, 11, 12, 13, 14, 15 };
@@ -127,7 +140,7 @@ void CharSel_SetRowChips(s32 side) {
 
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
+        res = CS_CHIP(id);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -149,7 +162,7 @@ void CharSel_SetCellFormChips(s32 side) {
         }
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
+        res = CS_CHIP(id);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -166,7 +179,7 @@ void CharSel_SetCustomChips(s32 side) {
 
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
+        res = CS_CHIP(id);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -188,7 +201,7 @@ void CharSel_SetFormChips(s32 side) {
         }
         gCharSel->side[side]->prevChip[i] = gCharSel->side[side]->chip[i];
         gCharSel->side[side]->chip[i] = id;
-        res = (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1);
+        res = CS_CHIP(id);
         gCharSel->sideTex[side][18 + i] = gCharSel->sideTex[side][slot[i]];
         gCharSel->sideTex[side][slot[i]] = res->tex;
     }
@@ -213,7 +226,7 @@ void CharSel_UpdateFaceLoad(void) {
         break;
     case CHARSEL_LOAD_REQUEST:
         File_CancelRequests();
-        File_Request(CHARA_T(gCharSel->side[gCharSel->faceSide]->chara) + CHARSEL_FACE_FILE,
+        File_Request(CHARA_FACE_FILE(gCharSel->side[gCharSel->faceSide]->chara),
                      gCharSel->faceFile[gCharSel->faceSide], 0x16800);
         gCharSel->faceState = CHARSEL_LOAD_READ;
         break;
@@ -523,11 +536,22 @@ void CharSel_Init(s32 section) {
     gCharSel->unk3A48 = MPACK_AT(gCommonRes->data[2], 2);
 
     gCharSel->nameText = MPACK_AT(gCharSel->res, 43);
+#ifdef PORT /* (the names of added characters after the disc's) */
+    gCharSel->nameText = Port_CharaNamePack(gCharSel->nameText);
+#endif
     gCharSel->formText = MPACK_AT(gCharSel->res, 44);
     gCharSel->chipPack = (u32 *)MPACK_AT(gCharSel->res, 45);
     for (i = 0; i < MCHR_CELL_MAX; i++) {
         CS_RES(gCharSel->chipPack, i + 1);
     }
+#ifdef PORT /* (the added characters' own chips, made ready like the disc's) */
+    for (i = 0; i < Port_CharaCount(); i++) {
+        res = (MTexRes *)Port_CharaChipLoad(i);
+        if (res != NULL) {
+            Res_RelocateOffsets(&res, res, res);
+        }
+    }
+#endif
     gCharSel->stagePack = (u32 *)MPACK_AT(gCharSel->res, 46);
     for (i = 0; i < 38; i++) {
         CS_RES(gCharSel->stagePack, i + 1);
@@ -759,7 +783,7 @@ void CharSel_Init(s32 section) {
     gCharSel->stage->bgmPlaying = gCharSel->stage->bgm;
 
     for (i = 0; i < CHARSEL_SIDES; i++) {
-        File_LoadSync(CHARA_T(gCharSel->side[i]->chara) + CHARSEL_FACE_FILE, gCharSel->faceFile[i], 0x16800);
+        File_LoadSync(CHARA_FACE_FILE(gCharSel->side[i]->chara), gCharSel->faceFile[i], 0x16800);
         Sprite_Unpack(gCharSel->faceFile[i], gCharSel->faceRes[i], NULL);
         res = gCharSel->faceRes[i];
         Res_RelocateOffsets(&res, res, res);
@@ -905,7 +929,7 @@ void CharSel_Draw(void) {
         Flash_ClipSetAlpha(f, &ref, gCharSel->faceAlpha[i]);
         Flash_ClipSetFlags(f, &ref, 0x80, (u8)gCharSel->faceMask);
         Flash_FindLabel(f, NULL, i ? "mc_name_text_r" : "mc_name_text_l", &ref);
-        TextBox_AttachLine(f, &ref, 0, 0, CHARA_T(gCharSel->side[i]->chara), &gCharSel->nameBox[i]);
+        TextBox_AttachLine(f, &ref, 0, 0, CS_NAME_LINE(gCharSel->side[i]->chara), &gCharSel->nameBox[i]);
         Flash_FindLabel(f, NULL, i ? "mc_form_text_r" : "mc_form_text_l", &ref);
         TextBox_AttachLine(f, &ref, 0, 0, CHARA_T(gCharSel->side[i]->chara), &gCharSel->formBox[i]);
     }
