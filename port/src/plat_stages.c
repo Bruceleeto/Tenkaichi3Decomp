@@ -64,6 +64,48 @@ static char *trim(char *s) {
     return s;
 }
 
+enum { STAGE_ICON_SIZE = 5504 };
+static unsigned char sIcon[PORT_STAGE_MAX][STAGE_ICON_SIZE + 1];
+static unsigned char sIconHave[PORT_STAGE_MAX];
+static unsigned char *sIconMem; /* the icons in the game's memory, while the select is up */
+static void *sIconRes[PORT_STAGE_MAX];
+extern void *Heap_Alloc(int size, int align, int fromTail, int heap); /* the game's (src/sys/heap.c) */
+extern void Heap_Free(void *ptr);
+extern void Res_RelocateOffsets(void *out, void *base, void *hdr); /* src/sys/gfxm_b_b.c */
+
+/* The added stages' own icons, made ready as the select makes the disc's (in the game's memory: its 32-bit
+   pointers must reach them). The select calls Load when it has set up the disc's and Free when it ends. */
+void PortStageIcons_Free(void) {
+    if (sIconMem != NULL) {
+        Heap_Free(sIconMem);
+        sIconMem = NULL;
+    }
+    memset(sIconRes, 0, sizeof(sIconRes));
+}
+
+void PortStageIcons_Load(void) {
+    int i;
+    PortStageIcons_Free();
+    if (gPortExtraStageCount == 0) {
+        return;
+    }
+    sIconMem = Heap_Alloc(gPortExtraStageCount * STAGE_ICON_SIZE, 0x40, 0, 2);
+    for (i = 0; sIconMem != NULL && i < gPortExtraStageCount; i++) {
+        if (sIconHave[i]) {
+            void *res = sIconMem + i * STAGE_ICON_SIZE;
+            memcpy(res, sIcon[i], STAGE_ICON_SIZE);
+            sIconRes[i] = res;
+            Res_RelocateOffsets(&res, res, res);
+        }
+    }
+}
+
+/* The icon of stage `id` (0x24 on), or NULL where its file has none. */
+void *PortStageIcons_Get(int id) {
+    int i = id - PORT_STAGE_FIRST;
+    return i >= 0 && i < gPortExtraStageCount ? sIconRes[i] : NULL;
+}
+
 /* Adds one added stage: its next id, its display name, and the file aliases it needs. */
 static void add_stage(const char *file, const char *name) {
     int id, i;
@@ -138,6 +180,17 @@ static void add_stage(const char *file, const char *name) {
             snprintf(sAliases[sAliasCount].target, sizeof(sAliases[sAliasCount].target), "pzs3us1/%05d.bin", 0x39D - 1 + i);
         }
         sAliasCount++;
+        /* Its small picture in the select's reel: `<name>.icon`, one entry of the select's stage icons (section 46 of
+           its pack, 5504 bytes) as a disc has it; kept here until the select asks (PortStageIcons_Load). */
+        sIconHave[i] = 0;
+        if (dot != NULL) {
+            strcpy(dot, ".icon");
+            fp = fopen(own, "rb");
+            if (fp != NULL) {
+                sIconHave[i] = fread(sIcon[i], 1, STAGE_ICON_SIZE + 1, fp) == STAGE_ICON_SIZE;
+                fclose(fp);
+            }
+        }
     }
 
     gPortExtraStageCount++;

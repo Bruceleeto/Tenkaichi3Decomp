@@ -112,6 +112,12 @@ void CharSel_SetStageChips(void) {
                 icon = id + 1;
             }
             res = (MTexRes *)MPACK_AT(gCharSel->stagePack, icon);
+            if (id >= 0x24 && id < STGGRID_ID_LOCKED) { /* (its own icon, where its file brought one) */
+                extern void *PortStageIcons_Get(int id); /* port/src/plat_stages.c */
+                if (PortStageIcons_Get(id) != NULL) {
+                    res = (MTexRes *)PortStageIcons_Get(id);
+                }
+            }
         }
 #else
         res = (MTexRes *)MPACK_AT(gCharSel->stagePack, id + 1);
@@ -543,6 +549,12 @@ void CharSel_Init(s32 section) {
     for (i = 0; i < 38; i++) {
         CS_RES(gCharSel->stagePack, i + 1);
     }
+#ifdef PORT /* (the added stages' own icons) */
+    {
+        extern void PortStageIcons_Load(void); /* port/src/plat_stages.c */
+        PortStageIcons_Load();
+    }
+#endif
 
     gCharSel->stageIds = (s32 *)(MPACK_AT(gCharSel->res, 39) + 0x10);
     gCharSel->stageCount = MPACK_WORD(gCharSel->res, 39);
@@ -793,8 +805,12 @@ void CharSel_Term(void) {
     for (i = 0; i < CHARSEL_FLASH_NUM; i++) {
         Flash_Destroy(&gCharSel->flash[i]);
     }
-#ifdef PORT /* (the folders' chips) */
+#ifdef PORT /* (the folders' chips, the added stages' icons) */
     PortChips_Free();
+    {
+        extern void PortStageIcons_Free(void);
+        PortStageIcons_Free();
+    }
 #endif
     if (gCharSel->stageRes[1] != NULL) {
         Heap_Free(gCharSel->stageRes[1]);

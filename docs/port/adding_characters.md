@@ -227,6 +227,12 @@ The script also takes a disc image (`.iso`) in place of the data folder, reading
 `--all` makes a folder for every character of the disc (seen: 161 characters in 141 folders, 2.2 GB): more than
 the port takes at once, a shelf to copy from.
 
+An added stage's two pictures in the select (2026-10-10), each a file beside its `.unk`, each optional: `<name>.thumb`,
+the large picture behind the reel (the disc's file 0x39D + stage; served at file index 70100 + n), and `<name>.icon`,
+the small one in the reel (one 5504-byte entry of section 46 of the select's pack; copied into the game's memory
+while the select is up, `PortStageIcons_*` in port/src/plat_stages.c). Without them the stage borrows a disc
+stage's, as before. `--stages` writes both. Seen by the user: the large picture. NOT seen: the small one.
+
 `--stages` also writes `stage names.png`: the disc's 36 stage-name pictures (section 6 of the select's pack, nine
 512 x 256 sheets of four, decoded as namefont.c does) one under another in the stages' order, to read the names from.
 

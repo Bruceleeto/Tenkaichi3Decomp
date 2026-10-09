@@ -435,6 +435,13 @@ def stage_names_picture(data, path):
 def import_stages(data, out, against):
     out.mkdir(parents=True, exist_ok=True)
     made = same = 0
+    try:  # the small pictures of the select's reel: section 46 of its pack, entry stage + 1
+        arc = game_file(data, 0x1C1).read_bytes()
+        res = bpe(section(arc, table(arc), 2))
+        icons = section(res, table(res), 46)
+        icon_at = table(icons)
+    except Exception:
+        icons = None
     for stage, name in enumerate(STAGES):
         src = game_file(data, 0x171 + stage)
         if not src.exists():
@@ -451,6 +458,8 @@ def import_stages(data, out, against):
         thumb = game_file(data, 0x39D + stage)  # the select's picture of the stage
         if thumb.exists():
             (out / f"{name}.thumb").write_bytes(thumb.read_bytes())
+        if icons is not None:
+            (out / f"{name}.icon").write_bytes(section(icons, icon_at, stage + 1))
         made += 1
         note = "  LARGER than the game's stage buffer: it would be cut off" if len(body.rstrip(b"\0")) > STAGE_BUF else ""
         print(f"{stage:2d}  {name}.unk  {len(body) / 1048576:.1f} MB{note}")
