@@ -316,10 +316,10 @@ void EntrySel_Init(s32 section) {
 
             while (1) {
                 n = Rand_Range(gEntrySel->gridCount);
-                if (gEntrySel->grid[n].id <= 0xA0) {
+                if (PORT_IN_POOL(gEntrySel->grid[n].id)) {
                     gEntrySel->sel->entry[i].col = n % cols;
                     gEntrySel->sel->entry[i].row = n / cols;
-                    gEntrySel->sel->entry[i].custom = Rand_Range(4);
+                    gEntrySel->sel->entry[i].custom = PORT_SAVE_CELL(n) ? Rand_Range(4) : 0; /* (an added cell has no sets) */
                     if (gEntrySel->grid[n].formCount != 0) {
                         gEntrySel->sel->entry[i].form = Rand_Range(gEntrySel->grid[n].formCount);
                     }
@@ -880,7 +880,7 @@ void EntrySel_Input(s32 *result) {
                     do {
                         slot = Rand_Range(gEntrySel->gridCount);
                         id = gEntrySel->grid[slot].id;
-                    } while (id >= ESEL_ID_RANDOM);
+                    } while (!PORT_IN_POOL(id));
                     chara = id;
                     if (gEntrySel->grid[slot].formCount != 0) {
                         cell = &gEntrySel->grid[slot];
@@ -891,7 +891,7 @@ void EntrySel_Input(s32 *result) {
                     ES_CUR.chara = gEntrySel->sel->rowChara[ES_CUR.col];
                     slot = ES_CUR.col + ES_CUR.row * ESEL_COLS;
                 }
-                if (ES_CUR.custom != 0) {
+                if (ES_CUR.custom != 0 && PORT_SAVE_CELL(slot)) {
                     ES_CUR.items = *(TourItemSet *)gSaveData->custom[slot].item[ES_CUR.custom - 1];
                 } else {
                     memset(&ES_CUR.items, 0, 16);

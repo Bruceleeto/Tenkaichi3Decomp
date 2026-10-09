@@ -61,10 +61,19 @@ extern void Port_CharaCellLog(int cell, int chara, int forms); /* BT3_CHARA_LOG:
     (PORT_CHARA_ADDED(id) && PortChips_Get(id) != NULL ? PortChips_Get(id) : (void *)MPACK_AT(pack, CHARA_T(id) + 1))
 #define PORT_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
 #define PORT_IS_CHARA(id) ((s32)(id) < 0xA1 || PORT_CHARA_ADDED(id))
+/* Whether a cell may be drawn at random (the "random" cell of the selects, the tournament's computer entrants): a
+   character of the disc, and an added one only with the setting "Added characters in random picks" (chara_pool,
+   off unless set: the disc's tests are `id < 0xA1`). PORT_SAVE_CELL: whether a cell has item sets in the save
+   (`custom[97]`, by the cell's place; an added cell lies past them). */
+extern int Port_CharaPool(void);
+#define PORT_IN_POOL(id) ((s32)(id) < 0xA1 || (PORT_CHARA_ADDED(id) && Port_CharaPool()))
+#define PORT_SAVE_CELL(n) ((s32)(n) >= 0 && (s32)(n) < 97)
 #else
 #define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
 #define PORT_NAME_LINE(c) (c)
 #define PORT_IS_CHARA(id) ((id) < 0xA1)
+#define PORT_IN_POOL(id) ((id) < 0xA1)
+#define PORT_SAVE_CELL(n) (1)
 #define CHARA_LINE_FILE(c, base, alt, line) ((base) + ((c) * 100 + (line)))
 #define CHARA_FACE_FILE(c) ((c) + 0x2F9)
 #define CHARA_T(c) (c)

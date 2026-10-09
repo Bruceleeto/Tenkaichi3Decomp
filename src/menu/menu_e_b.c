@@ -1704,7 +1704,7 @@ f32 TeamSel_Input(s32 *result) {
                             do {
                                 for (;;) {
                                     idx = Rand_Range(gTeamSel->masterCount[CUR_N]);
-                                    if (gTeamSel->cells[CUR_N][idx].id < TS_RANDOM) {
+                                    if (PORT_IN_POOL(gTeamSel->cells[CUR_N][idx].id)) {
                                         chara = gTeamSel->cells[CUR_N][idx].id;
                                         break;
                                     }
@@ -1719,7 +1719,7 @@ f32 TeamSel_Input(s32 *result) {
                             CUR_MEMBER.chara = CUR_SIDE->chip[0][CUR_MEMBER.col];
                             idx = CUR_MEMBER.col + CUR_MEMBER.row * TS_COLS;
                         }
-                        if (CUR_MEMBER.plate != 0) {
+                        if (CUR_MEMBER.plate != 0 && PORT_SAVE_CELL(idx)) {
                             CUR_ITEMS = TS_SAVE->custom[idx].set[CUR_MEMBER.plate - 1];
                         } else {
                             memset(&CUR_ITEMS, 0, sizeof(TsItemSet));

@@ -584,6 +584,28 @@ extern "C" {
 extern volatile int gPortUnlockAll, gPortUnlockDone;
 }
 
+extern "C" int Port_CharaCount(void);
+extern "C" int Port_CharaPool(void);
+extern "C" void Port_CharaPoolSet(int on);
+
+// Characters from outside the disc (the `characters` folder next to the game).
+static void mods_tab(void) {
+    int count = Port_CharaCount();
+    if (count == 0) {
+        ImGui::TextWrapped("No added characters. A character from outside the disc is a folder in \"characters\" next to the game.");
+        return;
+    }
+    ImGui::Text("Added characters: %d", count);
+    ImGui::Spacing();
+    bool pool = Port_CharaPool() != 0;
+    if (ImGui::Checkbox("Added characters in random picks", &pool)) {
+        Port_CharaPoolSet(pool);
+    }
+    ImGui::SetItemTooltip("Off: the \"random\" cell of the character select and the computer's entrants of a tournament are\n"
+                          "drawn from the game's own characters, as in the original. On: the added characters are in the draw too.\n"
+                          "The computer then plays them with the behaviour of the character each is based on.");
+}
+
 static void cheats_tab(void) {
     ImGui::TextWrapped("Unlock everything: all characters, stages, music and items, and the largest amount of Zenni. "
                        "This is a debug function the game's developers left in.");
@@ -700,6 +722,7 @@ static void build(void) {
             if (tab("Audio", 2)) { audio_tab(v); ImGui::EndTabItem(); }
             if (tab("Controls", 3)) { controls_tab(); ImGui::EndTabItem(); }
             if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Mods", 5)) { mods_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
         if (ImGui::GetFrameCount() > 3) {

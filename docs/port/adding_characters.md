@@ -154,6 +154,19 @@ of them runs, the row of the select screen shows their chips; the replay check i
 Not checked: the other screens with that many, the menu's memory with 57 chips loaded (about 310 KB of it) on
 screens that use more of it than the duel select.
 
+## Random picks (2026-10-09)
+
+The "random" cell of the select screens and the tournament's computer entrants are drawn from the grid with the
+disc's test `id < 0xA1` (`<= 0xA0`), which passes over added characters. The setting "Added characters in random
+picks" (F1, Mods; `chara_pool`, off unless set; `BT3_CHARA_POOL=1`) puts them in the draw: `PORT_IN_POOL` in the
+duel and team select's random cell, the tournament entry select's two draws and the bracket's computer entrants.
+A cell drawn that way lies past the save's item sets (`custom[97]`, by the cell's place): the reads that follow a
+draw are guarded with `PORT_SAVE_CELL` (found while doing this: with the draw opened, they would have read past
+the array).
+
+Seen without a window: the computer playing an added character through a recorded fight (it moves, attacks and
+is hit; its behaviour is its base character's). Not seen: a draw that lands on an added character.
+
 ## More than that (researched 2026-10-09, nothing changed)
 
 The three reasons given above for the limit do not bind an added character: every character id in the game's

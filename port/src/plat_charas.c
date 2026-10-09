@@ -406,6 +406,22 @@ void *Port_CharaChip(int chara) {
     return index >= 0 && index < sCount && sChipHave[index] ? sChip[index] : NULL;
 }
 
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+extern void Port_SettingSave(const char *name, int value);
+static int sPool = -1;
+
+int Port_CharaPool(void) {
+    if (sPool < 0) {
+        sPool = getenv("BT3_CHARA_POOL") != NULL ? atoi(getenv("BT3_CHARA_POOL")) != 0 : Port_Setting("chara_pool", 0) != 0;
+    }
+    return sPool;
+}
+
+void Port_CharaPoolSet(int on) {
+    sPool = on != 0;
+    Port_SettingSave("chara_pool", sPool);
+}
+
 void Port_CharaCellLog(int cell, int chara, int forms) {
     if (getenv("BT3_CHARA_LOG") != NULL) {
         fprintf(stderr, "bt3: characters: cell %d (row %d, column %d): character %d with %d form%s\n", cell, cell / 7, cell % 7, chara, forms,

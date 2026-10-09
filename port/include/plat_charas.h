@@ -27,6 +27,10 @@ void *Port_CharaChip(int chara);
    is fetched by the renderer from the game's memory) and makes it ready as the screen does the disc's;
    PortChips_Get gives an added character's (NULL: none, the base character's is shown); PortChips_Free gives the
    memory back when the screen ends. One screen at a time. */
+/* "Added characters in random picks" (setting chara_pool, off unless set; BT3_CHARA_POOL=1): the random cell of
+   the select screens and the tournament's computer entrants may be added characters. */
+int Port_CharaPool(void);
+void Port_CharaPoolSet(int on);
 void PortChips_Load(void);
 void *PortChips_Get(int chara);
 void PortChips_Free(void);

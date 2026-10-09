@@ -1748,7 +1748,7 @@ void CharSel_Input(s32 *running) {
                         for (;;) {
                             n = Rand_Range(gCharSel->masterCount[CS_N]);
                             id = gCharSel->cells[CS_N][n].id;
-                            if (id < MCHR_RANDOM) {
+                            if (PORT_IN_POOL(id)) {
                                 chara = id;
                                 break;
                             }
@@ -1761,7 +1761,7 @@ void CharSel_Input(s32 *running) {
                         CS_SIDE->picked = CS_SIDE->chip[CS_SIDE->col];
                         n = CS_SIDE->col + CS_SIDE->row * 7;
                     }
-                    if (CS_SIDE->customPlate != 0) {
+                    if (CS_SIDE->customPlate != 0 && PORT_SAVE_CELL(n)) {
                         CS_SIDE->items = CSSAVE->custom[n].set[CS_SIDE->customPlate - 1];
                     } else {
                         memset(&CS_SIDE->items, 0, 0x10);
