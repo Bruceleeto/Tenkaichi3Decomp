@@ -93,7 +93,7 @@ void UbTeamSel_SetChips(void) {
 
         gUbTeamSel->sel->chip[1][i] = gUbTeamSel->sel->chip[0][i];
         gUbTeamSel->sel->chip[0][i] = id;
-        res = (MTexRes *)MPACK_AT(gUbTeamSel->chips, id + 1);
+        res = (MTexRes *)PORT_CHIP(gUbTeamSel->chips, id);
         gUbTeamSel->texC[18 + i] = gUbTeamSel->texC[slot[i]];
         gUbTeamSel->texC[slot[i]] = res->tex;
     }
@@ -115,7 +115,7 @@ void UbTeamSel_SetFormChips(void) {
         }
         gUbTeamSel->sel->chip[1][i] = gUbTeamSel->sel->chip[0][i];
         gUbTeamSel->sel->chip[0][i] = id;
-        res = (MTexRes *)MPACK_AT(gUbTeamSel->chips, id + 1);
+        res = (MTexRes *)PORT_CHIP(gUbTeamSel->chips, id);
         gUbTeamSel->texC[18 + i] = gUbTeamSel->texC[slot[i]];
         gUbTeamSel->texC[slot[i]] = res->tex;
     }
@@ -136,7 +136,7 @@ void UbTeamSel_SetTeamTex(void) {
         gUbTeamSel->texB[slot[i]] = NULL;
         if (i < gUbTeamSel->sel->memberCount) {
             s32 id = gUbTeamSel->sel->team.member[i].chara;
-            MTexRes *res = (MTexRes *)MPACK_AT(gUbTeamSel->chips, id + 1);
+            MTexRes *res = (MTexRes *)PORT_CHIP(gUbTeamSel->chips, id);
 
             gUbTeamSel->texB[slot[i]] = res->tex;
             if (gUbTeamSel->flags & UBSEL_DP) {
@@ -171,7 +171,7 @@ void UbTeamSel_UpdateFaceLoad(void) {
             gUbTeamSel->sel->flags |= UBTEAM_SEL_FACE_READY;
             gUbTeamSel->loadState = UBSEL_LOAD_IDLE;
         } else {
-            File_Request(gUbTeamSel->sel->chara + UB_FACE_FILE, gUbTeamSel->faceFile, 0x16800);
+            File_Request(CHARA_FACE_FILE(gUbTeamSel->sel->chara), gUbTeamSel->faceFile, 0x16800);
             gUbTeamSel->loadState = UBSEL_LOAD_READ;
         }
         break;
@@ -374,12 +374,18 @@ void UbTeamSel_Init(s32 section) {
     ItemHelp_Init(MPACK_AT(gUbTeamSel->res, 24));
     gUbTeamSel->items = MPACK_AT(gCommonRes->data[2], 2);
     gUbTeamSel->nameText = MPACK_AT(gUbTeamSel->res, 28);
+#ifdef PORT /* (the names of the characters added from outside the disc after the disc's) */
+    gUbTeamSel->nameText = Port_CharaNamePack(gUbTeamSel->nameText);
+#endif
     gUbTeamSel->formText = MPACK_AT(gUbTeamSel->res, 29);
     gUbTeamSel->chips = (u32 *)MPACK_AT(gUbTeamSel->res, 27);
     for (i = 0; i < UB_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gUbTeamSel->chips, i + 1);
         Res_RelocateOffsets(&res, res, res);
     }
+#ifdef PORT /* (the folders' chips, made ready like the disc's) */
+    PortChips_Load();
+#endif
     gUbTeamSel->grid = (UbCell *)(MPACK_AT(gUbTeamSel->res, 30) + 0x10);
     gUbTeamSel->gridCount = gUbTeamSel->res[gUbTeamSel->res[30] >> 2];
     ChrGrid_Build(&gUbTeamSel->gridOutCount, gUbTeamSel->gridBuf, &gUbTeamSel->gridCount, gUbTeamSel->grid, NULL, NULL);
@@ -417,7 +423,7 @@ void UbTeamSel_Init(s32 section) {
         gUbTeamSel->blink[i] = Rand_Range(0x20);
     }
     gUbTeamSel->voiceLine = -1;
-    File_LoadSync(gUbTeamSel->sel->chara + UB_FACE_FILE, gUbTeamSel->faceFile, 0x16800);
+    File_LoadSync(CHARA_FACE_FILE(gUbTeamSel->sel->chara), gUbTeamSel->faceFile, 0x16800);
     Sprite_Unpack(gUbTeamSel->faceFile, gUbTeamSel->faceRes, NULL);
     res = gUbTeamSel->faceRes;
     Res_RelocateOffsets(&res, res, res);
@@ -433,6 +439,9 @@ void UbTeamSel_Init(s32 section) {
 void UbTeamSel_Term(void) {
     s32 i;
 
+#ifdef PORT /* (the folders' chips) */
+    PortChips_Free();
+#endif
     ItemHelp_Term();
     MsgWin_Term();
     ItemPanel_Term(0);
@@ -495,9 +504,9 @@ void UbTeamSel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_single_chara_l", &ref);
     Flash_ClipSetAlpha(flash, &ref, gUbTeamSel->faceAlpha);
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gUbTeamSel->sel->chara, &gUbTeamSel->box[0]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gUbTeamSel->sel->chara), &gUbTeamSel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gUbTeamSel->sel->chara, &gUbTeamSel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gUbTeamSel->sel->chara), &gUbTeamSel->box[1]);
     if (gUbTeamSel->flags & UBSEL_DP) {
         uv.x0 = (gUbTeamSel->dpLevel % 2) * 0x40;
         uv.y0 = (gUbTeamSel->dpLevel / 2) * 0x20;
@@ -604,7 +613,7 @@ void UbTeamSel_Draw(void) {
             chara = gUbTeamSel->sel->chip[i / cols][i % cols];
         }
         if (gUbTeamSel->flags & UBSEL_DP) {
-            if (chara < UB_ID_RANDOM) {
+            if (PORT_IS_CHARA(chara)) {
                 cost = ChrTbl_GetCost(chara);
             } else {
                 cost = 0;
@@ -613,14 +622,14 @@ void UbTeamSel_Draw(void) {
             Flash_FindLabel(flash, name, name2, &ref);
             if (gUbTeamSel->sel->cost + cost > gUbTeamSel->dpMax) {
                 Flash_ClipSetColor(flash, &ref, 0.4f);
-            } else if (chara < UB_ID_RANDOM) {
+            } else if (PORT_IS_CHARA(chara)) {
                 Flash_ClipSetColor(flash, &ref, UbTeamSel_IsCharaFree(chara) ? 1.0f : 0.4f);
             } else {
                 Flash_ClipSetColor(flash, &ref, 1.0f);
             }
             sprintf(name2, "mc_dp_num_%03d", i);
             Flash_FindLabel(flash, name, name2, &ref);
-            if (chara < UB_ID_RANDOM) {
+            if (PORT_IS_CHARA(chara)) {
                 uv.x0 = (cost % 4) * 0x20;
                 uv.x1 = uv.x0 + 0x20;
                 uv.y0 = (cost / 4) * 0x20;
@@ -633,7 +642,7 @@ void UbTeamSel_Draw(void) {
         } else {
             sprintf(name2, "mc_chara_%03d", i);
             Flash_FindLabel(flash, name, name2, &ref);
-            if (chara < UB_ID_RANDOM) {
+            if (PORT_IS_CHARA(chara)) {
                 Flash_ClipSetColor(flash, &ref, UbTeamSel_IsCharaFree(chara) ? 1.0f : 0.4f);
             } else {
                 Flash_ClipSetColor(flash, &ref, 1.0f);
@@ -760,7 +769,7 @@ void UbTeamSel_Input(s32 *result) {
                 } else if (UbTeamSel_IsCharaFree(gUbTeamSel->sel->chara)) {
                     Flash_GotoLabel(&gUbTeamSel->flash[3], "fl_custom_in", 1);
                     UbTeamSel_ClipGoto(2, UBTEAM_CLIP_CHIP, "fl_ok");
-                    gUbTeamSel->plateCount = (gUbTeamSel->flags & UBSEL_NO_CUSTOM) ? 1 : 4;
+                    gUbTeamSel->plateCount = ((gUbTeamSel->flags & UBSEL_NO_CUSTOM) || PORT_CHARA_ADDED(gUbTeamSel->sel->chara)) ? 1 : 4;
                     if (UT_CUR.plate >= gUbTeamSel->plateCount) {
                         UT_CUR.plate = 0;
                     }
@@ -814,7 +823,7 @@ void UbTeamSel_Input(s32 *result) {
                 if (UbTeamSel_IsCharaFree(gUbTeamSel->sel->chara)) {
                     Flash_GotoLabel(&gUbTeamSel->flash[3], "fl_custom_in", 1);
                     UbTeamSel_ClipGoto(2, UBTEAM_CLIP_FORM_CHIP, "fl_ok");
-                    gUbTeamSel->plateCount = (gUbTeamSel->flags & UBSEL_NO_CUSTOM) ? 1 : 4;
+                    gUbTeamSel->plateCount = ((gUbTeamSel->flags & UBSEL_NO_CUSTOM) || PORT_CHARA_ADDED(gUbTeamSel->sel->chara)) ? 1 : 4;
                     if (UT_CUR.plate >= gUbTeamSel->plateCount) {
                         UT_CUR.plate = 0;
                     }

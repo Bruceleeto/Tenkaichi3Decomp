@@ -1957,7 +1957,7 @@ void SimDay_UpdateFaceLoad(void) {
         chara[0] = QPROG->member.chara;
         chara[1] = gSimDay->enemyChara;
         File_CancelRequests();
-        File_Request(chara[0] + SIMDAY_FACE_FILE, gSimDay->faceFile[0], SIMDAY_FACE_SIZE);
+        File_Request(CHARA_FACE_FILE(chara[0]), gSimDay->faceFile[0], SIMDAY_FACE_SIZE);
         File_Request(chara[1] + SIMDAY_FACE_FILE, gSimDay->faceFile[1], SIMDAY_FACE_SIZE);
         gSimDay->loadState = SIMDAY_LOAD_READ;
         break;

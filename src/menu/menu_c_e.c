@@ -81,23 +81,10 @@ extern void ItemHelp_Init(void *data);
 extern void ItemHelp_Term(void);
 extern void ItemHelp_Draw(s32 arg);
 
-/* PC build: an added character's own chip, large picture and name where its folder has them (plat_charas.c); the
-   base character's otherwise, and the disc's for every other id. */
-#ifdef PORT
-extern void *Port_CharaChipLoad(int index), *Port_CharaChip(int chara), *Port_CharaNamePack(void *pack);
-extern int Port_CharaNameLine(int chara), Port_CharaCount(void);
-/* The folders' chips are read into the game's own memory for as long as the screen lives (a picture is fetched by
-   the renderer from the game's memory: one kept in the port's would not be drawn). */
-#define CS_CHIP_BYTES 0x1580
-static u8 *sPortChipMem;
-static MTexRes *sPortChip[PORT_CHARA_MAX];
-#define CS_CHIP(id) \
-    (PORT_CHARA_ADDED(id) && sPortChip[(id) - PORT_CHARA_FIRST] != NULL ? sPortChip[(id) - PORT_CHARA_FIRST] : (MTexRes *)MPACK_AT(gCharSel->chipPack, CHARA_T(id) + 1))
-#define CS_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
-#else
-#define CS_CHIP(id) ((MTexRes *)MPACK_AT(gCharSel->chipPack, (id) + 1))
-#define CS_NAME_LINE(c) (c)
-#endif
+/* PC build: an added character's own chip, large picture and name where its folder has them (include/port_chara.h,
+   port/src/plat_charas.c); the base character's otherwise, and the disc's for every other id. */
+#define CS_CHIP(id) ((MTexRes *)PORT_CHIP(gCharSel->chipPack, id))
+#define CS_NAME_LINE(c) PORT_NAME_LINE(c)
 
 /* The six chips of the stage reel show the cursor's row of the stage grid. */
 void CharSel_SetStageChips(void) {
@@ -550,17 +537,7 @@ void CharSel_Init(s32 section) {
         CS_RES(gCharSel->chipPack, i + 1);
     }
 #ifdef PORT /* (the added characters' own chips, made ready like the disc's) */
-    memset(sPortChip, 0, sizeof(sPortChip));
-    sPortChipMem = Port_CharaCount() > 0 ? Heap_Alloc(Port_CharaCount() * CS_CHIP_BYTES, 0x40, 0, 2) : NULL;
-    for (i = 0; sPortChipMem != NULL && i < Port_CharaCount(); i++) {
-        void *file = Port_CharaChipLoad(i);
-        if (file != NULL) {
-            res = (MTexRes *)(sPortChipMem + i * CS_CHIP_BYTES);
-            memcpy(res, file, CS_CHIP_BYTES);
-            sPortChip[i] = res;
-            Res_RelocateOffsets(&res, res, res);
-        }
-    }
+    PortChips_Load();
 #endif
     gCharSel->stagePack = (u32 *)MPACK_AT(gCharSel->res, 46);
     for (i = 0; i < 38; i++) {
@@ -699,48 +676,6 @@ void CharSel_Init(s32 section) {
     for (i = 0, cols = MCHR_COLS; i < CHARSEL_SIDES; i++) {
         ChrGrid_Build(&gCharSel->cellCount[i], gCharSel->grid[i], &gCharSel->masterCount[i], gCharSel->cells[i],
                       &gCharSel->customCount[i], gCharSel->custom[i]);
-#ifdef PORT
-        {
-            /* PC build: the characters added from outside the disc (port/src/plat_charas.c), one cell each after
-               the disc's, in the place of the last row's filler cells and then in rows of their own. They are put
-               in here, after the game has made its list from the disc's and the save's unlocks, and are never
-               looked up in the save. Not in an online session: both players must have the same list. */
-            extern int Port_CharaCount(void);
-            extern int Port_NetSession(void);
-            s32 added = Port_NetSession() ? 0 : Port_CharaCount(), n = gCharSel->cellCount[i], k;
-            while (added > 0 && n > 0 && gCharSel->grid[i][n - 1].id == MCHR_EMPTY) {
-                n--;
-            }
-            for (k = 0; k < added && n < MCHR_CELL_MAX - MCHR_COLS; k++) {
-                /* (a character with forms: one cell, its forms under it as the disc's are; a form has no cell) */
-                extern int Port_CharaForms(int chara, int *out, int max);
-                int forms[7], count = Port_CharaForms(PORT_CHARA_FIRST + k, forms, 7), f; /* (7: a cell's form[]) */
-                if (count < 0) {
-                    continue;
-                }
-                memset(&gCharSel->grid[i][n], 0, sizeof(gCharSel->grid[i][n]));
-                gCharSel->grid[i][n].id = PORT_CHARA_FIRST + k;
-                if (i == 0 && getenv("BT3_CHARA_LOG") != NULL) {
-                    fprintf(stderr, "bt3: characters: cell %d (row %d, column %d): character %d with %d form%s\n", (int)n, (int)(n / MCHR_COLS),
-                            (int)(n % MCHR_COLS), PORT_CHARA_FIRST + (int)k, count, count == 1 ? "" : "s");
-                }
-                if (count > 1) {
-                    gCharSel->grid[i][n].formCount = count;
-                    for (f = 0; f < count; f++) {
-                        gCharSel->grid[i][n].form[f] = forms[f];
-                    }
-                }
-                n++;
-            }
-            for (; added > 0 && n % MCHR_COLS != 0; n++) {
-                memset(&gCharSel->grid[i][n], 0, sizeof(gCharSel->grid[i][n]));
-                gCharSel->grid[i][n].id = MCHR_EMPTY;
-            }
-            if (added > 0) {
-                gCharSel->cellCount[i] = n;
-            }
-        }
-#endif
         gCharSel->masterCount[i] = gCharSel->cellCount[i];
         gCharSel->cells[i] = gCharSel->grid[i];
         gCharSel->rows[i] = gCharSel->masterCount[i] / cols;
@@ -858,11 +793,7 @@ void CharSel_Term(void) {
         Flash_Destroy(&gCharSel->flash[i]);
     }
 #ifdef PORT /* (the folders' chips) */
-    if (sPortChipMem != NULL) {
-        Heap_Free(sPortChipMem);
-        sPortChipMem = NULL;
-        memset(sPortChip, 0, sizeof(sPortChip));
-    }
+    PortChips_Free();
 #endif
     if (gCharSel->stageRes[1] != NULL) {
         Heap_Free(gCharSel->stageRes[1]);

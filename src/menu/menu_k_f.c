@@ -188,12 +188,18 @@ void Bracket_Load(LBracket *b) {
     Dialog_Init(MPACK_AT(b->res, 36), NULL, 0);
     GetWin_Init(MPACK_AT(b->res, 42), 1);
     b->nameText = MPACK_AT(b->res, 21);
+#ifdef PORT /* (the names of the characters added from outside the disc after the disc's) */
+    b->nameText = Port_CharaNamePack(b->nameText);
+#endif
     b->formText = MPACK_AT(b->res, 22);
     b->chips = (u32 *)MPACK_AT(b->res, 23);
     for (i = 0; i < LCHR_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(b->chips, i + 1);
         Res_RelocateOffsets(&res, res, res);
     }
+#ifdef PORT /* (the folders' chips, made ready like the disc's) */
+    PortChips_Load();
+#endif
     b->grid = (LChrCell *)(MPACK_AT(b->res, 24) + 0x10);
     b->gridCount = b->res[b->res[24] >> 2];
     b->cpu = (LTourCpu *)MPACK_AT(b->res, 31);
@@ -635,7 +641,7 @@ void Bracket_SetChipTex(LBracket *b) {
     s32 i;
 
     for (i = 0; i < LTOUR_ENTRANT_MAX; i++) {
-        b->texTree[tbl[i]] = MTEX((MTexRes *)MPACK_AT(b->chips, b->entrant[i].chara + 1), 0);
+        b->texTree[tbl[i]] = MTEX((MTexRes *)PORT_CHIP(b->chips, b->entrant[i].chara), 0);
     }
 }
 
@@ -745,9 +751,9 @@ void Bracket_StartVs(LBracket *b) {
 
     b->loadState = LBRK_LOAD_REQUEST;
     b->flags |= LBRK_MOVE_A;
-    res = (MTexRes *)MPACK_AT(b->chips, b->entrant[b->match_[b->match].ent[0]].chara + 1);
+    res = (MTexRes *)PORT_CHIP(b->chips, b->entrant[b->match_[b->match].ent[0]].chara);
     b->texMoveA[1] = MTEX(res, 0);
-    res = (MTexRes *)MPACK_AT(b->chips, b->entrant[b->match_[b->match].ent[1]].chara + 1);
+    res = (MTexRes *)PORT_CHIP(b->chips, b->entrant[b->match_[b->match].ent[1]].chara);
     b->texMoveA[4] = MTEX(res, 0);
     b->scroll = -(f32)Bracket_GetViewX(b->match_[b->match].view);
     Flash_SetOffset(&b->flash[0], b->scroll, 0);
@@ -765,9 +771,9 @@ void Bracket_StartWin(LBracket *b) {
     MTexRes *res;
 
     b->flags |= LBRK_MOVE_B;
-    res = (MTexRes *)MPACK_AT(b->chips, b->entrant[b->match_[b->match].ent[0]].chara + 1);
+    res = (MTexRes *)PORT_CHIP(b->chips, b->entrant[b->match_[b->match].ent[0]].chara);
     b->texMoveB[1] = MTEX(res, 0);
-    res = (MTexRes *)MPACK_AT(b->chips, b->entrant[b->match_[b->match].ent[1]].chara + 1);
+    res = (MTexRes *)PORT_CHIP(b->chips, b->entrant[b->match_[b->match].ent[1]].chara);
     b->texMoveB[4] = MTEX(res, 0);
     b->scroll = -(f32)Bracket_GetViewX(b->match_[b->match].view);
     Flash_SetOffset(&b->flash[0], b->scroll, 0);
@@ -792,8 +798,8 @@ void Bracket_UpdateImages(LBracket *b) {
         chara[0] = b->entrant[b->match_[b->match].ent[0]].chara;
         chara[1] = b->entrant[b->match_[b->match].ent[1]].chara;
         File_CancelRequests();
-        File_Request(chara[0] + 0x2F9, b->imageFile[0], 0x16800);
-        File_Request(chara[1] + 0x2F9, b->imageFile[1], 0x16800);
+        File_Request(CHARA_FACE_FILE(chara[0]), b->imageFile[0], 0x16800);
+        File_Request(CHARA_FACE_FILE(chara[1]), b->imageFile[1], 0x16800);
         b->loadState = LBRK_LOAD_READ;
         break;
     case LBRK_LOAD_READ:
@@ -825,8 +831,8 @@ void Bracket_LoadImages(LBracket *b) {
     memset(p, 0, 8);
     chara[0] = b->entrant[b->match_[b->match].ent[0]].chara;
     chara[1] = b->entrant[b->match_[b->match].ent[1]].chara;
-    File_LoadSync(chara[0] + 0x2F9, b->imageFile[0], 0x16800);
-    File_LoadSync(chara[1] + 0x2F9, b->imageFile[1], 0x16800);
+    File_LoadSync(CHARA_FACE_FILE(chara[0]), b->imageFile[0], 0x16800);
+    File_LoadSync(CHARA_FACE_FILE(chara[1]), b->imageFile[1], 0x16800);
     Sprite_Unpack(b->imageFile[0], b->imageRes[0], NULL);
     Sprite_Unpack(b->imageFile[1], b->imageRes[1], NULL);
     res = b->imageRes[0];

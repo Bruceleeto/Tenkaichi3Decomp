@@ -35,14 +35,31 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
 #define CHARA_VOICE_FILE(c, base, alt) (PORT_CHARA_ADDED(c) ? PORT_CHARA_VOICE0 + ((s32)(c) - PORT_CHARA_FIRST) * 2 + ((alt) ? 1 : 0) : (s32)(c) + (base))
 /* the large picture of the menus: 0x2F9 + id on the disc; an added character's own file, answered from its folder
    (`portrait.bin`) or with its base character's */
-#define PORT_CHARA_FACE0 (0xD48 + 73000)
+#define PORT_CHARA_FACE0 (0xD48 + 80000) /* (73000 is the added songs') */
 #define CHARA_FACE_FILE(c) (PORT_CHARA_ADDED(c) ? PORT_CHARA_FACE0 + ((s32)(c) - PORT_CHARA_FIRST) : (s32)(c) + 0x2F9)
 /* a spoken line (a sound stream): `base + id * 100 + line` on the disc, two sets (`alt` the second); an added
    character's own, answered from its folder (voice_us/NNN.adx, voice_jp/NNN.adx) or with its base character's */
 #define PORT_CHARA_LINE0 (0xD48 + 74000)
 #define CHARA_LINE_FILE(c, base, alt, line) \
     (PORT_CHARA_ADDED(c) ? PORT_CHARA_LINE0 + ((s32)(c) - PORT_CHARA_FIRST) * 200 + ((alt) ? 100 : 0) + (line) : (base) + ((s32)(c) * 100 + (line)))
+/* For the screens with a roster (the same in each): an added character's own chip, name and number of item sets.
+   PORT_CHIP: the texture list of a chip (`pack` = the screen's chip pack); the screen calls PortChips_Load() after
+   it has made the disc's chips ready and PortChips_Free() when it ends. PORT_NAME_LINE: the line of a name in the
+   pack Port_CharaNamePack() made of the screen's. PORT_IS_CHARA: a cell id that is a character (the disc's tests
+   are `id < 0xA1`, which would take an added character for a marker). */
+extern void PortChips_Load(void), PortChips_Free(void);
+extern void *PortChips_Get(int chara), *Port_CharaNamePack(void *pack);
+extern int Port_CharaNameLine(int chara), Port_CharaCount(void), Port_NetSession(void);
+extern int Port_CharaForms(int chara, int *out, int max);
+extern void Port_CharaCellLog(int cell, int chara, int forms); /* BT3_CHARA_LOG: the cells made for added characters */
+#define PORT_CHIP(pack, id) \
+    (PORT_CHARA_ADDED(id) && PortChips_Get(id) != NULL ? PortChips_Get(id) : (void *)MPACK_AT(pack, CHARA_T(id) + 1))
+#define PORT_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
+#define PORT_IS_CHARA(id) ((s32)(id) < 0xA1 || PORT_CHARA_ADDED(id))
 #else
+#define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
+#define PORT_NAME_LINE(c) (c)
+#define PORT_IS_CHARA(id) ((id) < 0xA1)
 #define CHARA_LINE_FILE(c, base, alt, line) ((base) + ((c) * 100 + (line)))
 #define CHARA_FACE_FILE(c) ((c) + 0x2F9)
 #define CHARA_T(c) (c)

@@ -406,6 +406,51 @@ void *Port_CharaChip(int chara) {
     return index >= 0 && index < sCount && sChipHave[index] ? sChip[index] : NULL;
 }
 
+void Port_CharaCellLog(int cell, int chara, int forms) {
+    if (getenv("BT3_CHARA_LOG") != NULL) {
+        fprintf(stderr, "bt3: characters: cell %d (row %d, column %d): character %d with %d form%s\n", cell, cell / 7, cell % 7, chara, forms,
+                forms > 1 ? "s" : "");
+    }
+}
+
+extern void *Heap_Alloc(int size, int align, int fromTail, int heap); /* the game's (src/sys/heap.c) */
+extern void Heap_Free(void *ptr);
+extern void Res_RelocateOffsets(void *out, void *base, void *hdr); /* src/sys/gfxm_b_b.c */
+static unsigned char *sChipMem;
+static void *sChipRes[PORT_CHARA_MAX];
+
+void PortChips_Free(void) {
+    if (sChipMem != NULL) {
+        Heap_Free(sChipMem);
+        sChipMem = NULL;
+    }
+    memset(sChipRes, 0, sizeof(sChipRes));
+}
+
+void PortChips_Load(void) {
+    int i;
+    PortCharas_Init();
+    PortChips_Free();
+    if (sCount == 0) {
+        return;
+    }
+    sChipMem = Heap_Alloc(sCount * CHIP_SIZE, 0x40, 0, 2);
+    for (i = 0; sChipMem != NULL && i < sCount; i++) {
+        void *file = Port_CharaChipLoad(i);
+        if (file != NULL) {
+            void *res = sChipMem + i * CHIP_SIZE;
+            memcpy(res, file, CHIP_SIZE);
+            sChipRes[i] = res;
+            Res_RelocateOffsets(&res, res, res);
+        }
+    }
+}
+
+void *PortChips_Get(int chara) {
+    int index = chara - PORT_CHARA_FIRST;
+    return index >= 0 && index < sCount ? sChipRes[index] : NULL;
+}
+
 void *Port_CharaNamePack(void *pack) {
     const unsigned char *src = pack;
     unsigned count, total, head, i, k;

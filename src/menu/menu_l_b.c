@@ -27,7 +27,7 @@ void SoloSel_SwapRowTex(void) {
 
         gSoloSel->sel->prevRowChara[i] = gSoloSel->sel->rowChara[i];
         gSoloSel->sel->rowChara[i] = chara;
-        res = (MTexRes *)MPACK_AT(gSoloSel->chips, chara + 1);
+        res = (MTexRes *)PORT_CHIP(gSoloSel->chips, chara);
         gSoloSel->texB[18 + i] = gSoloSel->texB[tbl[i]];
         gSoloSel->texB[tbl[i]] = MTEX(res, 0);
     }
@@ -49,7 +49,7 @@ void SoloSel_SetRowTex(void) {
         }
         gSoloSel->sel->prevRowChara[i] = gSoloSel->sel->rowChara[i];
         gSoloSel->sel->rowChara[i] = chara;
-        res = (MTexRes *)MPACK_AT(gSoloSel->chips, chara + 1);
+        res = (MTexRes *)PORT_CHIP(gSoloSel->chips, chara);
         gSoloSel->texB[18 + i] = gSoloSel->texB[tbl[i]];
         gSoloSel->texB[tbl[i]] = MTEX(res, 0);
     }
@@ -71,7 +71,7 @@ void SoloSel_UpdateImage(void) {
         break;
     case SOLOSEL_LOAD_REQUEST:
         File_CancelRequests();
-        File_Request(gSoloSel->sel->image + 0x2F9, gSoloSel->imageFile, 0x16800);
+        File_Request(CHARA_FACE_FILE(gSoloSel->sel->image), gSoloSel->imageFile, 0x16800);
         gSoloSel->loadState = SOLOSEL_LOAD_READ;
         break;
     case SOLOSEL_LOAD_READ:
@@ -214,12 +214,18 @@ void SoloSel_Init(s32 section) {
     ItemHelp_Init(MPACK_AT(gSoloSel->res, 24));
     gSoloSel->items = MPACK_AT(gCommonRes->data[2], 2);
     gSoloSel->nameText = MPACK_AT(gSoloSel->res, 28);
+#ifdef PORT /* (the names of the characters added from outside the disc after the disc's) */
+    gSoloSel->nameText = Port_CharaNamePack(gSoloSel->nameText);
+#endif
     gSoloSel->formText = MPACK_AT(gSoloSel->res, 29);
     gSoloSel->chips = (u32 *)MPACK_AT(gSoloSel->res, 27);
     for (i = 0; i < LCHR_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gSoloSel->chips, i + 1);
         Res_RelocateOffsets(&res, res, res);
     }
+#ifdef PORT /* (the folders' chips, made ready like the disc's) */
+    PortChips_Load();
+#endif
     gSoloSel->grid = ((LChrGridList *)MPACK_AT(gSoloSel->res, 30))->cell;
     gSoloSel->gridCount = gSoloSel->res[gSoloSel->res[30] >> 2];
     ChrGrid_Build(&gSoloSel->gridOutCount, gSoloSel->gridBuf, &gSoloSel->gridCount, gSoloSel->grid, NULL, NULL);
@@ -250,7 +256,7 @@ void SoloSel_Init(s32 section) {
         gSoloSel->blink[i] = Rand_Range(0x20);
     }
     gSoloSel->voiceLine = -1;
-    File_LoadSync(gSoloSel->sel->image + 0x2F9, gSoloSel->imageFile, 0x16800);
+    File_LoadSync(CHARA_FACE_FILE(gSoloSel->sel->image), gSoloSel->imageFile, 0x16800);
     Sprite_Unpack(gSoloSel->imageFile, gSoloSel->imageRes, NULL);
     res = gSoloSel->imageRes;
     Res_RelocateOffsets(&res, res, res);
@@ -266,6 +272,9 @@ void SoloSel_Init(s32 section) {
 void SoloSel_Term(void) {
     s32 i;
 
+#ifdef PORT /* (the folders' chips) */
+    PortChips_Free();
+#endif
     ItemHelp_Term();
     MsgWin_Term();
     ItemPanel_Term(0);
@@ -327,9 +336,9 @@ void SoloSel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_single_chara_l", &ref);
     Flash_ClipSetAlpha(flash, &ref, gSoloSel->imageAlpha);
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gSoloSel->sel->image, &gSoloSel->box[0]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gSoloSel->sel->image), &gSoloSel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gSoloSel->sel->image, &gSoloSel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gSoloSel->sel->image), &gSoloSel->box[1]);
     flash = &gSoloSel->flash[2];
     uv.x0 = 0x20;
     uv.y0 = 0;
@@ -510,7 +519,7 @@ void SoloSel_Input(s32 *result) {
             } else {
                 Flash_GotoLabel(&gSoloSel->flash[2], "fl_custom_in", 1);
                 SoloSel_ClipGoto(1, 0, "fl_ok");
-                gSoloSel->customCount = (gSoloSel->flags & SOLOSEL_NO_CUSTOM) ? 1 : 4;
+                gSoloSel->customCount = ((gSoloSel->flags & SOLOSEL_NO_CUSTOM) || PORT_CHARA_ADDED(gSoloSel->sel->image)) ? 1 : 4;
                 if (SS_CUR.custom >= gSoloSel->customCount) {
                     SS_CUR.custom = 0;
                 }
@@ -543,7 +552,7 @@ void SoloSel_Input(s32 *result) {
         } else if (gPad[0].gamePressed & 0x200) {
             Flash_GotoLabel(&gSoloSel->flash[2], "fl_custom_in", 1);
             SoloSel_ClipGoto(1, 1, "fl_ok");
-            gSoloSel->customCount = (gSoloSel->flags & SOLOSEL_NO_CUSTOM) ? 1 : 4;
+            gSoloSel->customCount = ((gSoloSel->flags & SOLOSEL_NO_CUSTOM) || PORT_CHARA_ADDED(gSoloSel->sel->image)) ? 1 : 4;
             if (SS_CUR.custom >= gSoloSel->customCount) {
                 SS_CUR.custom = 0;
             }

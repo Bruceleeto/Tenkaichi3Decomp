@@ -94,6 +94,9 @@ void Bracket_Init(void) {
 void Bracket_Term(void) {
     s32 i;
 
+#ifdef PORT /* (the folders' chips) */
+    PortChips_Free();
+#endif
     GetWin_Term();
     Dialog_Term();
     MsgWin_Term();

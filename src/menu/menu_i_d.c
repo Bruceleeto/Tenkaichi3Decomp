@@ -28,7 +28,7 @@ void EntrySel_SwapRowTex(void) {
 
         gEntrySel->sel->prevRowChara[i] = gEntrySel->sel->rowChara[i];
         gEntrySel->sel->rowChara[i] = chara;
-        res = (MTexRes *)MPACK_AT(gEntrySel->chips, chara + 1);
+        res = (MTexRes *)PORT_CHIP(gEntrySel->chips, chara);
         gEntrySel->texB[18 + i] = gEntrySel->texB[tbl[i]];
         gEntrySel->texB[tbl[i]] = MTEX(res, 0);
     }
@@ -50,7 +50,7 @@ void EntrySel_SetRowTex(void) {
         }
         gEntrySel->sel->prevRowChara[i] = gEntrySel->sel->rowChara[i];
         gEntrySel->sel->rowChara[i] = chara;
-        res = (MTexRes *)MPACK_AT(gEntrySel->chips, chara + 1);
+        res = (MTexRes *)PORT_CHIP(gEntrySel->chips, chara);
         gEntrySel->texB[18 + i] = gEntrySel->texB[tbl[i]];
         gEntrySel->texB[tbl[i]] = MTEX(res, 0);
     }
@@ -65,7 +65,7 @@ void EntrySel_SetMemberTex(void) {
         gEntrySel->texA[10 + i] = NULL;
     }
     for (i = 0; i < gEntrySel->sel->cur; i++) {
-        res = (MTexRes *)MPACK_AT(gEntrySel->chips, gEntrySel->sel->entry[i].chara + 1);
+        res = (MTexRes *)PORT_CHIP(gEntrySel->chips, gEntrySel->sel->entry[i].chara);
         gEntrySel->texA[10 + i] = MTEX(res, 0);
     }
 }
@@ -86,7 +86,7 @@ void EntrySel_UpdateImage(void) {
         break;
     case ESEL_LOAD_REQUEST:
         File_CancelRequests();
-        File_Request(gEntrySel->sel->image + 0x2F9, gEntrySel->imageFile, 0x16800);
+        File_Request(CHARA_FACE_FILE(gEntrySel->sel->image), gEntrySel->imageFile, 0x16800);
         gEntrySel->loadState = ESEL_LOAD_READ;
         break;
     case ESEL_LOAD_READ:
@@ -266,12 +266,18 @@ void EntrySel_Init(s32 section) {
     MsgWin_Open();
     gEntrySel->items = MPACK_AT(gCommonRes->data[2], 2);
     gEntrySel->nameText = MPACK_AT(gEntrySel->res, 30);
+#ifdef PORT /* (the names of the characters added from outside the disc after the disc's) */
+    gEntrySel->nameText = Port_CharaNamePack(gEntrySel->nameText);
+#endif
     gEntrySel->formText = MPACK_AT(gEntrySel->res, 31);
     gEntrySel->chips = (u32 *)MPACK_AT(gEntrySel->res, 32);
     for (i = 0; i < ESEL_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gEntrySel->chips, i + 1);
         Res_RelocateOffsets(&res, res, res);
     }
+#ifdef PORT /* (the folders' chips, made ready like the disc's) */
+    PortChips_Load();
+#endif
     gEntrySel->grid = ((ESelGridList *)MPACK_AT(gEntrySel->res, 29))->cell;
     gEntrySel->gridCount = gEntrySel->res[gEntrySel->res[29] >> 2];
     ChrGrid_Build(&gEntrySel->gridOutCount, gEntrySel->gridBuf, &gEntrySel->gridCount, gEntrySel->grid, NULL, NULL);
@@ -330,7 +336,7 @@ void EntrySel_Init(s32 section) {
     for (i = 0; i < 2; i++) {
         gEntrySel->blink[i] = Rand_Range(0x20);
     }
-    File_LoadSync(gEntrySel->sel->image + 0x2F9, gEntrySel->imageFile, 0x16800);
+    File_LoadSync(CHARA_FACE_FILE(gEntrySel->sel->image), gEntrySel->imageFile, 0x16800);
     Sprite_Unpack(gEntrySel->imageFile, gEntrySel->imageRes, NULL);
     res = gEntrySel->imageRes;
     Res_RelocateOffsets(&res, res, res);
@@ -352,6 +358,9 @@ void EntrySel_Init(s32 section) {
 void EntrySel_Term(void) {
     s32 i;
 
+#ifdef PORT /* (the folders' chips) */
+    PortChips_Free();
+#endif
     ItemHelp_Term();
     MsgWin_Term();
     ItemPanel_Term(0);
@@ -402,9 +411,9 @@ void EntrySel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_single_chara_l", &ref);
     Flash_ClipSetAlpha(flash, &ref, gEntrySel->imageAlpha);
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gEntrySel->sel->image, &gEntrySel->box[0]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gEntrySel->sel->image), &gEntrySel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, gEntrySel->sel->image, &gEntrySel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gEntrySel->sel->image), &gEntrySel->box[1]);
     for (i = 0; i < ESEL_ENTRY_MAX; i++) {
         /* the entry list: "entry n" for those still to choose, the "decided" text for the chosen ones */
         sprintf(name, "mc_entry_text_%d", i);
@@ -651,7 +660,7 @@ void EntrySel_Input(s32 *result) {
                 Flash_GotoLabel(&gEntrySel->flash[2], "fl_custom_in", 1);
                 EntrySel_ClipGoto(1, 0, "fl_ok");
                 EntrySel_ClipGoto(2, 2, "fl_on_start");
-                gEntrySel->customCount = (gEntrySel->flags & ESEL_NO_CUSTOM) ? 1 : 4;
+                gEntrySel->customCount = ((gEntrySel->flags & ESEL_NO_CUSTOM) || PORT_CHARA_ADDED(gEntrySel->sel->image)) ? 1 : 4;
                 if (ES_CUR.custom >= gEntrySel->customCount) {
                     ES_CUR.custom = 0;
                 }
@@ -679,7 +688,7 @@ void EntrySel_Input(s32 *result) {
                 Flash_GotoLabel(&gEntrySel->flash[2], "fl_custom_in", 1);
                 EntrySel_ClipGoto(1, 0, "fl_ok");
                 EntrySel_ClipGoto(2, 2, "fl_on_start");
-                gEntrySel->customCount = (gEntrySel->flags & ESEL_NO_CUSTOM) ? 1 : 4;
+                gEntrySel->customCount = ((gEntrySel->flags & ESEL_NO_CUSTOM) || PORT_CHARA_ADDED(gEntrySel->sel->image)) ? 1 : 4;
                 if (ES_CUR.custom >= gEntrySel->customCount) {
                     ES_CUR.custom = 0;
                 }
@@ -725,7 +734,7 @@ void EntrySel_Input(s32 *result) {
             Flash_GotoLabel(&gEntrySel->flash[2], "fl_custom_in", 1);
             EntrySel_ClipGoto(1, 1, "fl_ok");
             EntrySel_ClipGoto(2, 2, "fl_on_start");
-            gEntrySel->customCount = (gEntrySel->flags & ESEL_NO_CUSTOM) ? 1 : 4;
+            gEntrySel->customCount = ((gEntrySel->flags & ESEL_NO_CUSTOM) || PORT_CHARA_ADDED(gEntrySel->sel->image)) ? 1 : 4;
             if (ES_CUR.custom >= gEntrySel->customCount) {
                 ES_CUR.custom = 0;
             }

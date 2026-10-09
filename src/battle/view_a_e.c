@@ -869,6 +869,44 @@ void ChrGrid_Build(s32 *outCount, ChrGridCell *out, s32 *inCount, ChrGridCell *i
         }
     }
 
+#ifdef PORT
+    /* PC build: the characters added from outside the disc (port/src/plat_charas.c), after the disc's: in the place
+       of the last row's filler cells, then in rows of their own. A character with forms has one cell with its
+       forms under it, as the disc's have; where the screen lists every form as a cell of its own
+       (CHRGRID_NO_FORMS) so are they. They are never looked up in the save. Not in an online session (both players
+       must have the same list), and not in the customising screens (modes 0x30..0x32), which write the save by
+       the cell's place. */
+    if (!Port_NetSession() && Port_CharaCount() > 0 && !(mode >= 0x30 && mode < 0x33)) {
+        s32 n = *outCount, k, first = n;
+        while (n > 0 && out[n - 1].id == CHRGRID_ID_EMPTY) {
+            n--;
+        }
+        for (k = 0; k < Port_CharaCount() && n < 165 - CHRGRID_COLS; k++) {
+            int forms[CHRGRID_FORM_MAX], count = Port_CharaForms(PORT_CHARA_FIRST + k, forms, CHRGRID_FORM_MAX), f;
+            if (count < 0 && !(flags & CHRGRID_NO_FORMS)) {
+                continue; /* a form: under its character's cell */
+            }
+            Port_CharaCellLog((int)n, PORT_CHARA_FIRST + (int)k, count < 1 ? 1 : count);
+            memset(&out[n], 0, sizeof(out[n]));
+            out[n].id = PORT_CHARA_FIRST + k;
+            if (count > 1 && !(flags & CHRGRID_NO_FORMS)) {
+                out[n].formCount = count;
+                for (f = 0; f < count; f++) {
+                    out[n].form[f] = forms[f];
+                }
+            }
+            n++;
+        }
+        if (n != first || *outCount != first) {
+            for (; n % CHRGRID_COLS != 0; n++) {
+                memset(&out[n], 0, sizeof(out[n]));
+                out[n].id = CHRGRID_ID_EMPTY;
+            }
+            *outCount = n;
+        }
+    }
+#endif
+
     if (!(flags & CHRGRID_NO_CUSTOM) && custom != NULL) {
         *customCount = 0;
         for (i = 0; i < SAVE_REC_COUNT; i++) {

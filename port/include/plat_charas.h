@@ -7,7 +7,7 @@
 #define PORT_CHARA_MAX 27
 #define PORT_CHARA_FILE_INDEX 71000  /* in the second archive: ten files per added character */
 #define PORT_CHARA_VOICE_INDEX 72000 /* two per added character */
-#define PORT_CHARA_FACE_INDEX 73000  /* one per added character: the large picture of the menus */
+#define PORT_CHARA_FACE_INDEX 80000  /* one per added character: the large picture of the menus */
 #define PORT_CHARA_LINE_INDEX 74000  /* two hundred per added character: its spoken lines, a hundred in each language */
 
 void PortCharas_Init(void); /* reads the folder; once */
@@ -23,6 +23,13 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n);
    disc's entries, so it is loaded once per visit of a screen and then asked for with Port_CharaChip. */
 void *Port_CharaChipLoad(int index);
 void *Port_CharaChip(int chara);
+/* The same for a whole screen: PortChips_Load copies every folder's chip into the game's own memory (a picture
+   is fetched by the renderer from the game's memory) and makes it ready as the screen does the disc's;
+   PortChips_Get gives an added character's (NULL: none, the base character's is shown); PortChips_Free gives the
+   memory back when the screen ends. One screen at a time. */
+void PortChips_Load(void);
+void *PortChips_Get(int chara);
+void PortChips_Free(void);
 /* The names of a screen with the added characters' after them: a copy of the screen's names pack (`pack`, the
    disc's: a count, offsets, entries of UTF-16 text) with one entry more per added character, from the folder's
    `name.txt` or else the folder's name. Port_CharaNameLine(chara) is an added character's line in it. */

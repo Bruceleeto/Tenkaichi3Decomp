@@ -113,9 +113,52 @@ format: both can be put into the unpacked pack's tables (which then need room fo
 Not looked at: the name shown in a fight (the versus screen before it, the pause menu, the result); the other
 screens' copies (same shapes expected, not checked); the layout inside a chip's 5,504 bytes.
 
+## The other screens with a roster (2026-10-09)
+
+The added cells are now appended in `ChrGrid_Build` (view_a_e.c), which every screen with a grid calls, so they are
+in all of them at once: the duel and team select, the one-fighter select of the Ultimate Battle modes and Sim
+Dragon (`SoloSel`), the Ultimate Battle team select, the tournament's entry select. Left out on purpose: the
+customising screens (modes 0x30..0x32), which write the save by a cell's place, and an online session.
+
+What each of those screens does with a character id goes through `include/port_chara.h`: `PORT_CHIP` (its own
+chip; `PortChips_Load` / `PortChips_Free` keep the folders' chips in the game's memory while a screen is open),
+`PORT_NAME_LINE` with `Port_CharaNamePack` (its own name), `CHARA_FACE_FILE` (its own large picture),
+`PORT_IS_CHARA` (the disc's `id < 0xA1` took an added character for a marker: no DP cost, never dimmed), and one
+item set only (the sets are kept in the save by the cell's place, which an added cell does not have). The
+tournament bracket shows the chosen character's chip, name and pictures the same way; the ranking screen of
+Ultimate Battle and Sim Dragon's day screen its picture (the ranking's name line is the base character's: that
+screen's text pack holds more than names).
+
+The large pictures' file numbers moved from 73000 to 80000: 73000 is where added songs are, and with songs
+installed the first characters' pictures were answered with song files.
+
+Checked: builds; the replay check with and without characters; two recorded sessions with characters installed
+(the grid is built with the added cell, no crash); the duel select as before. NOT seen: any of the newly covered
+screens (no recorded session reaches them).
+
+Not covered: the character reference (a list of 161 entries with its own tables, not a grid), the customising
+screens, the replay and password screens.
+
+## More than 27 characters (researched 2026-10-09, nothing changed)
+
+The three reasons given above for the limit do not bind an added character: every character id in the game's
+state, the save, the replay and the menus is 32 bits wide; the only one-byte ids are in disc and pack DATA (the
+transformation and fusion tables, the character table's links); the unlock bits are never asked about an added
+character. What limits the number today is the port's own: `PORT_CHARA_MAX` (defined twice), a scan of the first
+64 folders, the file-number ranges (ten model files per character from 71000 hold 100 before they reach the voice
+banks at 72000), and the grid: every screen's buffer is 165 cells and the disc's grid is about 98, so about 60
+more cells fit (forms share a cell).
+
+- Up to 90 (ids to 0xFE): raise the constants and the scan, give the grids more cells or the added characters a
+  page of their own. To look at first: the battle takes a prop's "character" from its model file's number, which
+  comes out as 0xC1..0xC5, inside the wider range; and a pack's own tables naming partners by number.
+- Hundreds: ids from 0x100 are taken by the battle's props (0x100..0x12B) in one path (`BtlLoad_StepObject`, the
+  three throw getters). The least invasive way seen: wide numbers in the menus only, with a scrolling or paged
+  section for added characters, and the few chosen for a battle (at most ten, and their forms) bound to the
+  numbers 0xA5..0xFE when the battle is set up; a replay then has to carry which folders they were.
+
 ## Not done
 
-The character's own name, chip and portrait on the character select; the cursor reaching the cell by hand
-(only the test option was used); the team select and the other screens; the HUD's face (the test run showed the recorded
-choice's); transformations into or from an added character; hiding them in an online session; zip files; which
-base a pack expects.
+The character reference; fusion between added characters (wired, never tried); a form added to a character of the
+disc; the save audit (what a play with added characters leaves in the save and in replays); zip files; a guide
+to the pack format for people who make packs.

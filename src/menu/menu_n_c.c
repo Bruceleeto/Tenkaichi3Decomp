@@ -325,7 +325,7 @@ void UbRank_Draw(void) {
         if (place == gSaveData->rank) {
             gUbRank->tex[sUbRankChipTex[i]] = gUbRank->playerChip;
             Flash_FindLabel(flash, name, "mc_charaname_kari", &ref);
-            TextBox_AttachLine(flash, &ref, 0, 0, NPROG->chara, &gUbRank->box[i]);
+            TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(NPROG->chara), &gUbRank->box[i]);
         } else {
             s32 chara = gUbRank->foe[gUbRank->rule[UbRank_PlaceToRule(place)].foe].chara;
 
@@ -357,7 +357,7 @@ void UbRank_Draw(void) {
     if (gUbRank->extra == gSaveData->rank) {
         gUbRank->tex[sUbRankChipTex[5]] = gUbRank->playerChip;
         Flash_FindLabel(flash, name, "mc_charaname_kari", &ref);
-        TextBox_AttachLine(flash, &ref, 0, 0, NPROG->chara, &gUbRank->box[5]);
+        TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(NPROG->chara), &gUbRank->box[5]);
     } else {
         s32 chara = gUbRank->foe[gUbRank->rule[UbRank_PlaceToRule(gUbRank->extra)].foe].chara;
 
@@ -701,7 +701,7 @@ void UbRank_UpdateFaceLoad(void) {
         chara[0] = NPROG->chara;
         chara[1] = gUbRank->curFoe->chara;
         File_CancelRequests();
-        File_Request(chara[0] + N_FACE_FILE, gUbRank->faceFile[0], 0x16800);
+        File_Request(CHARA_FACE_FILE(chara[0]), gUbRank->faceFile[0], 0x16800);
         File_Request(chara[1] + N_FACE_FILE, gUbRank->faceFile[1], 0x16800);
         gUbRank->loadState = UBRANK_LOAD_READ;
         break;
