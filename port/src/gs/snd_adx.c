@@ -85,6 +85,12 @@ static int adx_blanks(const char *path) {
     if (h[0x12] == 4 && header >= 0x38 && (h[0x24] | h[0x25] | h[0x26] | h[0x27]) != 0) {
         return -1;
     }
+    {
+        extern int PortSongs_IsFile(const char *path); /* plat_songs.c: an added song is played round and round (start()) */
+        if (PortSongs_IsFile(path)) {
+            return -1;
+        }
+    }
     return rate == 0 ? 0 : (int)(((uint64_t)total * 60000 + (uint64_t)rate * 1001 - 1) / ((uint64_t)rate * 1001)) + 1;
 }
 
@@ -243,11 +249,58 @@ static void stop(Player *p) {
     p->stat = ADXT_STAT_STOP;
 }
 
+/* An online match computes with the default voice set on both sides (net.c). A player who chose the other one hears
+   it all the same: the stream that is PLAYED is the other set's file of the same line, while what the game is told
+   about it (how long it lasts: view_start) stays the default file's, so the two copies agree. Ids of partition 2
+   (file number + 0xD48), default set -> second set:
+       menu guides      0x87F2..0x8D4D  - 0x55C     (VOICE_LANG2_OFFSET)
+       fighters' lines  0xCC32..0x10B15 - 0x3EE4    (161 fighters, 100 lines each)
+       announcer        0x10B6C..0x10BA3 - 0x38
+   Checked against the disc: every id of these ranges and its partner are streams. */
+static const char *voice_own_path(const char *path, char *buf, size_t size) {
+    extern int Port_NetVoiceAlt(void); /* net.c */
+    const char *dir = strstr(path, "pzs3us2/"), *num;
+    int fid, id, other = 0;
+
+    if (dir == NULL || !Port_NetVoiceAlt()) {
+        return path;
+    }
+    num = dir + 8;
+    if (sscanf(num, "%d.bin", &fid) != 1) {
+        return path;
+    }
+    id = fid + 0xD48;
+    if (id >= 0x87F2 && id < 0x8D4E) {
+        other = id - 0x55C;
+    } else if (id >= 0xCC32 && id < 0x10B16) {
+        other = id - 0x3EE4;
+    } else if (id >= 0x10B6C && id < 0x10BA4) {
+        other = id - 0x38;
+    } else {
+        return path;
+    }
+    snprintf(buf, size, "%.*s%05d.bin", (int)(num - path), path, other - 0xD48);
+    {
+        FILE *fp = fopen(buf, "rb");
+        if (fp == NULL) {
+            return path; /* (not there: the default one) */
+        }
+        fclose(fp);
+    }
+    if (getenv("BT3_SND_VERBOSE") != NULL) {
+        fprintf(stderr, "adx: voice %#x played from the other voice set (%#x)\n", id, other);
+    }
+    return buf;
+}
+
 static void start(Player *p, const char *path) {
     SDL_AudioSpec spec;
     FILE *fp;
     long size;
     uint32_t header, highpass;
+    char own[512];
+
+    path = voice_own_path(path, own, sizeof(own));
 
     if (gPortResim && p->stream != NULL && strcmp(p->path, path) == 0) {
         return; /* a frame that is only being re-run starts the stream that is playing already: it plays on */
@@ -286,6 +339,17 @@ static void start(Player *p, const char *path) {
         p->loopStart = be32(p->file + 0x28);
         p->loopEnd = be32(p->file + 0x30);
         p->loop = p->loopEnd > p->loopStart && p->loopEnd <= p->total;
+    }
+    if (!p->loop && p->total >= 64) {
+        /* A song added from outside the disc: the disc's music has its loop in the file and goes on for as long as
+           the fight does; a file made from an mp3 has none and stopped after one play, leaving the rest of the fight
+           silent. It is played again from its start. (A file that has loop points keeps them.) */
+        extern int PortSongs_IsFile(const char *path); /* plat_songs.c */
+        if (PortSongs_IsFile(path)) {
+            p->loopStart = 0;
+            p->loopEnd = p->total & ~31u; /* (whole frames) */
+            p->loop = 1;
+        }
     }
     adx_coefs(highpass, p->rate, &p->c1, &p->c2);
     memset(p->hist, 0, sizeof(p->hist));

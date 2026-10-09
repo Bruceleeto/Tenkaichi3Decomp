@@ -45,13 +45,16 @@ extern int Port_PadRead(int socket, unsigned char *data); /* gs_input.c: the key
 void Port_NetLeave(void);
 
 enum { PAD = 18, RING = 4096, REDUNDANT = 16, MAGIC = 0x4E335442 /* "BT3N" */ };
-enum { T_HELLO = 1, T_HELLO_ACK = 2, T_INPUT = 3, T_BYE = 4, T_PING = 5, T_PONG = 6, T_CONFIG = 7, T_CONFIG_ACK = 8 };
+enum { T_HELLO = 1, T_HELLO_ACK = 2, T_INPUT = 3, T_BYE = 4, T_PING = 5, T_PONG = 6, T_CONFIG = 7, T_CONFIG_ACK = 8,
+       T_PUNCH = 9 /* nothing to read: sent so that the sender's router lets the other side's packets in (room codes) */ };
 /* The version of what goes over the line. The greeting and its answer carry it, and two copies that differ do not
    start a match (the input packets changed with version 2: times for the ping were added; a copy that read them
    the old way took them for input). 1 was releases 0.1.8 and 0.1.9, which said no version. */
-enum { NET_VERSION = 2, IN_HEAD = 32 };
+enum { NET_VERSION = 3, IN_HEAD = 32 }; /* 3 (0.1.15): the host's battle rules travel with its choices */
 static int sVersionBad; /* the other side answered with another version */
 static const uint32_t kVersion = NET_VERSION;
+#include "net_match.h"
+#include "net_relay.h"
 static int sLobbyOther;
 
 /* What the meter shows (ui.cpp): the round trip time, and per second how often the game went back, how far, and
@@ -83,6 +86,40 @@ void Port_NetOptions(int rollback, int delay) {
     sOptRoll = rollback;
     sOptAuto = delay == -2; /* -2: automatic; -1: not said; else the delay in blanks */
     sOptDelay = delay >= 0 ? delay : -1;
+}
+
+#define NAME_LEN 20
+static char sNames[2][NAME_LEN], sMyName[NAME_LEN] = "Player";
+
+void Port_NetNameSet(const char *name) {
+    snprintf(sMyName, sizeof(sMyName), "%s", name != NULL && name[0] != '\0' ? name : "Player");
+}
+
+/* A match found with a room code (the lobby, below): the local port the lobby's socket had, which the session's
+   socket takes again, and for the host the address the other player's greeting came from. */
+static int sCodeLocalPort, sCodePunchSet;
+/* The lobby's socket, handed to the session that follows (a match found with a room code, begun without a restart).
+   It is not closed and opened again on the same port: while it is closed, packets from the other side meet a
+   closed port, the system answers "unreachable", and a relay stops passing that player's packets on (seen with
+   Cloudflare's: the match's greeting never arrived). It also keeps the routers' view of the conversation whole. */
+static int sHandSock = -1, sFromLobby;
+static struct sockaddr_in sCodePunch;
+
+/* The match's rules, chosen by the host in the lobby window (the game's own versus menu is not shown in a session):
+   the battle type as the versus menu leaves it (0 single, 1 team, 2 DP battle), the row of the DP limit list
+   (0..2: 10, 15, 20) and the time limit as the battle settings keep it (save rule 0: 0..4 = 60, 90, 180, 240
+   seconds, none). One word: type | dp << 4 | time << 8. The host's travels with its other choices (T_HELLO_ACK,
+   T_CONFIG); headless.c applies it on both sides when the session enters the versus mode. */
+static uint32_t sRules = 3u << 8; /* single battle, 240 seconds: the game's defaults */
+
+void Port_NetRulesSet(int type, int dp, int time) {
+    sRules = (uint32_t)(type < 0 || type > 2 ? 0 : type) | (uint32_t)(dp < 0 || dp > 2 ? 0 : dp) << 4 | (uint32_t)(time < 0 || time > 4 ? 3 : time) << 8;
+}
+
+void Port_NetRules(int *type, int *dp, int *time) {
+    *type = (int)(sRules & 15) > 2 ? 0 : (int)(sRules & 15);
+    *dp = (int)(sRules >> 4 & 15) > 2 ? 0 : (int)(sRules >> 4 & 15);
+    *time = (int)(sRules >> 8 & 15) > 4 ? 3 : (int)(sRules >> 8 & 15);
 }
 
 /* The input delay for a line with this round trip. A blank is 16.7 ms; the other side's input for a blank is
@@ -134,10 +171,66 @@ static int sLatencyMs;
 static struct { uint64_t due; int n; uint8_t data[IN_HEAD + 16 * PAD]; } sQueue[256];
 static unsigned sQueueHead, sQueueTail;
 
+/* Every packet of a match goes out and comes in through these two: the host of a match found with a room code may
+   hold a relay address (net_relay.c), and then the other player's packets can arrive wrapped by the relay and must
+   go back the same way. Without a relay they are plain sendto / recvfrom. */
+static int sStatOut, sStatIn, sStatInVia, sStatOutVia, sStatErr, sStatOther, sStatBytes;
+static void net_stat(void) { /* BT3_RELAY_LOG: packets out and in, a line a second */
+    static uint64_t last;
+    uint64_t now = SDL_GetTicks();
+    if (now - last >= 1000 && getenv("BT3_RELAY_LOG") != NULL) {
+        if (sStatOut + sStatIn > 0) {
+            fprintf(stderr, "bt3: net: packets out %d (%d through the relay, %d failed, %d bytes), in %d (%d through the relay, %d of the relay's own)\n", sStatOut,
+                    sStatOutVia, sStatErr, sStatBytes, sStatIn, sStatInVia, sStatOther);
+        }
+        sStatOut = sStatIn = sStatInVia = sStatOutVia = sStatErr = sStatOther = sStatBytes = 0;
+        last = now;
+    }
+}
+
+static void net_send(const void *buf, int n, const struct sockaddr_in *to) {
+    sStatOut++;
+    sStatBytes += n;
+    if (Relay_IsPeer(to)) {
+        sStatOutVia++;
+        Relay_Send(sSock, buf, n, to);
+    } else if (sendto(sSock, (const char *)buf, n, 0, (const struct sockaddr *)to, sizeof(*to)) != n) {
+        sStatErr++;
+    }
+}
+
+static int net_recv(uint8_t *pkt, int size, struct sockaddr_in *from) {
+    Relay_Tick(sSock);
+    net_stat();
+    for (;;) {
+        socklen_t fromLen = sizeof(*from);
+        uint8_t *data = NULL;
+        int len = 0, n = (int)recvfrom(sSock, (char *)pkt, size, 0, (struct sockaddr *)from, &fromLen), kind;
+        if (n <= 0) {
+            return n;
+        }
+        kind = Relay_Unwrap(pkt, n, from, &data, &len);
+        if (kind == 2) {
+            Relay_SawDirect(from);
+            sStatIn++;
+            return n;
+        }
+        if (kind == 0) {
+            sStatOther++;
+        }
+        if (kind == 1) {
+            sStatIn++;
+            sStatInVia++;
+            memmove(pkt, data, (size_t)len);
+            return len;
+        }
+    }
+}
+
 static void queue_flush(void) {
     uint64_t now = SDL_GetTicksNS();
     while (sQueueHead != sQueueTail && sQueue[sQueueHead % 256].due <= now) {
-        sendto(sSock, (const char *)sQueue[sQueueHead % 256].data, sQueue[sQueueHead % 256].n, 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+        net_send(sQueue[sQueueHead % 256].data, sQueue[sQueueHead % 256].n, &sPeer);
         sQueueHead++;
     }
 }
@@ -153,7 +246,7 @@ static void send_to_peer(const void *buf, int n) {
         sQueueTail++;
         return;
     }
-    sendto(sSock, buf, n, 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+    net_send(buf, n, &sPeer);
 }
 
 static void send_inputs(void) {
@@ -185,12 +278,15 @@ static int receive(void) {
     int got = 0, n;
 
     queue_flush();
-    while ((n = (int)recvfrom(sSock, (char *)pkt, sizeof(pkt), 0, (struct sockaddr *)&from, &fromLen)) >= 8) {
+    while ((n = net_recv(pkt, (int)sizeof(pkt), &from)) >= 8) {
         uint32_t magic, type;
         memcpy(&magic, pkt, 4);
         memcpy(&type, pkt + 4, 4);
         if (magic != MAGIC) {
             continue;
+        }
+        if (sConnected && (from.sin_addr.s_addr != sPeer.sin_addr.s_addr || from.sin_port != sPeer.sin_port)) {
+            continue; /* a match takes packets from the other player's address only: nobody else can end it or put buttons in */
         }
         got = 1;
         if (type == T_PING && n >= 12) { /* setting up: sent back as it came, for the round trip time */
@@ -210,8 +306,15 @@ static int receive(void) {
             memcpy(v, pkt + 8, 8);
             sCfgDelay = (int)v[0];
             sCfgRoll = (int)v[1];
+            if (n >= 24) {
+                memcpy(&sRules, pkt + 20, 4);
+            }
+            if (n >= 24 + NAME_LEN) {
+                memcpy(sNames[0], pkt + 24, NAME_LEN);
+                sNames[0][NAME_LEN - 1] = '\0';
+            }
             sCfgGot = 2;
-            sendto(sSock, (const char *)ack, sizeof(ack), 0, (struct sockaddr *)&from, sizeof(from));
+            net_send(ack, sizeof(ack), &from);
         } else if (type == T_CONFIG_ACK && sMode == 1) {
             sCfgAcked = 1;
         } else if (type == T_BYE && sConnected) {
@@ -221,11 +324,24 @@ static int receive(void) {
             if (!said++) {
                 fprintf(stderr, "bt3: net: a copy of another version tried to join; both players need the same release\n");
             }
+        } else if (type == T_HELLO && sMode == 1 && sFromLobby && n < 12 + NAME_LEN) {
+            /* a greeting of the other side's lobby, still on its way or sent again because this side's answers
+               were lost: answered as the lobby did, so that the other side starts its session too */
+            uint32_t ack[3] = {MAGIC, T_HELLO_ACK, NET_VERSION};
+            net_send(ack, sizeof(ack), &from);
         } else if (type == T_HELLO && sMode == 1) {
-            uint32_t ack[5] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION};
+            uint32_t ack[6 + NAME_LEN / 4] = {MAGIC, T_HELLO_ACK, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+            memcpy(&ack[6], sMyName, NAME_LEN);
+            if (n >= 12 + NAME_LEN) { /* the other player's name came with the greeting */
+                memcpy(sNames[1], pkt + 12, NAME_LEN);
+                sNames[1][NAME_LEN - 1] = '\0';
+            }
+            memcpy(sNames[0], sMyName, NAME_LEN);
             sPeer = from; /* the host learns the other side's address from its greeting */
             sConnected = 1;
-            sendto(sSock, (const char *)ack, sizeof(ack), 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+            net_send(ack, sizeof(ack), &sPeer);
+        } else if (type == T_HELLO_ACK && sMode == 2 && sFromLobby && n < 20) {
+            /* an answer to the lobby's greeting, still in the socket the session took over: nothing to do */
         } else if (type == T_HELLO_ACK && sMode == 2) {
             if (!(n >= 20 && memcmp(pkt + 16, &kVersion, 4) == 0)) {
                 sVersionBad = 1;
@@ -234,6 +350,14 @@ static int receive(void) {
                 memcpy(v, pkt + 8, 8);
                 sCfgDelay = (int)v[0];
                 sCfgRoll = (int)v[1];
+                if (n >= 24) {
+                    memcpy(&sRules, pkt + 20, 4);
+                }
+                if (n >= 24 + NAME_LEN) {
+                    memcpy(sNames[0], pkt + 24, NAME_LEN);
+                    sNames[0][NAME_LEN - 1] = '\0';
+                }
+                memcpy(sNames[1], sMyName, NAME_LEN);
                 sCfgGot = 1;
                 sConnected = 1;
             }
@@ -296,19 +420,46 @@ static void net_start(int role, const char *host, const char *join) {
     memset(sIn, 0, sizeof(sIn));
     memset(sHave, 0, sizeof(sHave)); /* (a second session in one run starts as clean as the first) */
     sWaitNs = sWaits = 0;
+    sFromLobby = sHandSock >= 0;
+    if (sFromLobby) {
+        sSock = sHandSock;
+        sHandSock = -1;
+    } else {
 #ifdef _WIN32
-    {
         WSADATA w;
         u_long on = 1;
         WSAStartup(MAKEWORD(2, 2), &w);
         sSock = (int)socket(AF_INET, SOCK_DGRAM, 0);
         ioctlsocket(sSock, FIONBIO, &on);
-    }
 #else
-    sSock = socket(AF_INET, SOCK_DGRAM, 0);
-    fcntl(sSock, F_SETFL, fcntl(sSock, F_GETFL, 0) | O_NONBLOCK);
+        sSock = socket(AF_INET, SOCK_DGRAM, 0);
+        fcntl(sSock, F_SETFL, fcntl(sSock, F_GETFL, 0) | O_NONBLOCK);
 #endif
+    }
     sMe = sMode - 1;
+    if (getenv("BT3_NET_LOCALPORT") != NULL && sCodeLocalPort == 0) { /* (across the restart into the session) */
+        sCodeLocalPort = atoi(getenv("BT3_NET_LOCALPORT"));
+    }
+    if (getenv("BT3_NET_PUNCH") != NULL && !sCodePunchSet) {
+        char text[64], *colon;
+        snprintf(text, sizeof(text), "%s", getenv("BT3_NET_PUNCH"));
+        colon = strrchr(text, ':');
+        if (colon != NULL) {
+            *colon = '\0';
+            memset(&sCodePunch, 0, sizeof(sCodePunch));
+            sCodePunch.sin_family = AF_INET;
+            sCodePunch.sin_port = htons((uint16_t)atoi(colon + 1));
+            sCodePunchSet = inet_pton(AF_INET, text, &sCodePunch.sin_addr) == 1;
+        }
+    }
+    if (getenv("BT3_NET_NAME") != NULL) { /* (across the restart into the session) */
+        Port_NetNameSet(getenv("BT3_NET_NAME"));
+    }
+    memset(sNames, 0, sizeof(sNames));
+    memcpy(sNames[sMe], sMyName, NAME_LEN);
+    if (getenv("BT3_NET_RULES") != NULL) { /* (the host's, across the restart into the session, or for a test) */
+        sRules = (uint32_t)strtoul(getenv("BT3_NET_RULES"), NULL, 0);
+    }
     sAutoDelay = getenv("BT3_NET_DELAY") != NULL ? strcmp(getenv("BT3_NET_DELAY"), "auto") == 0 : sOptAuto;
     sDelay = getenv("BT3_NET_DELAY") != NULL && !sAutoDelay ? atoi(getenv("BT3_NET_DELAY")) : sOptDelay >= 0 ? sOptDelay : 2;
     sSetupRtt = -1;
@@ -346,7 +497,7 @@ static void net_start(int role, const char *host, const char *join) {
     sPeer.sin_family = AF_INET;
     if (sMode == 1) {
         local.sin_port = htons((uint16_t)atoi(host));
-        if (bind(sSock, (struct sockaddr *)&local, sizeof(local)) != 0) {
+        if (!sFromLobby && bind(sSock, (struct sockaddr *)&local, sizeof(local)) != 0) {
             fprintf(stderr, "bt3: net: cannot use port %s\n", host);
             exit(2);
         }
@@ -370,14 +521,26 @@ static void net_start(int role, const char *host, const char *join) {
             }
             memcpy(&sPeer.sin_addr, he->h_addr_list[0], sizeof(sPeer.sin_addr));
         }
+        if (sCodeLocalPort != 0 && !sFromLobby) {
+            /* a match found with a room code: from the port the lobby used, so that the routers on the way keep
+               taking this for the same conversation */
+            local.sin_port = htons((uint16_t)sCodeLocalPort);
+            bind(sSock, (struct sockaddr *)&local, sizeof(local));
+        }
         fprintf(stderr, "bt3: net: joining %s (player 2)...\n", join);
     }
     t0 = SDL_GetTicksNS();
     while (!sConnected) {
         uint64_t now = SDL_GetTicksNS();
+        if (sMode == 1 && sCodePunchSet && now - last > 100000000ull) {
+            uint32_t punch[2] = {MAGIC, T_PUNCH}; /* (room codes: keeps this side's router open for the one who joins) */
+            net_send(punch, sizeof(punch), &sCodePunch);
+            last = now;
+        }
         if (sMode == 2 && now - last > 100000000ull) {
-            uint32_t hello[3] = {MAGIC, T_HELLO, NET_VERSION};
-            sendto(sSock, (const char *)hello, sizeof(hello), 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+            uint32_t hello[3 + NAME_LEN / 4] = {MAGIC, T_HELLO, NET_VERSION};
+            memcpy(&hello[3], sMyName, NAME_LEN);
+            net_send(hello, sizeof(hello), &sPeer);
             last = now;
         }
         receive();
@@ -420,8 +583,9 @@ static void net_start(int role, const char *host, const char *join) {
         while (!sCfgAcked && SDL_GetTicksNS() - start < 3000000000ull) {
             uint64_t now = SDL_GetTicksNS();
             if (now - lastCfg >= 50000000ull) {
-                uint32_t cfg[5] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION};
-                sendto(sSock, (const char *)cfg, sizeof(cfg), 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+                uint32_t cfg[6 + NAME_LEN / 4] = {MAGIC, T_CONFIG, (uint32_t)sDelay, (uint32_t)sRollMax, NET_VERSION, sRules};
+                memcpy(&cfg[6], sMyName, NAME_LEN);
+                net_send(cfg, sizeof(cfg), &sPeer);
                 lastCfg = now;
             }
             receive();
@@ -452,6 +616,72 @@ static void net_start(int role, const char *host, const char *join) {
     if (sRollMax > 0) {
         fprintf(stderr, "bt3: net: rollback of up to %d blanks\n", sRollMax);
     }
+}
+
+int Port_NetActive(void);
+
+/* The voice language the player chose in the game's options, read from their own save (bit 0 of the flags word at
+   0x1608: set = the first choice of the menu, which is what a new save has; clear = the second voice set). An
+   online match starts from an empty save on both sides, so both compute with the default; this choice is kept
+   aside for what this copy plays (BT3_NET_VOICE=alt; snd_adx.c, snd_se.c). 1 = the second set. */
+static int own_voice_alt(void) {
+    const char *root = getenv("BT3_SAVES") != NULL ? getenv("BT3_SAVES") : "saves";
+    char path[600];
+    unsigned char w[4];
+    FILE *fp;
+    int alt = 0;
+
+    snprintf(path, sizeof(path), "%s/card1/BASLUS-21678DBZT3/BASLUS-21678DBZT3", root);
+    fp = fopen(path, "rb");
+    if (fp != NULL) {
+        if (fseek(fp, 0x1608, SEEK_SET) == 0 && fread(w, 1, 4, fp) == 4) {
+            alt = !(w[0] & 1);
+        }
+        fclose(fp);
+    }
+    return alt;
+}
+
+/* Whether this copy plays the second voice set in the online match it is in (the player's own choice, above). */
+static int sVoiceAlt = -1; /* 1 the second set, 0 the default; -1 not decided (then BT3_NET_VOICE says, once) */
+
+int Port_NetVoiceAlt(void) {
+    /* (Not asked of the environment every time: the port's getenv remembers its first answer at each place it is
+       called from (gs_internal.h), and a match that begins without the program starting again sets the variable
+       after that first look. Found on Windows, 2026-10-09: the choice was never seen. The match's start sets
+       sVoiceAlt itself; the variable is for the program that starts again as the session, and for tests.) */
+    if (sVoiceAlt < 0) {
+        const char *v = getenv("BT3_NET_VOICE");
+        sVoiceAlt = v != NULL && strcmp(v, "alt") == 0;
+    }
+    return Port_NetActive() && sVoiceAlt == 1;
+}
+
+/* The players' names (the lobby window's "Player name"), for the line under each side's gauges: this copy's own
+   goes out with its greeting (T_HELLO, the one who joins) or its answer and choices (T_HELLO_ACK, T_CONFIG, the
+   host), 20 bytes after the words those packets had. */
+
+/* The name of the player of side 0 or 1 in the match this copy is in ("" if it is not known). */
+const char *Port_NetName(int player) {
+    return Port_NetActive() && (player == 0 || player == 1) ? sNames[player] : "";
+}
+
+/* Whether this copy shows the two sides of the fight's HUD in each other's places: the player who joined is side 1,
+   and with this their own gauges are on the left, as the host's are for the host. Setting net_hud_own (on by
+   default); BT3_HUD_SWAP=1 the same without a connection, for looking at it. Only this copy's picture changes. */
+int Port_HudSwap(void) {
+    static int forced = -1, pref = -1;
+    extern int Port_Setting(const char *name, int def);
+    if (forced < 0) {
+        forced = getenv("BT3_HUD_SWAP") != NULL ? atoi(getenv("BT3_HUD_SWAP")) != 0 : 0;
+        pref = Port_Setting("net_hud_own", 1) != 0;
+    }
+    return forced || (pref && Port_NetActive() && sMe == 1);
+}
+
+/* Which player this copy plays in an online match (0 the host, 1 the one who joined). */
+int Port_NetMe(void) {
+    return sMe;
 }
 
 int Port_NetActive(void) {
@@ -720,8 +950,28 @@ static void relaunch(int role, const char *join, int port) {
             SETENV("BT3_NET_JOIN", value);
         }
         SETENV("BT3_NET_SESSION", "1");
+        SETENV("BT3_NET_NAME", sMyName);
+        {   /* a match found with a room code: the lobby's local port, and for the host where to go on knocking */
+            char text[64] = "";
+            snprintf(value, sizeof(value), "%d", sCodeLocalPort);
+            SETENV("BT3_NET_LOCALPORT", sCodeLocalPort != 0 ? value : NULL);
+            if (sCodePunchSet) {
+                inet_ntop(AF_INET, &sCodePunch.sin_addr, text, sizeof(text));
+                snprintf(value, sizeof(value), "%s:%d", text, ntohs(sCodePunch.sin_port));
+            }
+            SETENV("BT3_NET_PUNCH", sCodePunchSet ? value : NULL);
+        }
+        if (role == 1) {
+            snprintf(value, sizeof(value), "%u", (unsigned)sRules);
+            SETENV("BT3_NET_RULES", value);
+        } else {
+            SETENV("BT3_NET_RULES", NULL);
+        }
         SETENV("BT3_SOUND_TICKS", "1");
         SETENV("BT3_NOMOVIE", "1");
+        if (getenv("BT3_NET_VOICE") == NULL) { /* (before the save folder changes: it is read from the player's own) */
+            SETENV("BT3_NET_VOICE", own_voice_alt() ? "alt" : "default");
+        }
         SETENV("BT3_SAVES", "net_session");
         /* the session's own save folder starts empty: both sides begin from the game's defaults */
         remove("net_session/card1/BASLUS-21678DBZT3/BASLUS-21678DBZT3");
@@ -785,6 +1035,7 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
     remove("net_session/card1/BASLUS-21678DBZT3/BASLUS-21678DBZT3");
     remove("net_session/card1/BASLUS-21678DBZT3/icon.sys");
     remove("net_session/card1/BASLUS-21678DBZT3/dbzsm.ico");
+    sVoiceAlt = own_voice_alt(); /* (before the save folder changes: it is read from the player's own) */
     put_env("BT3_SAVES", "net_session");
     snprintf(host, sizeof(host), "%d", port);
     snprintf(join, sizeof(join), "%s:%d", address, port);
@@ -798,6 +1049,7 @@ void Port_NetSessionBegin(int role, const char *address, int port) {
 }
 
 void Port_NetSessionEnd(void) {
+    Relay_Close(sSock);
     if (sSock >= 0) {
         closesocket(sSock);
         sSock = -1;
@@ -824,7 +1076,7 @@ void Port_NetLeave(void) {
         uint32_t bye[2] = {MAGIC, T_BYE};
         int k;
         for (k = 0; k < 3; k++) {
-            sendto(sSock, (const char *)bye, sizeof(bye), 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+            net_send(bye, sizeof(bye), &sPeer);
         }
     }
     if (Port_SessionCan()) {
@@ -839,9 +1091,29 @@ static int sLobbyRole, sLobbyPort;
 static char sLobbyAddr[128];
 static uint64_t sLobbyLast;
 
+/* Room codes (net_match.c, port/matchmaking): the lobby's states 3 (asking the matchmaking service; the host's code
+   is known at some point, Port_LobbyCode) and, once the other player's addresses are known, 1 as with an address:
+   greetings go to every one of those addresses, and the host sends its own packets there too, so that both routers
+   let the other side in. -3: the service said no (Port_LobbyError); -4: the two could not reach each other. */
+static int sCodeMode, sCodeAddrs;
+static int sCodeRelay = -1; /* which of sCodeAddr is the host's relay address (the one who joins) */
+static int sCodeVia;        /* the match was reached through the relay (for the window) */
+
+int Port_LobbyRelayed(void) { return sCodeVia; }
+static struct sockaddr_in sCodeAddr[MATCH_ADDRS];
+static char sCodeText[8], sCodeError[96];
+static uint64_t sCodeSince;
+
+const char *Port_LobbyCode(void) { return sCodeText; }
+const char *Port_LobbyError(void) { return sCodeError; }
+
 int Port_LobbyStart(int host, const char *address, int port) {
     struct sockaddr_in local;
 
+    if (sHandSock >= 0) { /* (a session that was asked for and never began) */
+        closesocket(sHandSock);
+        sHandSock = -1;
+    }
     if (sSock >= 0) {
         closesocket(sSock);
     }
@@ -857,6 +1129,10 @@ int Port_LobbyStart(int host, const char *address, int port) {
     sSock = socket(AF_INET, SOCK_DGRAM, 0);
     fcntl(sSock, F_SETFL, fcntl(sSock, F_GETFL, 0) | O_NONBLOCK);
 #endif
+    sCodeMode = 0;
+    sCodeVia = 0;
+    sCodeLocalPort = 0;
+    sCodePunchSet = 0;
     sLobbyRole = host ? 1 : 2;
     sLobbyPort = port;
     snprintf(sLobbyAddr, sizeof(sLobbyAddr), "%s", address != NULL ? address : "");
@@ -887,7 +1163,37 @@ int Port_LobbyStart(int host, const char *address, int port) {
     return sLobby;
 }
 
+int Port_LobbyStartCode(int host, const char *code) {
+    struct sockaddr_in local;
+    socklen_t len = sizeof(local);
+
+    Port_LobbyStart(1, "", 0); /* a socket on a port of the system's choosing */
+    if (sLobby < 0) {
+        return sLobby;
+    }
+    if (getsockname(sSock, (struct sockaddr *)&local, &len) != 0) {
+        sLobby = -1;
+        return sLobby;
+    }
+    sLobbyRole = host ? 1 : 2;
+    sCodeMode = 1;
+    sCodeAddrs = 0;
+    sCodeText[0] = sCodeError[0] = '\0';
+    sCodeLocalPort = ntohs(local.sin_port);
+    sLobbyPort = sCodeLocalPort;
+    sLobby = 3;
+    Relay_Close(-1);
+    sCodeVia = 0;
+    Match_Begin(sLobbyRole, sSock, sCodeLocalPort, code, sMyName, NET_VERSION);
+    return sLobby;
+}
+
 void Port_LobbyCancel(void) {
+    if (sCodeMode) {
+        Match_Cancel();
+        sCodeMode = 0;
+    }
+    Relay_Close(sSock);
     if (sSock >= 0) {
         closesocket(sSock);
         sSock = -1;
@@ -897,21 +1203,87 @@ void Port_LobbyCancel(void) {
 
 /* 0 idle, 1 still waiting, 2 the other player is there, -1 it cannot work (port in use, unknown address). */
 int Port_LobbyPoll(void) {
-    uint8_t pkt[64];
+    uint8_t pkt[256];
     struct sockaddr_in from;
-    socklen_t fromLen = sizeof(from);
     uint64_t now = SDL_GetTicksNS();
     int n;
 
+    if (sLobby == 3) { /* a room code: what the matchmaking service has said so far */
+        MatchStatus st;
+        int i;
+        Match_Poll(&st);
+        if (st.state == 2) {
+            Relay_Tick(sSock); /* (the relay address is kept while the room waits; the thread is done with the socket) */
+        }
+        snprintf(sCodeText, sizeof(sCodeText), "%s", st.code);
+        if (st.state == -1) {
+            snprintf(sCodeError, sizeof(sCodeError), "%s", st.error);
+            sLobby = -3;
+        } else if (st.state == 3) {
+            sCodeAddrs = 0;
+            sCodeRelay = -1;
+            for (i = 0; i < st.peerCount && sCodeAddrs < MATCH_ADDRS; i++) {
+                char text[64], *colon;
+                const char *addr = st.peerAddr[i];
+                struct sockaddr_in *a = &sCodeAddr[sCodeAddrs];
+                memset(a, 0, sizeof(*a));
+                a->sin_family = AF_INET;
+                if (strncmp(addr, "seen=", 5) == 0) { /* the address the service saw the other player under: for the relay only */
+                    if (inet_pton(AF_INET, addr + 5, &a->sin_addr) == 1) {
+                        Relay_Permit(sSock, a);
+                    }
+                    continue;
+                }
+                if (strncmp(addr, "relay=", 6) == 0) { /* the host's relay address: tried when the direct ones stay silent */
+                    addr += 6;
+                    sCodeRelay = sCodeAddrs;
+                }
+                snprintf(text, sizeof(text), "%s", addr);
+                colon = strrchr(text, ':');
+                if (colon != NULL) {
+                    *colon = '\0';
+                    a->sin_port = htons((uint16_t)atoi(colon + 1));
+                    if (inet_pton(AF_INET, text, &a->sin_addr) == 1 && a->sin_port != 0) {
+                        Relay_Permit(sSock, a); /* (the host, if it holds a relay address: this player may come in through it) */
+                        sCodeAddrs++;
+                    } else if (sCodeRelay == sCodeAddrs) {
+                        sCodeRelay = -1;
+                    }
+                }
+            }
+            sCodeSince = now;
+            sLobby = sCodeAddrs > 0 ? 1 : -4;
+        }
+        return sLobby;
+    }
     if (sLobby != 1) {
         return sLobby;
     }
-    if (sLobbyRole == 2 && now - sLobbyLast > 200000000ull) {
+    if (sCodeMode && now - sLobbyLast > 200000000ull) {
+        /* to every address the other player may be reached at: the one who joins greets, the host only knocks */
+        uint32_t hello[3] = {MAGIC, T_HELLO, NET_VERSION}, punch[2] = {MAGIC, T_PUNCH};
+        int i;
+        for (i = 0; i < sCodeAddrs; i++) {
+            if (i == sCodeRelay ? now - sCodeSince < 3000000000ull && getenv("BT3_RELAY_ONLY") == NULL : sCodeRelay >= 0 && getenv("BT3_RELAY_ONLY") != NULL) {
+                continue; /* three seconds for the direct ways first (BT3_RELAY_ONLY: the relay at once, and nothing else) */
+            }
+            if (sLobbyRole == 2) {
+                net_send(hello, sizeof(hello), &sCodeAddr[i]);
+            } else {
+                net_send(punch, sizeof(punch), &sCodeAddr[i]);
+            }
+        }
+        sLobbyLast = now;
+        if (now - sCodeSince > 20000000000ull) {
+            sLobby = -4; /* twenty seconds of knocking: the routers do not let the two through to each other */
+            return sLobby;
+        }
+    } else if (!sCodeMode && sLobbyRole == 2 && now - sLobbyLast > 200000000ull) {
         uint32_t hello[3] = {MAGIC, T_HELLO, NET_VERSION};
-        sendto(sSock, (const char *)hello, sizeof(hello), 0, (struct sockaddr *)&sPeer, sizeof(sPeer));
+        net_send(hello, sizeof(hello), &sPeer);
         sLobbyLast = now;
     }
-    while ((n = (int)recvfrom(sSock, (char *)pkt, sizeof(pkt), 0, (struct sockaddr *)&from, &fromLen)) >= 8) {
+    while ((n = net_recv(pkt, (int)sizeof(pkt), &from)) >= 8) {
         uint32_t magic, type;
         memcpy(&magic, pkt, 4);
         memcpy(&type, pkt + 4, 4);
@@ -924,21 +1296,74 @@ int Port_LobbyPoll(void) {
             uint32_t ack[3] = {MAGIC, T_HELLO_ACK, NET_VERSION};
             int k;
             for (k = 0; k < 3; k++) {
-                sendto(sSock, (const char *)ack, sizeof(ack), 0, (struct sockaddr *)&from, sizeof(from));
+                net_send(ack, sizeof(ack), &from);
+            }
+            if (sCodeMode) { /* where the session goes on knocking, so that the greeting of the session gets in */
+                sCodePunch = from;
+                sCodePunchSet = 1;
+                sCodeVia = Relay_IsPeer(&from);
             }
             sLobby = 2;
         } else if (sLobbyRole == 2 && type == T_HELLO_ACK) {
             sLobby = n >= 12 && memcmp(pkt + 8, &kVersion, 4) == 0 ? 2 : -2; /* -2: the host is another release */
+            if (sCodeMode && sLobby == 2) { /* the address that answered is the one the session joins */
+                inet_ntop(AF_INET, &from.sin_addr, sLobbyAddr, sizeof(sLobbyAddr));
+                sLobbyPort = ntohs(from.sin_port);
+                sCodeVia = sCodeRelay >= 0 && from.sin_addr.s_addr == sCodeAddr[sCodeRelay].sin_addr.s_addr && from.sin_port == sCodeAddr[sCodeRelay].sin_port;
+            }
         }
     }
     return sLobby;
 }
 
+void Port_LobbyLaunch(void);
+
+/* BT3_LOBBY=host or BT3_LOBBY=join:CODE: the room-code lobby driven without its window, once a blank (tests; the
+   code and each change of state are written to the log). BT3_RELAY_ONLY=1: the one who joins tries nothing but the
+   host's relay address. */
+void Port_LobbyAuto(void) {
+    static int state = -99, begun, coded;
+    const char *what = getenv("BT3_LOBBY");
+    int now;
+
+    if (what == NULL || begun == 2 || Port_NetSession()) {
+        return;
+    }
+    if (!begun) {
+        begun = 1;
+        Port_LobbyStartCode(strncmp(what, "join:", 5) != 0, strncmp(what, "join:", 5) == 0 ? what + 5 : "");
+    }
+    now = Port_LobbyPoll();
+    if (now != state || (!coded && Port_LobbyCode()[0] != '\0')) {
+        state = now;
+        coded = Port_LobbyCode()[0] != '\0';
+        fprintf(stderr, "bt3: lobby: state %d, code '%s'%s%s\n", now, Port_LobbyCode(), now == -3 ? ", " : "", now == -3 ? Port_LobbyError() : "");
+    }
+    if (now == 2) {
+        fprintf(stderr, "bt3: lobby: the other player is there (%s)\n", Port_LobbyRelayed() ? "through the relay" : "directly");
+        begun = 2;
+        Port_LobbyLaunch();
+    } else if (now < 0) {
+        begun = 2;
+    }
+}
+
 /* The other player is there: start the session. */
 void Port_LobbyLaunch(void) {
-    closesocket(sSock);
+    if (sCodeMode && Port_SessionCan()) {
+        sHandSock = sSock; /* the session goes on with this socket (see sHandSock) */
+    } else {
+        closesocket(sSock);
+    }
     sSock = -1;
     sLobby = 0;
+    if (sCodeMode) {
+        Match_Cancel();
+        sCodeMode = 0;
+        if (sLobbyRole == 1) {
+            sLobbyPort = sCodeLocalPort; /* the host's session listens where the lobby did */
+        }
+    }
     if (Port_SessionCan()) {
         Port_SessionRequest(sLobbyRole, sLobbyAddr, sLobbyPort); /* the game's thread makes the change at its next blank */
         return;

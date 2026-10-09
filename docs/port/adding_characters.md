@@ -243,6 +243,14 @@ ones. Seen: 33 of a disc's 35, all within the stage buffer; two of them taken by
 Checked: sets made from two data folders read by the port with every link found (none reported missing), folders
 side by side still read, the replay check. NOT seen: a set of this layout in the menu or in a fight.
 
+## Brought up to the release (2026-10-10)
+
+The branch has the release's line merged in (0.1.19: the room codes and relay, the tournament crash fix, the clash
+value, the added songs' and stages' fixes for team battles). Not merged the other way. With it the team select
+serves an added stage's own pictures too (`.thumb`, `.icon`), as the duel's select does here.
+Checked: builds, the replay check with and without folders installed, a recorded menu-to-fight session with added
+characters and stages. NOT seen: the options menu after the merge, the team select's own pictures.
+
 ## The save and replays (audit of the sources, 2026-10-10)
 
 Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and

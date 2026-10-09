@@ -102,6 +102,13 @@ extern void *memset(void *dst, s32 c, u32 n);
 extern f32 powf(f32 x, f32 y);
 extern void HudGfx_CallBegin(void (*fn)(void)); /* run a GS state function (begin) */
 extern void HudGfx_CallEnd(void (*fn)(void)); /* run a GS state function (end) */
+#ifdef PORT
+/* PC build, online play: the player who joined is side 1 of the game, and would have their own gauges, team, prompts
+   and counters on the right. With the swap (gs/net.c) the two sides change places on THIS copy's screen only: a
+   side's data is the same, where it is drawn is the other side's place. HUD_SCR(side) is the place of a side. */
+extern int Port_HudSwap(void);
+#define HUD_SCR(side) ((side) ^ Port_HudSwap())
+#endif
 extern void HudSprite_SetMirror(HudBSprite *spr, s32 mirror);
 extern void HudSprite_InitTex(HudBSprite *spr, void *res, s32 tex, s32 sub);    /* sprite of a sheet's texture */
 extern void HudSprite_DrawAlphaClear(HudBSprite *spr);
@@ -865,7 +872,7 @@ void HudGauge_ClearFaceTexMark(void) {
         if (gHudGauge->faceRes[i] != NULL) {
             HudBTex *tex = gHudGauge->faceRes[i]->tex;
 
-            tex += i;
+            tex += HUD_SCR(i);
             tex->mark = 0;
         }
     }
@@ -881,13 +888,15 @@ void HudGauge_DrawFace(HudBGroup *node) {
         HudGauge_ClearFaceTexMark();
         for (i = 0; i < node->sprCount; i++) {
             spr = node->sprList[i];
-            HudSprite_InitTex(spr, gHudGauge->faceRes[gHudGauge->side], gHudGauge->side, 0);
+            /* (PC build: a fighter's face sheet has two pictures, one drawn for the left place and one for the right;
+               with the sides swapped the picture is the one of the place, not of the side) */
+            HudSprite_InitTex(spr, gHudGauge->faceRes[gHudGauge->side], HUD_SCR(gHudGauge->side), 0);
             if (BtlCtrl_GetObj(gHudGauge->side)->unkA40 & 0x40000) {
                 HudSprite_SetColor(spr, 0x80, 0x50, 0x70, 0x80);
             } else {
                 HudSprite_SetColor(spr, 0x80, 0x80, 0x80, 0x80);
             }
-            HudSprite_SetMirror(spr, gHudGauge->side);
+            HudSprite_SetMirror(spr, HUD_SCR(gHudGauge->side));
             HudSprite_DrawAt(spr, gHudGauge->faceRes[gHudGauge->side], 0, 0x2C00, 0x2CD0);
         }
     }
@@ -913,12 +922,12 @@ extern void Port_GsMarker(s32 effect);
 #endif
 
 void HudGauge_SelectSide(s32 side) {
-    s32 flip = side != 0;
+    s32 flip = HUD_SCR(side) != 0;
     s32 i;
 
     gHudGauge->side = side;
 #ifdef PORT
-    Port_GsMarker(side ? PORT_2D_RIGHT : PORT_2D_LEFT);
+    Port_GsMarker(HUD_SCR(side) ? PORT_2D_RIGHT : PORT_2D_LEFT);
 #endif
     gHudGauge->grp->flags = (gHudGauge->grp->flags & ~2) | (flip << 1);
     HudSprite_SetMirror(&gHudGauge->spr[35], flip);
