@@ -35,6 +35,7 @@ typedef struct {
     int base;
     int costumes;
     char chip[400], portrait[400]; /* "" where the folder has none */
+    char dir[400];                 /* the folder */
     char form[7][64];              /* forms.txt: the folder (or "disc:<id>") of each slot; "" = not said */
     int target[7];                 /* ... as an id: -1 not said, 0xFF not installed */
     char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
@@ -105,6 +106,7 @@ static void add(const char *root, const char *name) {
     if (c->file[0][0] == '\0') { /* no first costume: not a character's folder */
         return;
     }
+    snprintf(c->dir, sizeof(c->dir), "%s/%s", root, name);
     snprintf(path, sizeof(path), "%s/%s/chip.bin", root, name);
     if ((f = fopen(path, "rb")) != NULL) {
         fclose(f);
@@ -260,6 +262,22 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         return 0;
     }
     PortCharas_Init();
+    if (index >= PORT_CHARA_LINE_INDEX && index < PORT_CHARA_LINE_INDEX + PORT_CHARA_MAX * 200) {
+        /* a spoken line: the folder's voice_us/NNN.adx or voice_jp/NNN.adx (the other language's where only one is
+           there), or the base character's line of the disc (0x8D4E + id * 100 + line, and 0xCC32 + ...) */
+        int alt = (index - PORT_CHARA_LINE_INDEX) % 200 / 100, line = (index - PORT_CHARA_LINE_INDEX) % 100, t;
+        who = (index - PORT_CHARA_LINE_INDEX) / 200;
+        for (t = 0; who < sCount && t < 2; t++) {
+            FILE *f;
+            snprintf(out, n, "%s/voice_%s/%03d.adx", sChara[who].dir, (alt ^ t) ? "jp" : "us", line);
+            if ((f = fopen(out, "rb")) != NULL) {
+                fclose(f);
+                return 1;
+            }
+        }
+        snprintf(out, n, "pzs3us2/%05d.bin", (alt ? 0xCC32 : 0x8D4E) - 0xD48 + (who < sCount ? sChara[who].base : 0) * 100 + line);
+        return 1;
+    }
     if (index >= PORT_CHARA_FACE_INDEX && index < PORT_CHARA_FACE_INDEX + PORT_CHARA_MAX) {
         /* the large picture: the folder's, or the base character's (the disc's 0x2F9 + id) */
         who = index - PORT_CHARA_FACE_INDEX;

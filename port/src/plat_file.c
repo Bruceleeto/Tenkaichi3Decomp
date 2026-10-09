@@ -57,6 +57,12 @@ static const char *alias_target(const char *rel) {
     if (PortSongs_Alias(rel, buf, sizeof(buf))) {
         return buf;
     }
+    {
+        extern int PortCharas_Alias(const char *rel, char *out, unsigned n); /* plat_charas.c: a character's spoken lines */
+        if (PortCharas_Alias(rel, buf, sizeof(buf))) {
+            return buf;
+        }
+    }
     if (list == NULL) {
         return NULL;
     }

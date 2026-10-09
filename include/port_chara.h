@@ -37,7 +37,13 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
    (`portrait.bin`) or with its base character's */
 #define PORT_CHARA_FACE0 (0xD48 + 73000)
 #define CHARA_FACE_FILE(c) (PORT_CHARA_ADDED(c) ? PORT_CHARA_FACE0 + ((s32)(c) - PORT_CHARA_FIRST) : (s32)(c) + 0x2F9)
+/* a spoken line (a sound stream): `base + id * 100 + line` on the disc, two sets (`alt` the second); an added
+   character's own, answered from its folder (voice_us/NNN.adx, voice_jp/NNN.adx) or with its base character's */
+#define PORT_CHARA_LINE0 (0xD48 + 74000)
+#define CHARA_LINE_FILE(c, base, alt, line) \
+    (PORT_CHARA_ADDED(c) ? PORT_CHARA_LINE0 + ((s32)(c) - PORT_CHARA_FIRST) * 200 + ((alt) ? 100 : 0) + (line) : (base) + ((s32)(c) * 100 + (line)))
 #else
+#define CHARA_LINE_FILE(c, base, alt, line) ((base) + ((c) * 100 + (line)))
 #define CHARA_FACE_FILE(c) ((c) + 0x2F9)
 #define CHARA_T(c) (c)
 #define CHARA_FILE10(c) ((c) * 10)

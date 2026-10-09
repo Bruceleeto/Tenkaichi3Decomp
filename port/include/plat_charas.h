@@ -8,6 +8,7 @@
 #define PORT_CHARA_FILE_INDEX 71000  /* in the second archive: ten files per added character */
 #define PORT_CHARA_VOICE_INDEX 72000 /* two per added character */
 #define PORT_CHARA_FACE_INDEX 73000  /* one per added character: the large picture of the menus */
+#define PORT_CHARA_LINE_INDEX 74000  /* two hundred per added character: its spoken lines, a hundred in each language */
 
 void PortCharas_Init(void); /* reads the folder; once */
 int Port_CharaCount(void);
