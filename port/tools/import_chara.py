@@ -2,6 +2,12 @@
 """import_chara.py - make a character folder (docs/port/adding_characters.md) from a character of a game data folder.
 
     port/tools/import_chara.py <data folder> <character id 0..160> <output folder> [--name "Name In The Menu"]
+    port/tools/import_chara.py <data folder> <id> <folder of folders> --with-forms [--with-fusions] [--prefix P]
+
+With --with-forms the character's transformations are imported too, and theirs, each into its own folder
+(<prefix><id>, the prefix "C" unless given) inside the output folder, with a forms.txt in each that names the
+others: the set works as it does on its disc. --with-fusions follows the fusions as well: their results, the
+partners, and the forms of all of those (that can be many folders; the port takes 57).
 
 <data folder> is an unpacked disc in the layout the port uses (pzs3us1/NNNNN.bin, pzs3us2/NNNNN.bin): the player's
 own game, or another disc of the same layout whose characters were replaced. Everything that belongs to the one
@@ -87,16 +93,16 @@ def game_file(data, file_id):
     return data / "pzs3us2" / f"{file_id - 0xD48:05d}.bin"
 
 
-def main():
-    args = [a for a in sys.argv[1:] if a != "--name"]
-    name = sys.argv[sys.argv.index("--name") + 1] if "--name" in sys.argv else None
-    if name is not None:
-        args.remove(name)
-    if len(args) != 3:
-        sys.exit(__doc__)
-    data, c, out = pathlib.Path(args[0]), int(args[1], 0), pathlib.Path(args[2])
-    if not 0 <= c <= 160:
-        sys.exit("the character id is 0..160")
+def params(data, c):
+    """The character's table (entry 18 of its first model's pack), or None where there is no such character."""
+    src = game_file(data, 0x590 + c * 10)
+    if not src.exists() or src.stat().st_size <= 4096:
+        return None
+    model = src.read_bytes()
+    return section(model, table(model), 18)
+
+
+def import_one(data, c, out, name=None, quiet=False):
     out.mkdir(parents=True, exist_ok=True)
     n = out.name
 
@@ -119,6 +125,7 @@ def main():
             print(f"costume {k + 1}: {size} bytes, more than the 1.5 MB the port takes; the character would be left out")
     if costumes == 0:
         sys.exit(f"no model of character {c} in {data}")
+    say = (lambda *a: None) if quiet else print
     copy(0x590 + c * 10 + 8, f"{n}_anm.pak")
     copy(0x590 + c * 10 + 9, f"{n}_eff.pak")
     copy(0xBDA + c, f"{n}_voice_us.pak")
@@ -144,7 +151,7 @@ def main():
         chips = section(res, ro, 45)
         (out / "chip.bin").write_bytes(section(chips, table(chips), c + 1))
         (out / "name.txt").write_text((name or own) + "\n")
-        print(f"name: {name or own!r}; chip saved")
+        say(f"name: {name or own!r}; chip saved")
     except Exception as err:  # (another edition's menu archive: the folder works without, with its base's chip)
         print("name and chip not read:", err)
         if name:
@@ -156,11 +163,69 @@ def main():
     par = section(model, table(model), 18)
     trans = [x for x in par[0x98:0x9C] if x != 0xFF]
     fusion = [x for x in par[0xB4:0xB7] if x != 0xFF]
-    print(f"{costumes} costumes, spoken lines {spoken[0]} / {spoken[1]}, base character {c}")
-    if trans or fusion:
+    say(f"{costumes} costumes, spoken lines {spoken[0]} / {spoken[1]}, base character {c}")
+    if (trans or fusion) and not quiet:
         print(f"its table names other characters by id: transformations {trans}, fusions {fusion}. Put into a game, "
               "those ids are that game's characters; import them too and name them in forms.txt "
               "(left= up= right= down= fusion1.. partner1..) to have this disc's.")
+    return (out / "name.txt").read_text().strip() if (out / "name.txt").exists() else n
+
+
+def import_set(data, first, root, prefix, fusions):
+    """The character and everyone its table reaches, a folder each, with forms.txt naming the folders."""
+    todo, tables = [first], {}
+    while todo:
+        c = todo.pop(0)
+        if c in tables:
+            continue
+        par = params(data, c)
+        if par is None:
+            print(f"character {c} is named by a table but has no model on this disc; left out")
+            continue
+        tables[c] = par
+        todo += [x for x in par[0x98:0x9C] if x != 0xFF]
+        if fusions:
+            for i in range(3):
+                if par[0xB4 + i] != 0xFF:
+                    todo.append(par[0xB4 + i])
+                    todo += [x for x in par[0xBA + i * 4:0xBE + i * 4] if x != 0xFF]
+    if len(tables) > 57:
+        sys.exit(f"{len(tables)} characters hang together here; the port takes 57. Without --with-fusions there are fewer.")
+    folder = lambda x: f"{prefix}{x}"
+    for c, par in tables.items():
+        shown = import_one(data, c, root / folder(c), quiet=True)
+        lines = [f"{key}={folder(par[0x98 + i])}" for i, key in enumerate(("left", "up", "right", "down"))
+                 if par[0x98 + i] in tables]
+        for i in range(3):
+            if par[0xB4 + i] in tables:  # (only with --with-fusions; else the id stays the game's own character)
+                lines.append(f"fusion{i + 1}={folder(par[0xB4 + i])}")
+                who = [folder(x) for x in par[0xBA + i * 4:0xBE + i * 4] if x in tables]
+                if who:
+                    lines.append(f"partner{i + 1}=" + ",".join(who))
+        if lines:
+            (root / folder(c) / "forms.txt").write_text("\n".join(lines) + "\n")
+        print(f"{folder(c)}: {shown}" + (f"  ({', '.join(lines)})" if lines else ""))
+    print(f"{len(tables)} folders in {root}")
+
+
+def main():
+    flags = {f for f in ("--with-forms", "--with-fusions") if f in sys.argv}
+    args = [a for a in sys.argv[1:] if a not in flags]
+    opt = {}
+    for key in ("--name", "--prefix"):
+        if key in args:
+            at = args.index(key)
+            opt[key] = args[at + 1]
+            del args[at:at + 2]
+    if len(args) != 3:
+        sys.exit(__doc__)
+    data, c, out = pathlib.Path(args[0]), int(args[1], 0), pathlib.Path(args[2])
+    if not 0 <= c <= 160:
+        sys.exit("the character id is 0..160")
+    if flags:
+        import_set(data, c, out, opt.get("--prefix", "C"), "--with-fusions" in flags)
+    else:
+        import_one(data, c, out, opt.get("--name"))
 
 
 if __name__ == "__main__":
