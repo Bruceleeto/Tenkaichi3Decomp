@@ -1175,13 +1175,14 @@ void BtlRes_CommitReload(void) {
 #ifdef PORT
 /* PC build: the buffer of a fighter's model file. The disc's largest model is 841,984 bytes and the original
    reserves 0xCE000; a character from outside the disc can be larger (seen: 964 KB), and a file larger than the
-   buffer is read past its end. With such characters installed the three buffers are 1 MB each; without any, and in
-   an online session (where both games must be the same in every byte), they are the original's. */
-extern int Port_CharaCount(void);
+   buffer is read past its end. The three buffers are as large as the largest model there is to load, among the
+   added characters and in the data folder itself (a disc whose characters were replaced: seen, 1.15 MB), up to
+   1.5 MB (Port_ModelSize, port/src/plat_charas.c). With nothing larger than the disc's, and in an online session
+   (where both games must be the same in every byte), they are the original's. */
+extern int Port_ModelSize(void);
 extern int Port_NetSession(void);
-#define PORT_MODEL_SIZE_ADDED 0x100000
 static s32 BtlRes_ModelSize(void) {
-    return Port_CharaCount() > 0 && !Port_NetSession() ? PORT_MODEL_SIZE_ADDED : BTL_RES_MODEL_SIZE;
+    return Port_NetSession() ? BTL_RES_MODEL_SIZE : Port_ModelSize();
 }
 #else
 #define BtlRes_ModelSize() BTL_RES_MODEL_SIZE

@@ -188,6 +188,25 @@ changed since and NOT seen again yet:
   `member_1p.bin` / `member_2p.bin` are served now (`CHARA_MEMBER_FILE`, file index 91000 + n * 2 + side); without
   them the base character's.
 
+## Larger models, and a folder made from a data folder (2026-10-10)
+
+- **The model buffers follow what there is to load.** They were 1 MB with any added character. A disc whose 161
+  characters had all been replaced (same layout, standard archives, 804 bytes of its program changed) has 50 model
+  files over the original's 0xCE000 and 16 over 1 MB, the largest 1,150,125 bytes. `Port_ModelSize`
+  (port/src/plat_charas.c) takes the largest model among the added characters and the data folder's own
+  (0x590 + id * 10 + 0..7), in whole pages, up to 1.5 MB (`PORT_MODEL_MAX`); an added character with a larger file
+  is left out. Online: the original's size, as before.
+- **Such a disc's data runs as a data folder** (`BT3_DATA`) with the original program file beside it (the port's
+  tables come from that file, and its check passes): menus and a fight, windowless. Not seen on a screen. What the
+  disc's own changes to the program do was not looked at.
+- **`port/tools/import_chara.py <data folder> <id> <folder>`** copies everything of one character out of a data
+  folder of the game's layout into a character folder: models, animations, effects, voice banks, the spoken lines,
+  portrait, member blocks, chip, name, `base.txt`. From the player's own game it makes a copy of a character to
+  start a pack from. It says which other ids the character's table names (forms, fusions).
+
+Checked: three characters of that disc imported, read by the port, and a recorded fight with the 1.15 MB one run
+to its end windowless; the replay check. NOT seen: any of it on a screen.
+
 ## The save and replays (audit of the sources, 2026-10-10)
 
 Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and

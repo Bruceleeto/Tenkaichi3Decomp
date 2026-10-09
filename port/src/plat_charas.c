@@ -165,8 +165,8 @@ static void add(const char *root, const char *name) {
     }
     for (k = 0; k < 8; k++) { /* (a model larger than the buffer the battle reads it into would be read past its end) */
         struct stat st;
-        if (c->file[k][0] != '\0' && stat(c->file[k], &st) == 0 && st.st_size > 0x100000) {
-            fprintf(stderr, "bt3: characters: %s: %s is %ld bytes, more than the 1 MB a model may have; the character is left out\n", name,
+        if (c->file[k][0] != '\0' && stat(c->file[k], &st) == 0 && st.st_size > PORT_MODEL_MAX) {
+            fprintf(stderr, "bt3: characters: %s: %s is %ld bytes, more than the 1.5 MB a model may have; the character is left out\n", name,
                     strrchr(c->file[k], '/') + 1, (long)st.st_size);
             return;
         }
@@ -242,6 +242,49 @@ void PortCharas_Init(void) {
                     sChara[i].costumes, sChara[i].costumes == 1 ? "" : "s", sChara[i].base);
         }
     }
+}
+
+/* The size of the fight's model buffers: the original's (0xCE000), or the largest model file there is to load if that
+   is larger: an added character's, or one of the data folder's own (0x590 + id * 10 + 0..7, the first archive), which
+   a disc with replaced characters can have. Whole pages; not over PORT_MODEL_MAX (a larger file of the data folder
+   is reported once: it would be read past the buffer's end). */
+int Port_ModelSize(void) {
+    static int size;
+    if (size == 0) {
+        const char *root = getenv("BT3_DATA") != NULL ? getenv("BT3_DATA") : "gamedata";
+        long most = 0xCE000;
+        int i, k, over = 0;
+        char path[600];
+        struct stat st;
+        PortCharas_Init();
+        for (i = 0; i < sCount; i++) {
+            for (k = 0; k < 8; k++) {
+                if (sChara[i].file[k][0] != '\0' && stat(sChara[i].file[k], &st) == 0 && st.st_size > most) {
+                    most = (long)st.st_size;
+                }
+            }
+        }
+        for (i = 0; i < 161; i++) {
+            for (k = 0; k < 8; k++) {
+                snprintf(path, sizeof(path), "%s/pzs3us1/%05d.bin", root, 0x590 + i * 10 + k - 1);
+                if (stat(path, &st) == 0 && st.st_size > most) {
+                    if (st.st_size > PORT_MODEL_MAX) {
+                        over++;
+                    } else {
+                        most = (long)st.st_size;
+                    }
+                }
+            }
+        }
+        size = (int)((most + 0xFFF) & ~0xFFFL);
+        if (over > 0) {
+            fprintf(stderr, "bt3: %d model files of the game data are larger than the 1.5 MB a model may have\n", over);
+        }
+        if (size > 0xCE000) {
+            fprintf(stderr, "bt3: the fight's model buffers are %d KB (the largest model there is to load)\n", size / 1024);
+        }
+    }
+    return size;
 }
 
 int Port_CharaCount(void) {
