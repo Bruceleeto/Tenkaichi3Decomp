@@ -297,7 +297,8 @@ void EntrySel_Init(s32 section) {
     gEntrySel->sel = &gEntrySel->state;
     gEntrySel->sel->entry[0] = TOUR_PROG->lastEntry;
     gEntrySel->loadState = ESEL_LOAD_SHOWN;
-    if (!ChrGrid_IsSelectable(gEntrySel->grid, ES_CUR.col + ES_CUR.row * ESEL_COLS)) {
+    if (!PORT_CELL_IN(ES_CUR.col + ES_CUR.row * ESEL_COLS, gEntrySel->gridCount) ||
+        !ChrGrid_IsSelectable(gEntrySel->grid, ES_CUR.col + ES_CUR.row * ESEL_COLS)) {
         memset(gEntrySel->sel, 0, sizeof(ESelEntry));
         gEntrySel->sel->entry[0].col = 0;
         TOUR_PROG->lastEntry = gEntrySel->sel->entry[0];

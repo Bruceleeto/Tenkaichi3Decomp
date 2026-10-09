@@ -244,11 +244,11 @@ void SimTop_Draw(void) {
         Flash_ClipSetUv(flash, &ref, &uv);
 
         if (i != 5) {
-            chara = SIM_SAVE->rank[gSimTop->top + i].chara;
+            chara = PORT_SAVE_CHARA(SIM_SAVE->rank[gSimTop->top + i].chara);
             face = (MTexRes *)MPACK_AT(gSimTop->faces, chara + 1);
             gSimTop->tex[gSimTopFaceTex[i]] = face->tex;
         } else {
-            chara = SIM_SAVE->rank[gSimTop->cursor].chara;
+            chara = PORT_SAVE_CHARA(SIM_SAVE->rank[gSimTop->cursor].chara);
             face = (MTexRes *)MPACK_AT(gSimTop->faces, chara + 1);
             gSimTop->tex[SIMTOP_TEX_CURSOR_FACE] = face->tex;
         }

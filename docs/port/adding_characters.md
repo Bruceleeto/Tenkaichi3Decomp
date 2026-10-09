@@ -165,7 +165,33 @@ draw are guarded with `PORT_SAVE_CELL` (found while doing this: with the draw op
 the array).
 
 Seen without a window: the computer playing an added character through a recorded fight (it moves, attacks and
-is hit; its behaviour is its base character's). Not seen: a draw that lands on an added character.
+is hit; its behaviour is its base character's). Seen by the user on 2026-10-10: a random draw landing on an added character, and added characters among a tournament's entrants.
+
+## The save and replays (audit of the sources, 2026-10-10)
+
+Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and
+what was done:
+
+- **Evolution Z could write outside `custom[97]`.** The selects share one remembered cursor (gProgress + 0x440). Left
+  on an added cell, it lay past the end of Evolution Z's grid (which has no added cells); the restore tested only
+  `ChrGrid_IsSelectable`, a cell past the count read as character 0, and confirming wrote "item sets" over `rec[]`,
+  `item[]`, the money. Fixed at the root: every restore (menu_c_e, menu_e_b, menu_l_b, menu_m_b, menu_i_d, menu_u_g)
+  drops a cursor outside its own grid (`PORT_CELL_IN`). The same stale cursor made the other selects read item sets
+  from past the table; gone with it.
+- **Sim Dragon's ranking kept an added id** and its top screen then indexed a 165-entry face pack with it. The ranking
+  now keeps the base character's id (`PORT_SAVE_CHARA`, menu_r_c.c), and the top screen maps an id already stored
+  (menu_r_d.c).
+- **A replay keeps added ids** (the whole battle setup). Left so: a replay of a fight with an added character needs
+  that character, in the same place in the list. The replay list's chip lookup read out of range with such an id;
+  it shows the base character's chip now (menu_za_d.c). Played with the folder gone, the id answers as character 0:
+  no fault, but not the recorded fight.
+
+Found safe: `charaBits` (ids from disc tables only), `rec[]`, the tournament's prizes, the port's settings (a 0/1
+flag). gProgress is never written to the card.
+
+Checked: builds, the replay check with and without packs. NOT seen: any of the three paths, before or after. A
+fifteen-minute comparison of the save with and without a pack chosen showed nothing, because the recorded session
+never reaches a point where the game saves.
 
 ## More than that (researched 2026-10-09, nothing changed)
 

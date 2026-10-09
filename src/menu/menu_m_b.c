@@ -407,7 +407,9 @@ void UbTeamSel_Init(s32 section) {
     gUbTeamSel->loadState = UBSEL_LOAD_IDLE;
     /* a remembered cursor on a cell that cannot be chosen any more goes back to column 0, row 0 */
     for (j = 0; j < UB_MEMBER_MAX; j++) {
-        if (!ChrGrid_IsSelectable(gUbTeamSel->grid,
+        if (!PORT_CELL_IN(gUbTeamSel->sel->team.member[j].col + gUbTeamSel->sel->team.member[j].row * UB_COLS,
+                          gUbTeamSel->gridCount) ||
+            !ChrGrid_IsSelectable(gUbTeamSel->grid,
                                   gUbTeamSel->sel->team.member[j].col + gUbTeamSel->sel->team.member[j].row * UB_COLS)) {
             memset(&gUbTeamSel->sel->team.member[j], 0, sizeof(UbMember));
             gUbTeamSel->sel->team.member[j].col = 0;

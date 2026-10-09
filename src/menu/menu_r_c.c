@@ -745,7 +745,7 @@ void SimResult_Input(s32 *result) {
                 gSimResult->step++;
                 UbScore_PlateGoto(&gSimResult->flash[0], 0, 1);
                 gSimResult->score.count = gSimResult->score.total;
-                UbScore_AddRanking(gSimResult->score.count, SIM_PROG->chara, gSimResult->cleared);
+                UbScore_AddRanking(gSimResult->score.count, PORT_SAVE_CHARA(SIM_PROG->chara), gSimResult->cleared);
             }
             break;
         case 1:

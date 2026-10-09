@@ -30,7 +30,8 @@ void EvoZ_Init(s32 section) {
     gEvoZ->faceRes = Heap_Alloc(0x20800, 0x20, 0, 2);
     gEvoZ->side = &gEvoZ->sideRec;
     gEvoZ->side->pick = UPROG->pick;
-    if (!ChrGrid_IsSelectable(gEvoZ->grid, gEvoZ->side->pick.col + gEvoZ->side->pick.row * 7)) {
+    if (!PORT_CELL_IN(gEvoZ->side->pick.col + gEvoZ->side->pick.row * 7, gEvoZ->gridCount) ||
+        !ChrGrid_IsSelectable(gEvoZ->grid, gEvoZ->side->pick.col + gEvoZ->side->pick.row * 7)) {
         memset(gEvoZ->side, 0, sizeof(UPick));
         gEvoZ->side->pick.col = 0;
         UPROG->pick = gEvoZ->side->pick;

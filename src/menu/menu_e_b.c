@@ -691,7 +691,9 @@ void TeamSel_Init(s32 section) {
     /* a remembered cursor on a cell that cannot be chosen any more goes back to column `side`, row 0 */
     for (i = 0; i < TEAMSEL_SIDES; i++) {
         for (j = 0; j < TS_MEMBER_MAX; j++) {
-            if (!ChrGrid_IsSelectable(gTeamSel->cells[i], gTeamSel->side[i]->member[j].col +
+            if (!PORT_CELL_IN(gTeamSel->side[i]->member[j].col + gTeamSel->side[i]->member[j].row * TS_COLS,
+                              gTeamSel->cellCount[i]) ||
+                !ChrGrid_IsSelectable(gTeamSel->cells[i], gTeamSel->side[i]->member[j].col +
                                                            gTeamSel->side[i]->member[j].row * TS_COLS)) {
                 memset(&gTeamSel->side[i]->member[j], 0, sizeof(TsMember));
                 gTeamSel->side[i]->member[j].col = i;

@@ -245,7 +245,8 @@ void SoloSel_Init(s32 section) {
     gSoloSel->sel = &gSoloSel->state;
     gSoloSel->sel->entry = SOLO_PROG->lastEntry;
     gSoloSel->loadState = SOLOSEL_LOAD_SHOWN;
-    if (!ChrGrid_IsSelectable(gSoloSel->grid, SS_CUR.col + SS_CUR.row * SOLOSEL_COLS)) {
+    if (!PORT_CELL_IN(SS_CUR.col + SS_CUR.row * SOLOSEL_COLS, gSoloSel->gridCount) ||
+        !ChrGrid_IsSelectable(gSoloSel->grid, SS_CUR.col + SS_CUR.row * SOLOSEL_COLS)) {
         memset(gSoloSel->sel, 0, sizeof(LSelEntry));
         gSoloSel->sel->entry.col = 0;
         SOLO_PROG->lastEntry = gSoloSel->sel->entry;

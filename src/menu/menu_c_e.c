@@ -725,7 +725,8 @@ void CharSel_Init(s32 section) {
     }
     gCharSel->faceState = CHARSEL_LOAD_IDLE;
     for (i = 0; i < CHARSEL_SIDES; i++) {
-        if (!ChrGrid_IsSelectable(gCharSel->cells[i], gCharSel->side[i]->col + gCharSel->side[i]->row * 7)) {
+        if (!PORT_CELL_IN(gCharSel->side[i]->col + gCharSel->side[i]->row * 7, gCharSel->cellCount[i]) ||
+            !ChrGrid_IsSelectable(gCharSel->cells[i], gCharSel->side[i]->col + gCharSel->side[i]->row * 7)) {
             memset(gCharSel->side[i], 0, 0x30);
             gCharSel->side[i]->col = i;
             CSPROG->side[i].pick = *(CharSelPick *)gCharSel->side[i];

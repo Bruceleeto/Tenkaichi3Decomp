@@ -68,12 +68,21 @@ extern void Port_CharaCellLog(int cell, int chara, int forms); /* BT3_CHARA_LOG:
 extern int Port_CharaPool(void);
 #define PORT_IN_POOL(id) ((s32)(id) < 0xA1 || (PORT_CHARA_ADDED(id) && Port_CharaPool()))
 #define PORT_SAVE_CELL(n) ((s32)(n) >= 0 && (s32)(n) < 97)
+/* PORT_CELL_IN: whether a remembered cursor lies inside this screen's grid. The selects share one remembered
+   cursor; left on an added character's cell, it lies past the end of a grid without added cells (Evolution Z,
+   online), where the cell read as character 0 and its "item sets" were whatever follows custom[97] in the save:
+   Evolution Z wrote there. PORT_SAVE_CHARA: the id to keep in the save for a character (an added one is kept as
+   the character it is based on: the save stays good for a copy of the game without it). */
+#define PORT_CELL_IN(n, count) ((s32)(n) >= 0 && (s32)(n) < (s32)(count))
+#define PORT_SAVE_CHARA(c) (PORT_CHARA_ADDED(c) ? CHARA_T(c) : (s32)(c))
 #else
 #define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
 #define PORT_NAME_LINE(c) (c)
 #define PORT_IS_CHARA(id) ((id) < 0xA1)
 #define PORT_IN_POOL(id) ((id) < 0xA1)
 #define PORT_SAVE_CELL(n) (1)
+#define PORT_CELL_IN(n, count) (1)
+#define PORT_SAVE_CHARA(c) (c)
 #define CHARA_LINE_FILE(c, base, alt, line) ((base) + ((c) * 100 + (line)))
 #define CHARA_FACE_FILE(c) ((c) + 0x2F9)
 #define CHARA_T(c) (c)

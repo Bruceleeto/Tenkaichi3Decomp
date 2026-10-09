@@ -43,7 +43,7 @@ void ReplayMenu_DrawChips(void) {
     for (team = 0; team < REPLAY_TEAM_NUM; team++) {
         for (i = 0; i < REPLAY_MEMBER_NUM; i++) {
             s32 chara = ZAPROG->replay[gReplayMenu->cursor].chara[team * REPLAY_MEMBER_NUM + i];
-            MTexRes *res = (MTexRes *)MPACK_AT(gReplayMenu->chips, chara + 1);
+            MTexRes *res = (MTexRes *)MPACK_AT(gReplayMenu->chips, PORT_SAVE_CHARA(chara) + 1);
             s32 slot = i + team * REPLAY_MEMBER_NUM;
 
             gReplayMenu->chip[team][i] = res->tex;
