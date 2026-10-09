@@ -4,9 +4,10 @@
     port/tools/import_chara.py <data folder> <character id 0..160> <output folder> [--name "Name In The Menu"]
     port/tools/import_chara.py <data folder> <id> <folder of folders> --with-forms [--with-fusions] [--prefix P]
 
-With --with-forms the character's transformations are imported too, and theirs, each into its own folder
-(<prefix><id>, the prefix "C" unless given) inside the output folder, with a forms.txt in each that names the
-others: the set works as it does on its disc. --with-fusions follows the fusions as well: their results, the
+With --with-forms the character's transformations are imported too, and theirs: a folder named as the disc
+names the character, its forms in folders inside it named by their labels ("Super Saiyan"), with a forms.txt in
+each that names the others (".." is the character from inside a form's folder): the set works as it does on its
+disc. A name the disc does not give is the prefix ("C" unless given) and the id. --with-fusions follows the fusions as well: their results, the
 partners, and the forms of all of those (that can be many folders; the port takes 57).
 
 <data folder> is an unpacked disc in the layout the port uses (pzs3us1/NNNNN.bin, pzs3us2/NNNNN.bin): the player's
@@ -171,8 +172,36 @@ def import_one(data, c, out, name=None, quiet=False):
     return (out / "name.txt").read_text().strip() if (out / "name.txt").exists() else n
 
 
+def menu_names(data):
+    """The names and the form labels of the character select (sections 43 and 44 of its pack), by character id."""
+    try:
+        arc = game_file(data, 0x1C1).read_bytes()
+        res = bpe(section(arc, table(arc), 2))
+        ro = table(res)
+        out = []
+        for sec in (43, 44):
+            b = section(res, ro, sec)
+            t = table(b)
+            lines = [section(b, t, i) for i in range(1, len(t))]
+            out.append([(l[2:] if l[:2] == b"\xff\xfe" else l).decode("utf-16-le", "replace").split("\0")[0].strip()
+                        for l in lines])
+        return out
+    except Exception:  # (another edition's menu archive: the folders are named by number)
+        return [], []
+
+
+def clean(text):
+    """A name as a folder's: without what a file system or the port's own names ("A/B", "..", "disc:") would trip on."""
+    text = "".join(ch if ch.isalnum() or ch in " -_'()+!&" else " " for ch in text)
+    text = " ".join(text.split()).strip(" .")
+    while len(text.encode()) > 56:
+        text = text[:-1].rstrip()
+    return text
+
+
 def import_set(data, first, root, prefix, fusions):
-    """The character and everyone its table reaches, a folder each, with forms.txt naming the folders."""
+    """The character and everyone its table reaches: a folder for each character, its forms in folders inside it,
+    named as the disc names them, with forms.txt naming the folders."""
     todo, tables = [first], {}
     while todo:
         c = todo.pop(0)
@@ -191,21 +220,68 @@ def import_set(data, first, root, prefix, fusions):
                     todo += [x for x in par[0xBA + i * 4:0xBE + i * 4] if x != 0xFF]
     if len(tables) > 57:
         sys.exit(f"{len(tables)} characters hang together here; the port takes 57. Without --with-fusions there are fewer.")
-    folder = lambda x: f"{prefix}{x}"
+
+    # families: the characters that transformations join. The one no other turns into (left, up, right) is the
+    # character; the rest are its forms.
+    family = {c: c for c in tables}
+
+    def top(c):
+        while family[c] != c:
+            c = family[c]
+        return c
     for c, par in tables.items():
-        shown = import_one(data, c, root / folder(c), quiet=True)
-        lines = [f"{key}={folder(par[0x98 + i])}" for i, key in enumerate(("left", "up", "right", "down"))
-                 if par[0x98 + i] in tables]
+        for x in par[0x98:0x9C]:
+            if x in tables:
+                family[top(x)] = top(c)
+    groups = {}
+    for c in tables:
+        groups.setdefault(top(c), []).append(c)
+    names, labels = menu_names(data)
+    place, used_top = {}, set()
+    for members in groups.values():
+        reached = {x for c in members for x in tables[c][0x98:0x9B] if x in tables and x != c}
+        heads = sorted(c for c in members if c not in reached) or sorted(members)
+        head = first if first in heads else heads[0]
+        name = clean(names[head]) if head < len(names) else ""
+        if not name or name.lower() in used_top:
+            name = f"{name or prefix} {head}".strip()
+        used_top.add(name.lower())
+        place[head] = (name, None)
+        used = set()
+        for c in sorted(members):
+            if c == head:
+                continue
+            leaf = clean(labels[c]) if c < len(labels) else ""
+            if not leaf and c < len(names) and clean(names[c]).lower() != name.lower():
+                leaf = clean(names[c])  # (a form without a label that has a name of its own: "Super Vegito")
+            if not leaf or leaf.lower() in used or leaf.lower() in ("voice_us", "voice_jp"):
+                leaf = f"{leaf or prefix} {c}".strip()
+            used.add(leaf.lower())
+            place[c] = (name, leaf)
+
+    def ref(src, dst):  # how src's forms.txt names dst
+        (st, _), (dt, dl) = place[src], place[dst]
+        if st == dt:
+            return dl if dl is not None else ".."
+        return dt if dl is None else f"{dt}/{dl}"
+
+    for c in sorted(tables, key=lambda x: (place[x][0].lower(), place[x][1] is not None, x)):
+        par = tables[c]
+        t, leaf = place[c]
+        folder = root / t if leaf is None else root / t / leaf
+        shown = import_one(data, c, folder, quiet=True)
+        lines = [f"{key}={ref(c, par[0x98 + i])}" for i, key in enumerate(("left", "up", "right", "down"))
+                 if par[0x98 + i] in tables and par[0x98 + i] != c]
         for i in range(3):
             if par[0xB4 + i] in tables:  # (only with --with-fusions; else the id stays the game's own character)
-                lines.append(f"fusion{i + 1}={folder(par[0xB4 + i])}")
-                who = [folder(x) for x in par[0xBA + i * 4:0xBE + i * 4] if x in tables]
+                lines.append(f"fusion{i + 1}={ref(c, par[0xB4 + i])}")
+                who = [ref(c, x) for x in par[0xBA + i * 4:0xBE + i * 4] if x in tables]
                 if who:
                     lines.append(f"partner{i + 1}=" + ",".join(who))
         if lines:
-            (root / folder(c) / "forms.txt").write_text("\n".join(lines) + "\n")
-        print(f"{folder(c)}: {shown}" + (f"  ({', '.join(lines)})" if lines else ""))
-    print(f"{len(tables)} folders in {root}")
+            (folder / "forms.txt").write_text("\n".join(lines) + "\n")
+        print(f"{t if leaf is None else '  ' + leaf}  [{c}: {shown}]" + (f"  {', '.join(lines)}" if lines else ""))
+    print(f"{len(tables)} characters in {len(groups)} folder{'s' if len(groups) != 1 else ''} of {root}")
 
 
 def main():

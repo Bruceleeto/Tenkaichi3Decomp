@@ -211,6 +211,21 @@ Checked: three characters of that disc imported, read by the port, and a recorde
 to its end windowless; the replay check. Seen by the user (2026-10-10): a set of two made with `--with-forms` from
 that disc, chosen and transformed in a fight. NOT seen: the disc's data run whole on a screen; `--with-fusions`.
 
+## Forms in folders inside the character's (2026-10-10)
+
+A folder inside a character's folder (other than `voice_us`, `voice_jp`) that holds a character is a form of it: a
+character of its own, placed right after its owner. One level. What its `base.txt` and `name.txt` do not say is the
+owner's. A name in `forms.txt` is looked for, in this order: `..` (the owner, from inside a form's folder), a form
+inside the same character's folder, a character of the top, `Character/Form`. Folders side by side work as before;
+a fusion's result, which has two parents, stays at the top.
+
+`import_chara.py --with-forms` writes this layout, named from the disc: the character's name (section 43 of the
+select's pack) for the folder, the form's label (section 44, "Super Saiyan") for the folders inside, the prefix and
+the id where the disc gives none.
+
+Checked: sets made from two data folders read by the port with every link found (none reported missing), folders
+side by side still read, the replay check. NOT seen: a set of this layout in the menu or in a fight.
+
 ## The save and replays (audit of the sources, 2026-10-10)
 
 Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and

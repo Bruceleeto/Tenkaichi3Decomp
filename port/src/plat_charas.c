@@ -40,6 +40,7 @@ typedef struct {
                                       transformations, 4..6 the fusions, 7 + n * 4 + m partner m of fusion n */
     int target[19];                /* ... as an id: -1 not said, 0xFF not installed */
     char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
+    int parent;                    /* -1, or for a form kept in a folder inside its character's: that character */
 } Chara;
 
 enum { CHIP_SIZE = 5504, NAME_ENTRY = 128, NAME_LINES_MAX = 256 };
@@ -82,7 +83,9 @@ static int name_cmp(const void *a, const void *b) {
     return tolower(*x) != tolower(*y) ? tolower(*x) - tolower(*y) : strcmp(a, b);
 }
 
-static void add(const char *root, const char *name) {
+/* Adds the folder `name` of `root` if it holds a character. `parent`: -1, or the character whose folder `root` is
+   (a form of it: what its base.txt and name.txt do not say is the parent's). */
+static int add(const char *root, const char *name, int parent) {
     Chara *c = &sChara[sCount];
     char path[400];
     DIR *d;
@@ -93,9 +96,10 @@ static void add(const char *root, const char *name) {
     snprintf(path, sizeof(path), "%s/%s", root, name);
     d = opendir(path);
     if (d == NULL) {
-        return;
+        return 0;
     }
     memset(c, 0, sizeof(*c));
+    c->parent = parent;
     snprintf(c->name, sizeof(c->name), "%s", name);
     while ((de = readdir(d)) != NULL) {
         k = kind_of(de->d_name);
@@ -105,7 +109,7 @@ static void add(const char *root, const char *name) {
     }
     closedir(d);
     if (c->file[0][0] == '\0') { /* no first costume: not a character's folder */
-        return;
+        return 0;
     }
     snprintf(c->dir, sizeof(c->dir), "%s/%s", root, name);
     snprintf(path, sizeof(path), "%s/%s/chip.bin", root, name);
@@ -121,7 +125,7 @@ static void add(const char *root, const char *name) {
     snprintf(path, sizeof(path), "%s/%s/forms.txt", root, name);
     if ((f = fopen(path, "r")) != NULL) {
         static const char *const kSlot[7] = {"left", "up", "right", "down", "fusion1", "fusion2", "fusion3"};
-        char line[128], *eq;
+        char line[640], *eq; /* (a partner line can name four folders) */
         while (fgets(line, sizeof(line), f) != NULL) {
             line[strcspn(line, "\r\n")] = '\0';
             eq = strchr(line, '=');
@@ -149,7 +153,7 @@ static void add(const char *root, const char *name) {
         }
         fclose(f);
     }
-    snprintf(c->shown, sizeof(c->shown), "%s", name);
+    snprintf(c->shown, sizeof(c->shown), "%s", parent >= 0 ? sChara[parent].shown : name);
     snprintf(path, sizeof(path), "%s/%s/name.txt", root, name);
     if ((f = fopen(path, "r")) != NULL) {
         char line[64];
@@ -168,8 +172,11 @@ static void add(const char *root, const char *name) {
         if (c->file[k][0] != '\0' && stat(c->file[k], &st) == 0 && st.st_size > PORT_MODEL_MAX) {
             fprintf(stderr, "bt3: characters: %s: %s is %ld bytes, more than the 1.5 MB a model may have; the character is left out\n", name,
                     strrchr(c->file[k], '/') + 1, (long)st.st_size);
-            return;
+            return 0;
         }
+    }
+    if (parent >= 0) {
+        c->base = sChara[parent].base;
     }
     snprintf(path, sizeof(path), "%s/%s/base.txt", root, name);
     f = fopen(path, "r");
@@ -181,13 +188,60 @@ static void add(const char *root, const char *name) {
         fclose(f);
     }
     sCount++;
+    return 1;
+}
+
+/* the folders inside `dir`, by name (the same order on every machine); `skip`: the two voice folders */
+static int folders(const char *dir, char names[][128], int max, int skip) {
+    DIR *d = opendir(dir);
+    struct dirent *de;
+    int n = 0;
+    if (d == NULL) {
+        return 0;
+    }
+    while ((de = readdir(d)) != NULL && n < max) {
+        if (de->d_name[0] != '.' && strlen(de->d_name) < 64 &&
+            !(skip && (strcmp(de->d_name, "voice_us") == 0 || strcmp(de->d_name, "voice_jp") == 0))) {
+            snprintf(names[n++], 128, "%s", de->d_name);
+        }
+    }
+    closedir(d);
+    qsort(names, (size_t)n, 128, name_cmp);
+    return n;
+}
+
+/* the id of the folder a forms.txt names, as character i's folder sees it: ".." its own character (for a form
+   kept inside), a form inside its own character's folder, a character of the top, or "Character/Form"; 0xFF if
+   there is none */
+static int find(int i, const char *want) {
+    int family = sChara[i].parent >= 0 ? sChara[i].parent : i, j;
+    const char *slash = strchr(want, '/');
+    if (strcmp(want, "..") == 0) {
+        return sChara[i].parent >= 0 ? PORT_CHARA_FIRST + family : 0xFF;
+    }
+    for (j = 0; j < sCount; j++) {
+        if (sChara[j].parent == family && strcmp(sChara[j].name, want) == 0) {
+            return PORT_CHARA_FIRST + j;
+        }
+    }
+    for (j = 0; j < sCount; j++) {
+        if (sChara[j].parent < 0 && strcmp(sChara[j].name, want) == 0) {
+            return PORT_CHARA_FIRST + j;
+        }
+    }
+    for (j = 0; slash != NULL && j < sCount; j++) {
+        int p = sChara[j].parent;
+        if (p >= 0 && strlen(sChara[p].name) == (size_t)(slash - want) && strncmp(sChara[p].name, want, (size_t)(slash - want)) == 0 &&
+            strcmp(sChara[j].name, slash + 1) == 0) {
+            return PORT_CHARA_FIRST + j;
+        }
+    }
+    return 0xFF;
 }
 
 void PortCharas_Init(void) {
-    static char names[256][128];
+    static char names[256][128], inner[64][128];
     char root[300];
-    DIR *d;
-    struct dirent *de;
     int n = 0, i;
 
     if (sInit) {
@@ -197,22 +251,20 @@ void PortCharas_Init(void) {
     if (!PortExtras_Dir("characters", "BT3_CHARACTERS", root, sizeof(root))) {
         return;
     }
-    d = opendir(root);
-    if (d == NULL) {
-        return;
-    }
-    while ((de = readdir(d)) != NULL && n < 256) {
-        if (de->d_name[0] != '.' && strlen(de->d_name) < 64) {
-            snprintf(names[n++], 128, "%s", de->d_name);
+    n = folders(root, names, 256, 0);
+    for (i = 0; i < n && sCount < PORT_CHARA_MAX; i++) {
+        int owner = sCount, m, k;
+        if (!add(root, names[i], -1)) {
+            continue;
+        }
+        /* the folders inside a character's folder are its forms: characters of their own, right after it */
+        m = folders(sChara[owner].dir, inner, 64, 1);
+        for (k = 0; k < m && sCount < PORT_CHARA_MAX; k++) {
+            add(sChara[owner].dir, inner[k], owner);
         }
     }
-    closedir(d);
-    qsort(names, (size_t)n, 128, name_cmp); /* by name: the same order on every machine */
-    for (i = 0; i < n && sCount < PORT_CHARA_MAX; i++) {
-        add(root, names[i]);
-    }
     for (i = 0; i < sCount; i++) { /* forms.txt: folders to ids, now that every folder has its id */
-        int k, j;
+        int k;
         for (k = 0; k < 19; k++) {
             const char *want = sChara[i].form[k];
             sChara[i].target[k] = -1;
@@ -225,11 +277,7 @@ void PortCharas_Init(void) {
                 sChara[i].target[k] = id >= 0 && id <= 160 ? id : 0xFF;
                 continue;
             }
-            for (j = 0; j < sCount; j++) {
-                if (strcmp(sChara[j].name, want) == 0) {
-                    sChara[i].target[k] = PORT_CHARA_FIRST + j;
-                }
-            }
+            sChara[i].target[k] = find(i, want);
             if (sChara[i].target[k] == 0xFF && k < 7) {
                 fprintf(stderr, "bt3: characters: %s: its form %s is not installed; that transformation is left out\n", sChara[i].name, want);
             }
@@ -238,7 +286,8 @@ void PortCharas_Init(void) {
     if (sCount > 0) {
         fprintf(stderr, "bt3: characters: %d added from %s\n", sCount, root);
         for (i = 0; i < sCount; i++) {
-            fprintf(stderr, "bt3: characters:   %s: id %d, %d costume%s, base character %d\n", sChara[i].name, PORT_CHARA_FIRST + i,
+            fprintf(stderr, "bt3: characters:   %s%s%s: id %d, %d costume%s, base character %d\n",
+                    sChara[i].parent >= 0 ? sChara[sChara[i].parent].name : "", sChara[i].parent >= 0 ? "/" : "", sChara[i].name, PORT_CHARA_FIRST + i,
                     sChara[i].costumes, sChara[i].costumes == 1 ? "" : "s", sChara[i].base);
         }
     }
