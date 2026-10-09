@@ -61,7 +61,7 @@ no icon, no name, no parameter file and no streamed voice lines.
 
 ## How it is done (include/port_chara.h, port/src/plat_charas.c)
 
-- An added character is 0xA5 + n, the folders taken by name.
+- An added character is 0xC6 + n (0xA5 + n until 2026-10-09: see "57 characters"), the folders taken by name.
 - Its ten model-rule files are ids `0xD48 + 71000 + n * 10 + k` and its two voice banks `0xD48 + 72000 + n * 2 +
   language`, past the archive's end; `PortCharas_Alias` answers them with the folder's file, or with the base
   character's disc file where the folder has none (a missing damaged model: the costume itself; one language
@@ -139,7 +139,22 @@ screens (no recorded session reaches them).
 Not covered: the character reference (a list of 161 entries with its own tables, not a grid), the customising
 screens, the replay and password screens.
 
-## More than 27 characters (researched 2026-10-09, nothing changed)
+## 57 characters (2026-10-09)
+
+The limit was 27, ids 0xA5..0xBF. It is 57 now, ids **0xC6..0xFE** (`PORT_CHARA_FIRST`, `PORT_CHARA_MAX` in
+include/port_chara.h and port/include/plat_charas.h). The range starts at 0xC6 and not at 0xA5 because the battle
+takes a prop's "character" from its model file's number as it does a fighter's, which for the props' files comes
+out as 0xC1..0xC5: a wider range from 0xA5 would have taken props for added characters. `BT3_TEST_CHARA` therefore
+takes 198 for the first added character where it took 165. The folder scan reads 256 names (it stopped at 64),
+and the large pictures' file numbers moved to 90000 (the spoken lines of 57 characters run from 74000 to 85400).
+
+Checked with 54 folders installed (converted characters, four of them forms of others): all 54 are found, the
+grid gets 50 cells for them (cells 99..148 of 165), the recorded session runs, a fight as the first and as the last
+of them runs, the row of the select screen shows their chips; the replay check is unchanged with none and with 54.
+Not checked: the other screens with that many, the menu's memory with 57 chips loaded (about 310 KB of it) on
+screens that use more of it than the duel select.
+
+## More than that (researched 2026-10-09, nothing changed)
 
 The three reasons given above for the limit do not bind an added character: every character id in the game's
 state, the save, the replay and the menus is 32 bits wide; the only one-byte ids are in disc and pack DATA (the

@@ -3,11 +3,11 @@
 #ifndef PORT_PLAT_CHARAS_H
 #define PORT_PLAT_CHARAS_H
 
-#define PORT_CHARA_FIRST 0xA5 /* the same numbers as include/port_chara.h */
-#define PORT_CHARA_MAX 27
+#define PORT_CHARA_FIRST 0xC6 /* the same numbers as include/port_chara.h */
+#define PORT_CHARA_MAX 57
 #define PORT_CHARA_FILE_INDEX 71000  /* in the second archive: ten files per added character */
 #define PORT_CHARA_VOICE_INDEX 72000 /* two per added character */
-#define PORT_CHARA_FACE_INDEX 80000  /* one per added character: the large picture of the menus */
+#define PORT_CHARA_FACE_INDEX 90000  /* one per added character: the large picture of the menus */
 #define PORT_CHARA_LINE_INDEX 74000  /* two hundred per added character: its spoken lines, a hundred in each language */
 
 void PortCharas_Init(void); /* reads the folder; once */

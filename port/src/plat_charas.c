@@ -10,7 +10,7 @@
  *   *_Voice_US.pak, *_Voice_JP.pak  the voice bank in each language (0xBDA + id, 0xC7B + id)
  *
  * (Seen in one pack, 2026-10-08: "Gokhan_0_1p.pak" and so on, eight files; the same layout as the disc's.) The
- * folders, by name, become the characters 0xA5, 0xA6, ... (include/port_chara.h). The game asks for an added
+ * folders, by name, become the characters 0xC6, 0xC7, ... (include/port_chara.h). The game asks for an added
  * character's files by ids past the end of the second archive, and they are answered here: with the folder's
  * file, or where it has none with the file of the character's BASE character, one of the disc's, which also
  * stands for it in every table (health, cost, AI, what is said to whom). `base.txt` in the folder holds the base
@@ -171,7 +171,7 @@ static void add(const char *root, const char *name) {
 }
 
 void PortCharas_Init(void) {
-    static char names[64][128];
+    static char names[256][128];
     char root[300];
     DIR *d;
     struct dirent *de;
@@ -188,7 +188,7 @@ void PortCharas_Init(void) {
     if (d == NULL) {
         return;
     }
-    while ((de = readdir(d)) != NULL && n < 64) {
+    while ((de = readdir(d)) != NULL && n < 256) {
         if (de->d_name[0] != '.' && strlen(de->d_name) < 64) {
             snprintf(names[n++], 128, "%s", de->d_name);
         }

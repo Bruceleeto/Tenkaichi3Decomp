@@ -4,7 +4,7 @@
 /* PC build: characters added from outside the disc (port/src/plat_charas.c).
  *
  * The disc has 161 characters, ids 0x00..0xA0, and the menus use 0xA1..0xA4 as markers (random, locked, custom,
- * empty), in the disc's data as well as in the code. An added character has an id from 0xA5: below 0x100 (from
+ * empty), in the disc's data as well as in the code. An added character has an id from 0xC6: below 0x100 (from
  * there the battle takes an id for an object), not 0xFF ("none" in the byte-sized form lists), and with a bit in
  * the 192-bit unlock field.
  *
@@ -18,8 +18,13 @@
  *   added character stands as its BASE character, one of the disc's.
  */
 #ifdef PORT
-#define PORT_CHARA_FIRST 0xA5
-#define PORT_CHARA_MAX 27                          /* 0xA5..0xBF: the unlock field has bits for ids up to 191 */
+/* The range: 0xC6..0xFE, 57 characters. Not from 0xA5: the battle takes a prop's "character" from its model file's
+   number as it does a fighter's ((id - 0x590) / 10), which for the props' files comes out as 0xC1..0xC5, and those
+   must not be taken for added characters. Below 0xFF, which is "none" in the packs' byte-sized form tables. (Every
+   character id in the game's state, the save and the menus is 32 bits wide; the unlock bits are never asked about
+   an added character.) */
+#define PORT_CHARA_FIRST 0xC6
+#define PORT_CHARA_MAX 57
 #define PORT_CHARA_FILE0 (0xD48 + 71000)           /* ten files per added character, as on the disc */
 #define PORT_CHARA_VOICE0 (0xD48 + 72000)          /* two per added character: the voice bank, and the other language's */
 #define PORT_CHARA_ADDED(c) ((s32)(c) >= PORT_CHARA_FIRST && (s32)(c) < PORT_CHARA_FIRST + PORT_CHARA_MAX)
@@ -35,7 +40,7 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
 #define CHARA_VOICE_FILE(c, base, alt) (PORT_CHARA_ADDED(c) ? PORT_CHARA_VOICE0 + ((s32)(c) - PORT_CHARA_FIRST) * 2 + ((alt) ? 1 : 0) : (s32)(c) + (base))
 /* the large picture of the menus: 0x2F9 + id on the disc; an added character's own file, answered from its folder
    (`portrait.bin`) or with its base character's */
-#define PORT_CHARA_FACE0 (0xD48 + 80000) /* (73000 is the added songs') */
+#define PORT_CHARA_FACE0 (0xD48 + 90000) /* (73000 is the added songs'; the spoken lines run from 74000 to 85400) */
 #define CHARA_FACE_FILE(c) (PORT_CHARA_ADDED(c) ? PORT_CHARA_FACE0 + ((s32)(c) - PORT_CHARA_FIRST) : (s32)(c) + 0x2F9)
 /* a spoken line (a sound stream): `base + id * 100 + line` on the disc, two sets (`alt` the second); an added
    character's own, answered from its folder (voice_us/NNN.adx, voice_jp/NNN.adx) or with its base character's */
