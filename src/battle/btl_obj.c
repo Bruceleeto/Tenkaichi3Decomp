@@ -1172,6 +1172,21 @@ void BtlRes_CommitReload(void) {
 }
 
 /* Clears the slots; with prealloc, allocates the buffers of the two fixed slots and the spare model buffer. */
+#ifdef PORT
+/* PC build: the buffer of a fighter's model file. The disc's largest model is 841,984 bytes and the original
+   reserves 0xCE000; a character from outside the disc can be larger (seen: 964 KB), and a file larger than the
+   buffer is read past its end. With such characters installed the three buffers are 1 MB each; without any, and in
+   an online session (where both games must be the same in every byte), they are the original's. */
+extern int Port_CharaCount(void);
+extern int Port_NetSession(void);
+#define PORT_MODEL_SIZE_ADDED 0x100000
+static s32 BtlRes_ModelSize(void) {
+    return Port_CharaCount() > 0 && !Port_NetSession() ? PORT_MODEL_SIZE_ADDED : BTL_RES_MODEL_SIZE;
+}
+#else
+#define BtlRes_ModelSize() BTL_RES_MODEL_SIZE
+#endif
+
 void BtlRes_Init(s32 prealloc) {
     BtlResWork *res = BtlRes_GetWork();
     s32 number = 0;
@@ -1183,11 +1198,11 @@ void BtlRes_Init(s32 prealloc) {
     res->prealloc = prealloc;
     if (prealloc != 0) {
         for (i = 0; i < 3; i++) {
-            res->spare[i].buf = Heap_Alloc(BTL_RES_MODEL_SIZE, 0x40, 0, HEAP_ANY);
+            res->spare[i].buf = Heap_Alloc(BtlRes_ModelSize(), 0x40, 0, HEAP_ANY);
             res->spare[i].size = 0;
             res->spare[i].id = -1;
             res->spare[i].orig = res->spare[i].buf;
-            memset(res->spare[i].buf, 0, BTL_RES_MODEL_SIZE);
+            memset(res->spare[i].buf, 0, BtlRes_ModelSize());
         }
         for (i = 0; i < BTL_RES_FIXED_MAX; i++) {
             slot = &res->fixed[i];

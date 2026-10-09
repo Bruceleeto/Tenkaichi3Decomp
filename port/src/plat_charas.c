@@ -127,6 +127,14 @@ static void add(const char *root, const char *name) {
     }
     for (c->costumes = 1; c->costumes < 4 && c->file[c->costumes][0] != '\0'; c->costumes++) {
     }
+    for (k = 0; k < 8; k++) { /* (a model larger than the buffer the battle reads it into would be read past its end) */
+        struct stat st;
+        if (c->file[k][0] != '\0' && stat(c->file[k], &st) == 0 && st.st_size > 0x100000) {
+            fprintf(stderr, "bt3: characters: %s: %s is %ld bytes, more than the 1 MB a model may have; the character is left out\n", name,
+                    strrchr(c->file[k], '/') + 1, (long)st.st_size);
+            return;
+        }
+    }
     snprintf(path, sizeof(path), "%s/%s/base.txt", root, name);
     f = fopen(path, "r");
     if (f != NULL) {
