@@ -8,6 +8,8 @@
 /* The added stages' models: files 70000.. of the second archive, past its end (65,201 files); the same number
    as PORT_ADDED_STAGE_FILE in src/battle/battle_load.c. */
 #define PORT_STAGE_FILE_INDEX 70000
+#define PORT_STAGE_THUMB_INDEX 70100 /* the select's picture of an added stage (include/menu/menu_d.h) */
+#define PORT_STAGE_THUMB_MAX 0x3B800  /* the select's buffer for it */
 
 char gPortStageNames[PORT_STAGE_MAX][64];
 int gPortExtraStageCount;
@@ -15,7 +17,7 @@ int gPortExtraStages[PORT_STAGE_MAX];
 
 typedef struct StageAlias {
     char rel[48];   /* the path the game asks for, under the data root */
-    char target[192]; /* where it is served from */
+    char target[448]; /* where it is served from */
 } StageAlias;
 
 static StageAlias sAliases[PORT_STAGE_MAX * 2];
@@ -109,6 +111,34 @@ static void add_stage(const char *file, const char *name) {
     snprintf(sAliases[sAliasCount].rel, sizeof(sAliases[sAliasCount].rel), "pzs3us2/%05d.bin", PORT_STAGE_FILE_INDEX + i);
     snprintf(sAliases[sAliasCount].target, sizeof(sAliases[sAliasCount].target), "%s/%s", sDir, file);
     sAliasCount++;
+    {
+        /* Its picture in the stage select: `<name>.thumb` beside the model (the disc's own format: a stage's file
+           0x39D + stage copied out), or the disc thumbnail an added stage has always borrowed. */
+        char own[512], *dot;
+        FILE *fp;
+        long size = 0;
+        snprintf(own, sizeof(own), "%s/%s", sDir, file);
+        dot = strrchr(own, '.');
+        if (dot != NULL && strlen(own) + 8 < sizeof(own)) {
+            strcpy(dot, ".thumb");
+            fp = fopen(own, "rb");
+            if (fp != NULL) {
+                fseek(fp, 0, SEEK_END);
+                size = ftell(fp);
+                fclose(fp);
+            }
+        }
+        snprintf(sAliases[sAliasCount].rel, sizeof(sAliases[sAliasCount].rel), "pzs3us2/%05d.bin", PORT_STAGE_THUMB_INDEX + i);
+        if (size > 0 && size <= PORT_STAGE_THUMB_MAX) {
+            snprintf(sAliases[sAliasCount].target, sizeof(sAliases[sAliasCount].target), "%s", own);
+        } else {
+            if (size > PORT_STAGE_THUMB_MAX) {
+                fprintf(stderr, "bt3: stages: the picture of %s is larger than the select takes; a disc one is shown\n", file);
+            }
+            snprintf(sAliases[sAliasCount].target, sizeof(sAliases[sAliasCount].target), "pzs3us1/%05d.bin", 0x39D - 1 + i);
+        }
+        sAliasCount++;
+    }
 
     gPortExtraStageCount++;
 }

@@ -448,6 +448,9 @@ def import_stages(data, out, against):
                 same += 1
                 continue
         (out / f"{name}.unk").write_bytes(body)
+        thumb = game_file(data, 0x39D + stage)  # the select's picture of the stage
+        if thumb.exists():
+            (out / f"{name}.thumb").write_bytes(thumb.read_bytes())
         made += 1
         note = "  LARGER than the game's stage buffer: it would be cut off" if len(body.rstrip(b"\0")) > STAGE_BUF else ""
         print(f"{stage:2d}  {name}.unk  {len(body) / 1048576:.1f} MB{note}")

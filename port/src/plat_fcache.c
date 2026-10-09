@@ -36,7 +36,7 @@ static int slot_of(const char *rel) {
         /* a stage added from outside the disc: the game asks for a file id past the disc's own, and the file is
            the one the stage list names (plat_stages.c), under the data folder */
         extern int PortStages_Alias(const char *rel, char *out, unsigned n);
-        char target[256];
+        char target[512];
         fp = NULL;
         extern int PortSongs_Alias(const char *rel, char *out, unsigned n); /* plat_songs.c: the same for a song */
         extern int PortCharas_Alias(const char *rel, char *out, unsigned n); /* plat_charas.c: an added character's files */
