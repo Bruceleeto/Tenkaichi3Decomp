@@ -35,6 +35,8 @@ typedef struct {
     int base;
     int costumes;
     char chip[400], portrait[400]; /* "" where the folder has none */
+    char form[7][64];              /* forms.txt: the folder (or "disc:<id>") of each slot; "" = not said */
+    int target[7];                 /* ... as an id: -1 not said, 0xFF not installed */
     char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
 } Chara;
 
@@ -113,6 +115,25 @@ static void add(const char *root, const char *name) {
         fclose(f);
         snprintf(c->portrait, sizeof(c->portrait), "%s", path);
     }
+    snprintf(path, sizeof(path), "%s/%s/forms.txt", root, name);
+    if ((f = fopen(path, "r")) != NULL) {
+        static const char *const kSlot[7] = {"left", "up", "right", "down", "fusion1", "fusion2", "fusion3"};
+        char line[128], *eq;
+        while (fgets(line, sizeof(line), f) != NULL) {
+            line[strcspn(line, "\r\n")] = '\0';
+            eq = strchr(line, '=');
+            if (eq == NULL) {
+                continue;
+            }
+            *eq = '\0';
+            for (k = 0; k < 7; k++) {
+                if (strcmp(line, kSlot[k]) == 0) {
+                    snprintf(c->form[k], sizeof(c->form[k]), "%s", eq + 1);
+                }
+            }
+        }
+        fclose(f);
+    }
     snprintf(c->shown, sizeof(c->shown), "%s", name);
     snprintf(path, sizeof(path), "%s/%s/name.txt", root, name);
     if ((f = fopen(path, "r")) != NULL) {
@@ -174,6 +195,30 @@ void PortCharas_Init(void) {
     qsort(names, (size_t)n, 128, name_cmp); /* by name: the same order on every machine */
     for (i = 0; i < n && sCount < PORT_CHARA_MAX; i++) {
         add(root, names[i]);
+    }
+    for (i = 0; i < sCount; i++) { /* forms.txt: folders to ids, now that every folder has its id */
+        int k, j;
+        for (k = 0; k < 7; k++) {
+            const char *want = sChara[i].form[k];
+            sChara[i].target[k] = -1;
+            if (want[0] == '\0') {
+                continue;
+            }
+            sChara[i].target[k] = 0xFF;
+            if (strncmp(want, "disc:", 5) == 0) {
+                int id = atoi(want + 5);
+                sChara[i].target[k] = id >= 0 && id <= 160 ? id : 0xFF;
+                continue;
+            }
+            for (j = 0; j < sCount; j++) {
+                if (strcmp(sChara[j].name, want) == 0) {
+                    sChara[i].target[k] = PORT_CHARA_FIRST + j;
+                }
+            }
+            if (sChara[i].target[k] == 0xFF) {
+                fprintf(stderr, "bt3: characters: %s: its form %s is not installed; that transformation is left out\n", sChara[i].name, want);
+            }
+        }
     }
     if (sCount > 0) {
         fprintf(stderr, "bt3: characters: %d added from %s\n", sCount, root);
@@ -253,6 +298,12 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         snprintf(out, n, "pzs3us1/%05d.bin", 1423 + c->base * 10 + k);
     }
     return 1;
+}
+
+int Port_CharaFormTarget(int chara, int slot) {
+    int index = chara - PORT_CHARA_FIRST;
+    PortCharas_Init();
+    return index >= 0 && index < sCount && slot >= 0 && slot < 7 ? sChara[index].target[slot] : -1;
 }
 
 void *Port_CharaChipLoad(int index) {

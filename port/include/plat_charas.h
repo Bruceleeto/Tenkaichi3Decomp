@@ -25,6 +25,14 @@ void *Port_CharaChip(int chara);
 /* The names of a screen with the added characters' after them: a copy of the screen's names pack (`pack`, the
    disc's: a count, offsets, entries of UTF-16 text) with one entry more per added character, from the folder's
    `name.txt` or else the folder's name. Port_CharaNameLine(chara) is an added character's line in it. */
+/* Transformations and fusions between added characters. A pack's own parameter table names its other forms by the
+   character numbers of whoever made it; `forms.txt` in the folder says which FOLDER each one is:
+       left=Fighter_119        (the four transformation slots: left, up, right, down)
+       fusion1=Fighter_104     (the three fusion results: fusion1..fusion3)
+       down=disc:3         (or a character of the disc, by its id)
+   Port_CharaFormTarget gives the id for a slot (0..3 transformations, 4..6 fusions): the folder's id if it is
+   installed, 0xFF (none) if it is not, and -1 where forms.txt says nothing (the table's own number counts). */
+int Port_CharaFormTarget(int chara, int slot);
 void *Port_CharaNamePack(void *pack);
 int Port_CharaNameLine(int chara);
 

@@ -2002,5 +2002,14 @@ void BattleSide_SetMemberItems(s32 side, s32 idx, BattleItemSet *items) {
 s32 BattleSide_IsCharaUsable(s32 side, s32 chara) {
     u64 *bits = Side(side)->charaBits.bits;
 
+#ifdef PORT /* PC build: a character from outside the disc is never locked (the save has no bit for it) */
+    {
+        extern int Port_CharaCostumes(int chara);
+        if (PORT_CHARA_ADDED(chara)) {
+            return Port_CharaCostumes(chara) > 0;
+        }
+    }
+#endif
+
     return (bits[chara / 64] >> (chara % 64)) & 1;
 }
