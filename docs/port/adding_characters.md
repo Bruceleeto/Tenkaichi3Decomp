@@ -229,7 +229,7 @@ the port takes at once, a shelf to copy from.
 
 `--stages` copies a disc's stages (file 0x171 + stage) as `<Name>.unk` files for the `stages` folder, named after
 the original's places (a stage's name on a disc is a picture); `--against <original>` leaves out the unchanged
-ones. Seen: 33 of a disc's 35, all within the stage buffer; two of them started in a fight windowless.
+ones. Seen: 33 of a disc's 35, all within the stage buffer; two of them taken by the game as added stages. NOT seen: a fight on one (a windowless run with `BT3_TEST_STAGE` gave the same numbers for both, so it does not show the stage was used).
 
 Checked: sets made from two data folders read by the port with every link found (none reported missing), folders
 side by side still read, the replay check. NOT seen: a set of this layout in the menu or in a fight.
