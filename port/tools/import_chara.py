@@ -10,6 +10,11 @@ each that names the others (".." is the character from inside a form's folder): 
 disc. A name the disc does not give is the prefix ("C" unless given) and the id. --with-fusions follows the fusions as well: their results, the
 partners, and the forms of all of those (that can be many folders; the port takes 57).
 
+    port/tools/import_chara.py <data folder or .iso> <folder of folders> --all
+
+<data folder> may also be a disc image (.iso): its two archives are read in place, nothing is unpacked. --all makes
+a folder for every character of the disc, forms inside (more than the port takes at once: a shelf to pick from).
+
 <data folder> is an unpacked disc in the layout the port uses (pzs3us1/NNNNN.bin, pzs3us2/NNNNN.bin): the player's
 own game, or another disc of the same layout whose characters were replaced. Everything that belongs to the one
 character is copied as it is, under the names the port looks for in a folder of `characters/`:
@@ -87,8 +92,69 @@ def section(b, offs, i):
     return b[offs[i - 1]:offs[i]] if i < len(offs) else b[offs[i - 1]:]
 
 
+class IsoFile:
+    """One file of an archive inside a disc image, with what this script asks of a path."""
+
+    def __init__(self, iso, at, size):
+        self.iso, self.at, self.size = iso, at, size
+
+    def exists(self):
+        return self.size > 0
+
+    def stat(self):
+        return type("Stat", (), {"st_size": self.size})
+
+    def read_bytes(self):
+        self.iso.seek(self.at)
+        return self.iso.read(self.size)
+
+
+class IsoData:
+    """A disc image: DATA/PZS3US1.AFS and DATA/PZS3US2.AFS found through the ISO 9660 directory, their tables read
+    ("AFS", count, then offset and size of each file)."""
+
+    def __init__(self, path):
+        self.iso = open(path, "rb")
+        self.arc = {}
+        self.iso.seek(16 * 2048 + 156)
+        root = self.iso.read(34)
+        for name, lba, size in self.entries(*struct.unpack_from("<I4xI", root, 2)):
+            if name.upper() == "DATA":
+                for inner, at, _ in self.entries(lba, size):
+                    key = inner.upper().split(";")[0]
+                    if key in ("PZS3US1.AFS", "PZS3US2.AFS"):
+                        self.iso.seek(at * 2048)
+                        magic, count = struct.unpack("<4sI", self.iso.read(8))
+                        if magic[:3] != b"AFS":
+                            sys.exit(f"{key} of this disc is not an archive of the usual kind; unpack the disc another way")
+                        self.arc[key[:7].lower()] = (at * 2048, struct.unpack(f"<{count * 2}I", self.iso.read(count * 8)))
+        if len(self.arc) != 2:
+            sys.exit("no DATA/PZS3US1.AFS and DATA/PZS3US2.AFS on this disc")
+
+    def entries(self, lba, size):
+        self.iso.seek(lba * 2048)
+        d, i = self.iso.read(size), 0
+        while i < len(d):
+            n = d[i]
+            if n == 0:
+                i = (i // 2048 + 1) * 2048
+                continue
+            name = d[i + 33:i + 33 + d[i + 32]]
+            if name not in (b"\0", b"\1"):
+                yield (name.decode("ascii", "replace"),) + struct.unpack_from("<I4xI", d, i + 2)
+            i += n
+
+    def file(self, arc, index):
+        base, tab = self.arc[arc]
+        if index * 2 + 1 >= len(tab):
+            return IsoFile(self.iso, 0, 0)
+        return IsoFile(self.iso, base + tab[index * 2], tab[index * 2 + 1])
+
+
 def game_file(data, file_id):
     """The file of a file id: ids below 0xD48 are the first archive's (named id - 1), the rest the second's."""
+    if isinstance(data, IsoData):
+        return data.file("pzs3us1", file_id - 1) if file_id < 0xD48 else data.file("pzs3us2", file_id - 0xD48)
     if file_id < 0xD48:
         return data / "pzs3us1" / f"{file_id - 1:05d}.bin"
     return data / "pzs3us2" / f"{file_id - 0xD48:05d}.bin"
@@ -112,7 +178,10 @@ def import_one(data, c, out, name=None, quiet=False):
         if not src.exists() or src.stat().st_size <= least:
             return 0
         (out / target).parent.mkdir(parents=True, exist_ok=True)
-        (out / target).write_bytes(src.read_bytes())
+        body = src.read_bytes()
+        if not body.strip(b"\0"):
+            return 0
+        (out / target).write_bytes(body)
         return src.stat().st_size
 
     costumes = 0
@@ -199,17 +268,18 @@ def clean(text):
     return text
 
 
-def import_set(data, first, root, prefix, fusions):
+def import_set(data, firsts, root, prefix, fusions, shelf=False):
     """The character and everyone its table reaches: a folder for each character, its forms in folders inside it,
     named as the disc names them, with forms.txt naming the folders."""
-    todo, tables = [first], {}
+    todo, tables, first = list(firsts), {}, firsts[0]
     while todo:
         c = todo.pop(0)
         if c in tables:
             continue
         par = params(data, c)
         if par is None:
-            print(f"character {c} is named by a table but has no model on this disc; left out")
+            if not shelf:
+                print(f"character {c} is named by a table but has no model on this disc; left out")
             continue
         tables[c] = par
         todo += [x for x in par[0x98:0x9C] if x != 0xFF]
@@ -218,7 +288,7 @@ def import_set(data, first, root, prefix, fusions):
                 if par[0xB4 + i] != 0xFF:
                     todo.append(par[0xB4 + i])
                     todo += [x for x in par[0xBA + i * 4:0xBE + i * 4] if x != 0xFF]
-    if len(tables) > 57:
+    if len(tables) > 57 and not shelf:
         sys.exit(f"{len(tables)} characters hang together here; the port takes 57. Without --with-fusions there are fewer.")
 
     # families: the characters that transformations join. The one no other turns into (left, up, right) is the
@@ -285,7 +355,7 @@ def import_set(data, first, root, prefix, fusions):
 
 
 def main():
-    flags = {f for f in ("--with-forms", "--with-fusions") if f in sys.argv}
+    flags = {f for f in ("--with-forms", "--with-fusions", "--all") if f in sys.argv}
     args = [a for a in sys.argv[1:] if a not in flags]
     opt = {}
     for key in ("--name", "--prefix"):
@@ -293,13 +363,18 @@ def main():
             at = args.index(key)
             opt[key] = args[at + 1]
             del args[at:at + 2]
-    if len(args) != 3:
+    if len(args) != (2 if "--all" in flags else 3):
         sys.exit(__doc__)
-    data, c, out = pathlib.Path(args[0]), int(args[1], 0), pathlib.Path(args[2])
+    data = IsoData(args[0]) if pathlib.Path(args[0]).is_file() else pathlib.Path(args[0])
+    if "--all" in flags:
+        import_set(data, list(range(161)), pathlib.Path(args[1]), opt.get("--prefix", "C"), False, shelf=True)
+        print("The port takes 57 characters at once (forms count): copy the folders wanted into `characters`.")
+        return
+    c, out = int(args[1], 0), pathlib.Path(args[2])
     if not 0 <= c <= 160:
         sys.exit("the character id is 0..160")
     if flags:
-        import_set(data, c, out, opt.get("--prefix", "C"), "--with-fusions" in flags)
+        import_set(data, [c], out, opt.get("--prefix", "C"), "--with-fusions" in flags)
     else:
         import_one(data, c, out, opt.get("--name"))
 

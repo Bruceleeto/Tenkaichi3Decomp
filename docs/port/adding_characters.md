@@ -223,6 +223,10 @@ a fusion's result, which has two parents, stays at the top.
 select's pack) for the folder, the form's label (section 44, "Super Saiyan") for the folders inside, the prefix and
 the id where the disc gives none.
 
+The script also takes a disc image (`.iso`) in place of the data folder, reading its two archives in place, and
+`--all` makes a folder for every character of the disc (seen: 161 characters in 141 folders, 2.2 GB): more than
+the port takes at once, a shelf to copy from.
+
 Checked: sets made from two data folders read by the port with every link found (none reported missing), folders
 side by side still read, the replay check. NOT seen: a set of this layout in the menu or in a fight.
 
