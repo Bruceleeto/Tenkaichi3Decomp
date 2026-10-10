@@ -66,6 +66,10 @@ extern void Port_CharaCellLog(int cell, int chara, int forms); /* BT3_CHARA_LOG:
 #define PORT_CHIP(pack, id) \
     (PORT_CHARA_ADDED(id) && PortChips_Get(id) != NULL ? PortChips_Get(id) : (void *)MPACK_AT(pack, CHARA_T(id) + 1))
 #define PORT_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
+/* The label under the name ("Super Saiyan"): the pack Port_CharaFormPack() made of the screen's, its line. */
+extern void *Port_CharaFormPack(void *pack);
+extern int Port_CharaFormLine(int chara);
+#define PORT_FORM_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaFormLine(c) : (s32)(c))
 #define PORT_IS_CHARA(id) ((s32)(id) < 0xA1 || PORT_CHARA_ADDED(id))
 /* Whether a cell may be drawn at random (the "random" cell of the selects, the tournament's computer entrants): a
    character of the disc, and an added one only with the setting "Added characters in random picks" (chara_pool,
@@ -84,6 +88,7 @@ extern int Port_CharaPool(void);
 #else
 #define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
 #define PORT_NAME_LINE(c) (c)
+#define PORT_FORM_LINE(c) (c)
 #define PORT_IS_CHARA(id) ((id) < 0xA1)
 #define PORT_IN_POOL(id) ((id) < 0xA1)
 #define PORT_SAVE_CELL(n) (1)

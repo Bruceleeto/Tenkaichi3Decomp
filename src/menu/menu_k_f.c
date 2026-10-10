@@ -192,6 +192,9 @@ void Bracket_Load(LBracket *b) {
     b->nameText = Port_CharaNamePack(b->nameText);
 #endif
     b->formText = MPACK_AT(b->res, 22);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    b->formText = Port_CharaFormPack(b->formText);
+#endif
     b->chips = (u32 *)MPACK_AT(b->res, 23);
     for (i = 0; i < LCHR_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(b->chips, i + 1);

@@ -633,6 +633,9 @@ void TeamSel_Init(s32 section) {
     gTeamSel->nameText = Port_CharaNamePack(gTeamSel->nameText);
 #endif
     gTeamSel->formText = MPACK_AT(gTeamSel->res, 44);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    gTeamSel->formText = Port_CharaFormPack(gTeamSel->formText);
+#endif
     gTeamSel->chipPack = (u32 *)MPACK_AT(gTeamSel->res, 45);
     for (i = 0; i < TS_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gTeamSel->chipPack, i + 1);
@@ -976,7 +979,7 @@ void TeamSel_Draw(void) {
         Flash_FindLabel(flash, NULL, i ? "mc_name_text_r" : "mc_name_text_l", &ref);
         TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gTeamSel->side[i]->chara), &gTeamSel->nameBox[i]);
         Flash_FindLabel(flash, NULL, i ? "mc_form_text_r" : "mc_form_text_l", &ref);
-        TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gTeamSel->side[i]->chara), &gTeamSel->formBox[i]);
+        TextBox_AttachLine(flash, &ref, 0, 0, PORT_FORM_LINE(gTeamSel->side[i]->chara), &gTeamSel->formBox[i]);
     }
     uv.x0 = 0;
     uv.x1 = 0x200;

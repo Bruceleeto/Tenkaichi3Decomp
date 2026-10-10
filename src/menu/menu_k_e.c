@@ -211,7 +211,7 @@ void Bracket_SetupDraw(Bracket *b) {
                line is its base character's) */
             TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(chara), &b->nameBox[i]);
             Flash_FindLabel(flash, NULL, i ? "mc_form_text_r" : "mc_form_text_l", &ref);
-            TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(chara), &b->formBox[i]);
+            TextBox_AttachLine(flash, &ref, 0, 0, PORT_FORM_LINE(chara), &b->formBox[i]);
             if (BK_ENT(BK_MATCH.ent[i]).flags & TOUR_ENT_PLAYER) {
                 uv.x0 = (BK_ENT(BK_MATCH.ent[i]).player % cols) * 0x60;
                 uv.y0 = (BK_ENT(BK_MATCH.ent[i]).player / cols) * 0x40;

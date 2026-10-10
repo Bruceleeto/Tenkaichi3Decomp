@@ -378,6 +378,9 @@ void UbTeamSel_Init(s32 section) {
     gUbTeamSel->nameText = Port_CharaNamePack(gUbTeamSel->nameText);
 #endif
     gUbTeamSel->formText = MPACK_AT(gUbTeamSel->res, 29);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    gUbTeamSel->formText = Port_CharaFormPack(gUbTeamSel->formText);
+#endif
     gUbTeamSel->chips = (u32 *)MPACK_AT(gUbTeamSel->res, 27);
     for (i = 0; i < UB_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gUbTeamSel->chips, i + 1);
@@ -508,7 +511,7 @@ void UbTeamSel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
     TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gUbTeamSel->sel->chara), &gUbTeamSel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gUbTeamSel->sel->chara), &gUbTeamSel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_FORM_LINE(gUbTeamSel->sel->chara), &gUbTeamSel->box[1]);
     if (gUbTeamSel->flags & UBSEL_DP) {
         uv.x0 = (gUbTeamSel->dpLevel % 2) * 0x40;
         uv.y0 = (gUbTeamSel->dpLevel / 2) * 0x20;

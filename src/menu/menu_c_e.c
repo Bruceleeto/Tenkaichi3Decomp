@@ -538,6 +538,9 @@ void CharSel_Init(s32 section) {
     gCharSel->nameText = Port_CharaNamePack(gCharSel->nameText);
 #endif
     gCharSel->formText = MPACK_AT(gCharSel->res, 44);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    gCharSel->formText = Port_CharaFormPack(gCharSel->formText);
+#endif
     gCharSel->chipPack = (u32 *)MPACK_AT(gCharSel->res, 45);
     for (i = 0; i < MCHR_CELL_MAX; i++) {
         CS_RES(gCharSel->chipPack, i + 1);
@@ -913,7 +916,7 @@ void CharSel_Draw(void) {
         Flash_FindLabel(f, NULL, i ? "mc_name_text_r" : "mc_name_text_l", &ref);
         TextBox_AttachLine(f, &ref, 0, 0, CS_NAME_LINE(gCharSel->side[i]->chara), &gCharSel->nameBox[i]);
         Flash_FindLabel(f, NULL, i ? "mc_form_text_r" : "mc_form_text_l", &ref);
-        TextBox_AttachLine(f, &ref, 0, 0, CHARA_T(gCharSel->side[i]->chara), &gCharSel->formBox[i]);
+        TextBox_AttachLine(f, &ref, 0, 0, PORT_FORM_LINE(gCharSel->side[i]->chara), &gCharSel->formBox[i]);
     }
 
     uv.x0 = 0;

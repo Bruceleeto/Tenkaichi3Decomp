@@ -41,6 +41,8 @@ typedef struct {
     int target[19];                /* ... as an id: -1 not said, 0xFF not installed */
     char shown[64];                /* the name for the menus: name.txt's first line, or the folder's name */
     int parent;                    /* -1, or for a form kept in a folder inside its character's: that character */
+    char label[96];                /* form.txt: the form's label under the name ("Super Saiyan") */
+    int labelSet;                  /* there is a form.txt (an empty one: no label); without, the base's label */
 } Chara;
 
 enum { CHIP_SIZE = 5504, NAME_ENTRY = 128, NAME_LINES_MAX = 256 };
@@ -49,6 +51,8 @@ static unsigned char sChip[PORT_CHARA_MAX][CHIP_SIZE] __attribute__((aligned(64)
 static unsigned char sChipHave[PORT_CHARA_MAX];
 static unsigned char sNames[64 + 4 * (NAME_LINES_MAX + PORT_CHARA_MAX + 2) + (NAME_LINES_MAX + PORT_CHARA_MAX) * NAME_ENTRY] __attribute__((aligned(64)));
 static int sNameFirst = -1; /* the line of the first added character in sNames */
+static unsigned char sForms[sizeof(sNames)] __attribute__((aligned(64))); /* the same for the forms' labels */
+static int sFormFirst = -1;
 
 static Chara sChara[PORT_CHARA_MAX];
 static int sCount;
@@ -163,6 +167,16 @@ static int add(const char *root, const char *name, int parent) {
                 snprintf(c->shown, sizeof(c->shown), "%s", line);
             }
         }
+        fclose(f);
+    }
+    snprintf(path, sizeof(path), "%s/%s/form.txt", root, name);
+    if ((f = fopen(path, "r")) != NULL) {
+        char line[96];
+        if (fgets(line, sizeof(line), f) != NULL) {
+            line[strcspn(line, "\r\n")] = '\0';
+            snprintf(c->label, sizeof(c->label), "%s", line);
+        }
+        c->labelSet = 1;
         fclose(f);
     }
     for (c->costumes = 1; c->costumes < 4 && c->file[c->costumes][0] != '\0'; c->costumes++) {
@@ -588,45 +602,93 @@ void *PortChips_Get(int chara) {
     return index >= 0 && index < sCount ? sChipRes[index] : NULL;
 }
 
-void *Port_CharaNamePack(void *pack) {
+/* A text of the folders' as the game's lines are: UTF-16 after the mark FF FE. (UTF-8 in; a character past the
+   16-bit range becomes '?'.) */
+static void text16(unsigned char *e, const char *text) {
+    const unsigned char *p = (const unsigned char *)text;
+    unsigned k = 0;
+    e[0] = 0xFF;
+    e[1] = 0xFE;
+    while (*p != '\0' && k < (NAME_ENTRY - 4) / 2) {
+        unsigned c = *p++;
+        if (c >= 0xF0) {
+            c = '?';
+            while ((*p & 0xC0) == 0x80) {
+                p++;
+            }
+        } else if (c >= 0xE0 && (p[0] & 0xC0) == 0x80 && (p[1] & 0xC0) == 0x80) {
+            c = (c & 0x0F) << 12 | (p[0] & 0x3F) << 6 | (p[1] & 0x3F);
+            p += 2;
+        } else if (c >= 0xC0 && (p[0] & 0xC0) == 0x80) {
+            c = (c & 0x1F) << 6 | (p[0] & 0x3F);
+            p += 1;
+        } else if (c >= 0x80) {
+            c = '?';
+        }
+        e[2 + k * 2] = (unsigned char)c;
+        e[3 + k * 2] = (unsigned char)(c >> 8);
+        k++;
+    }
+}
+
+/* A copy of one of the select's text packs (the names, or the forms' labels) with a line more for every added
+   character: `form` 0 its name; 1 its label (form.txt), or without one its base character's line as before. */
+static void *text_pack(void *pack, unsigned char *out, unsigned size, int form, int *first) {
     const unsigned char *src = pack;
-    unsigned count, total, head, i, k;
-    unsigned *words = (unsigned *)sNames;
+    unsigned count, total, head, i;
+    unsigned *words = (unsigned *)out;
 
     PortCharas_Init();
     memcpy(&count, src, 4);
     if (sCount == 0 || count == 0 || count > NAME_LINES_MAX) {
-        sNameFirst = -1;
+        *first = -1;
         return pack;
     }
     total = count + (unsigned)sCount;
     head = (4 * (total + 2) + 63) & ~63u;
-    memset(sNames, 0, sizeof(sNames));
+    memset(out, 0, size);
     words[0] = total;
     for (i = 0; i < total; i++) {
-        unsigned char *e = sNames + head + i * NAME_ENTRY;
+        unsigned char *e = out + head + i * NAME_ENTRY;
+        const Chara *c = i < count ? NULL : &sChara[i - count];
+        unsigned line = i;
         words[i + 1] = head + i * NAME_ENTRY;
-        if (i < count) {
+        if (c != NULL && form && !c->labelSet) {
+            line = (unsigned)c->base; /* (no label of its own: its base character's) */
+            c = NULL;
+        }
+        if (c == NULL) {
             unsigned a, b;
-            memcpy(&a, src + 4 * (i + 1), 4);
-            memcpy(&b, src + 4 * (i + 2), 4);
+            if (line >= count) {
+                continue;
+            }
+            memcpy(&a, src + 4 * (line + 1), 4);
+            memcpy(&b, src + 4 * (line + 2), 4);
             a &= ~3u;
             b &= ~3u;
             if (b > a) {
                 memcpy(e, src + a, b - a < NAME_ENTRY - 2 ? b - a : NAME_ENTRY - 2);
             }
         } else {
-            const char *name = sChara[i - count].shown;
-            e[0] = 0xFF;
-            e[1] = 0xFE;
-            for (k = 0; name[k] != '\0' && k < (NAME_ENTRY - 4) / 2; k++) {
-                e[2 + k * 2] = (unsigned char)name[k] < 0x80 ? (unsigned char)name[k] : '?';
-            }
+            text16(e, form ? c->label : c->shown);
         }
     }
     words[total + 1] = head + total * NAME_ENTRY;
-    sNameFirst = (int)count;
-    return sNames;
+    *first = (int)count;
+    return out;
+}
+
+void *Port_CharaNamePack(void *pack) {
+    return text_pack(pack, sNames, sizeof(sNames), 0, &sNameFirst);
+}
+
+void *Port_CharaFormPack(void *pack) {
+    return text_pack(pack, sForms, sizeof(sForms), 1, &sFormFirst);
+}
+
+int Port_CharaFormLine(int chara) {
+    int index = chara - PORT_CHARA_FIRST;
+    return sFormFirst >= 0 && index >= 0 && index < sCount ? sFormFirst + index : Port_CharaBase(chara);
 }
 
 int Port_CharaNameLine(int chara) {

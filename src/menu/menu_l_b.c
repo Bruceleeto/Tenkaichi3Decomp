@@ -218,6 +218,9 @@ void SoloSel_Init(s32 section) {
     gSoloSel->nameText = Port_CharaNamePack(gSoloSel->nameText);
 #endif
     gSoloSel->formText = MPACK_AT(gSoloSel->res, 29);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    gSoloSel->formText = Port_CharaFormPack(gSoloSel->formText);
+#endif
     gSoloSel->chips = (u32 *)MPACK_AT(gSoloSel->res, 27);
     for (i = 0; i < LCHR_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gSoloSel->chips, i + 1);
@@ -339,7 +342,7 @@ void SoloSel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
     TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gSoloSel->sel->image), &gSoloSel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gSoloSel->sel->image), &gSoloSel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_FORM_LINE(gSoloSel->sel->image), &gSoloSel->box[1]);
     flash = &gSoloSel->flash[2];
     uv.x0 = 0x20;
     uv.y0 = 0;

@@ -228,6 +228,10 @@ def import_one(data, c, out, name=None, quiet=False):
         chips = section(res, ro, 45)
         (out / "chip.bin").write_bytes(section(chips, table(chips), c + 1))
         (out / "name.txt").write_text((name or own) + "\n")
+        forms = section(res, ro, 44)  # the label under the name ("Super Saiyan"); many characters have none
+        line = section(forms, table(forms), c + 1)
+        label = (line[2:] if line[:2] == b"\xff\xfe" else line).decode("utf-16-le", "replace").split("\0")[0].strip()
+        (out / "form.txt").write_text(label + "\n")
         say(f"name: {name or own!r}; chip saved")
     except Exception as err:  # (another edition's menu archive: the folder works without, with its base's chip)
         print("name and chip not read:", err)

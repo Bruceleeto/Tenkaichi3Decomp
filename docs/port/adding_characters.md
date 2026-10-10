@@ -251,6 +251,16 @@ serves an added stage's own pictures too (`.thumb`, `.icon`), as the duel's sele
 Checked: builds, the replay check with and without folders installed, a recorded menu-to-fight session with added
 characters and stages. NOT seen: the options menu after the merge, the team select's own pictures.
 
+## The form's label (2026-10-10)
+
+Under a character's name the selects show a second line, the form's label ("Super Saiyan"; section 44 of the duel
+select's pack, one line a character, most empty). An added character showed its base character's. `form.txt` in
+its folder is its own (first line, UTF-8; an empty file: no label; no file: the base's, as before).
+`Port_CharaFormPack` makes the screen's pack with a line more for each added character, as for the names
+(`PORT_FORM_LINE`; the six roster screens). Names and labels are now turned from UTF-8 into the game's 16-bit text
+(they were cut to ASCII). `import_chara.py` writes `form.txt` from the disc.
+Checked: builds, the replay check, a recorded session through the duel select with such folders. NOT seen: a label.
+
 ## The save and replays (audit of the sources, 2026-10-10)
 
 Every writer of the save and of a replay was read for an added id or a cell past the disc's 97. Three faults, and

@@ -270,6 +270,9 @@ void EntrySel_Init(s32 section) {
     gEntrySel->nameText = Port_CharaNamePack(gEntrySel->nameText);
 #endif
     gEntrySel->formText = MPACK_AT(gEntrySel->res, 31);
+#ifdef PORT /* (a line more for every added character: its own label) */
+    gEntrySel->formText = Port_CharaFormPack(gEntrySel->formText);
+#endif
     gEntrySel->chips = (u32 *)MPACK_AT(gEntrySel->res, 32);
     for (i = 0; i < ESEL_CELL_MAX; i++) {
         res = (MTexRes *)MPACK_AT(gEntrySel->chips, i + 1);
@@ -414,7 +417,7 @@ void EntrySel_Draw(void) {
     Flash_FindLabel(flash, NULL, "mc_name_text_l", &ref);
     TextBox_AttachLine(flash, &ref, 0, 0, PORT_NAME_LINE(gEntrySel->sel->image), &gEntrySel->box[0]);
     Flash_FindLabel(flash, NULL, "mc_form_text_l", &ref);
-    TextBox_AttachLine(flash, &ref, 0, 0, CHARA_T(gEntrySel->sel->image), &gEntrySel->box[1]);
+    TextBox_AttachLine(flash, &ref, 0, 0, PORT_FORM_LINE(gEntrySel->sel->image), &gEntrySel->box[1]);
     for (i = 0; i < ESEL_ENTRY_MAX; i++) {
         /* the entry list: "entry n" for those still to choose, the "decided" text for the chosen ones */
         sprintf(name, "mc_entry_text_%d", i);
