@@ -354,9 +354,11 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
         lines = [f"{key}={ref(c, par[0x98 + i])}" for i, key in enumerate(("left", "up", "right", "down"))
                  if par[0x98 + i] in tables and par[0x98 + i] != c]
         for i in range(3):
-            if par[0xB4 + i] in tables:  # (only with --with-fusions; else the id stays the game's own character)
+            # only when the fusions were asked for (or the whole disc is made): else the ids stay the characters of
+            # the game the folder is put into, and no folder is named that may not be there
+            if (fusions or shelf) and par[0xB4 + i] in tables:
                 lines.append(f"fusion{i + 1}={ref(c, par[0xB4 + i])}")
-                who = [ref(c, x) for x in par[0xBA + i * 4:0xBE + i * 4] if x in tables]
+                who = list(dict.fromkeys(ref(c, x) for x in par[0xBA + i * 4:0xBE + i * 4] if x in tables))
                 if who:
                     lines.append(f"partner{i + 1}=" + ",".join(who))
         if lines:

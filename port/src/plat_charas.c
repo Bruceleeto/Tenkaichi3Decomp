@@ -293,7 +293,15 @@ void PortCharas_Init(void) {
             }
             sChara[i].target[k] = find(i, want);
             if (sChara[i].target[k] == 0xFF && k < 7) {
-                fprintf(stderr, "bt3: characters: %s: its form %s is not installed; that transformation is left out\n", sChara[i].name, want);
+                int seen = 0, j;
+                for (j = 0; j < k; j++) { /* (said once for a folder, however many slots name it) */
+                    seen |= strcmp(sChara[i].form[j], want) == 0;
+                }
+                if (seen) {
+                    continue;
+                }
+                fprintf(stderr, "bt3: characters: %s: %s, named in its forms.txt, is not installed; that %s is left out\n", sChara[i].name, want,
+                        k < 4 ? "transformation" : "fusion");
             }
         }
     }
