@@ -19,6 +19,14 @@ what the `stages` folder next to the game takes (docs/port/adding_stages.md; 26 
 names in the original game: a name on a disc is a picture, so what a changed stage is called there cannot be read;
 rename the files; `stage names.png`, written beside them, shows the disc's own names in the stages' order. With --against only the stages that differ from that disc's are copied.
 
+    port/tools/import_chara.py <folder of loose files> <output folder> --loose [--name N] [--base ID] [--data <game>]
+
+--loose makes a character folder from files taken out of a disc one by one, as mods are often passed on: any
+extension (.unk, .pak, .bin), the archive's number of the file somewhere in the name ("model(2918).unk"). The
+number says what a file is (a costume, the animations, the effects, a voice bank, the portrait) and the contents are
+looked at as well. Without --base the base character is the original whose model is most like this one (that needs
+--data, the game's data folder or disc image) or else the character whose place the number names.
+
 <data folder> may also be a disc image (.iso): its two archives are read in place, nothing is unpacked. --all makes
 a folder for every character of the disc, forms inside (more than the port takes at once: a shelf to pick from).
 
@@ -367,6 +375,114 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
     print(f"{len(tables)} characters in {len(groups)} folder{'s' if len(groups) != 1 else ''} of {root}")
 
 
+def pack_count(body):
+    """The number of entries, if `body` is a pack of the game's kind (a count and that many offsets), else 0."""
+    if len(body) < 8:
+        return 0
+    (n,) = struct.unpack_from("<I", body, 0)
+    if not 0 < n < 600 or len(body) < 4 * (n + 2):
+        return 0
+    first = struct.unpack_from("<I", body, 4)[0] & ~3
+    return n if 4 * (n + 2) <= first <= len(body) else 0
+
+
+def import_loose(src, out, name, base, data):
+    import re
+    found = {}  # kind -> (path, what the number said)
+    notes = []
+    for path in sorted(p for p in src.rglob("*") if p.is_file()):
+        body = path.read_bytes()
+        count = pack_count(body)
+        numbers = re.findall(r"\d{2,5}", path.stem)
+        index = int(numbers[-1]) if numbers else None
+        kind = who = None
+        low = path.stem.lower()  # a file already named as a pack's are ("x_1p_dmg", "x_anm", "x_voice_us")
+        named = re.search(r"_([1-4])p(_dmg)?$", low)
+        if named:
+            kind = ("dmg" if named.group(2) else "model") + str(int(named.group(1)) - 1)
+        else:
+            kind = next((k for k in ("anm", "eff", "voice_us", "voice_jp") if low.endswith("_" + k)), None)
+        if kind is not None:
+            index = None
+        if index is not None:
+            fid = index + 1  # (the tools number from 0: the file id is one more)
+            if 0x590 <= fid < 0x590 + 1610:
+                who, k = divmod(fid - 0x590, 10)
+                kind = ("anm" if k == 8 else "eff" if k == 9 else f"dmg{k - 4}" if k >= 4 else f"model{k}")
+            elif 0xBDA <= fid < 0xBDA + 161:
+                who, kind = fid - 0xBDA, "voice_us"
+            elif 0xC7B <= fid < 0xC7B + 161:
+                who, kind = fid - 0xC7B, "voice_jp"
+            elif 0x2F9 <= fid < 0x2F9 + 161:
+                who, kind = fid - 0x2F9, "portrait"
+        # the contents decide where the number is missing or says something else
+        by_count = {252: "model", 440: "anm", 6: "eff", 3: "voice_us"}.get(count)
+        if kind is None or (by_count and not kind.startswith(by_count[:3]) and kind != "portrait"
+                            and not (by_count == "model" and kind.startswith("dmg"))
+                            and not (by_count == "voice_us" and kind == "voice_jp")):
+            if by_count is None:
+                notes.append(f"{path.name}: not recognised, left out")
+                continue
+            kind = by_count + ("0" if by_count == "model" else "")
+            who = None
+        while kind in found and kind[:-1] in ("model", "dmg") and int(kind[-1]) < 3:
+            kind = kind[:-1] + str(int(kind[-1]) + 1)  # (a second model of the same place: the next costume)
+        if kind in found:
+            notes.append(f"{path.name}: a second file for {kind}, left out")
+            continue
+        found[kind] = (path, who)
+    models = sorted(k for k in found if k.startswith("model"))
+    damaged = sorted(k for k in found if k.startswith("dmg"))
+    if not models and damaged:  # (only damaged models were passed on: they are the costumes)
+        models, damaged = damaged, []
+    if not models:
+        sys.exit("no character model among these files (a pack of 252 entries): " + "; ".join(notes))
+    out.mkdir(parents=True, exist_ok=True)
+    n = out.name
+    plan = [(k, f"{n}_{i + 1}p.pak") for i, k in enumerate(models)]
+    plan += [(k, f"{n}_{models.index('model' + k[-1]) + 1}p_dmg.pak") for k in damaged if "model" + k[-1] in models]
+    plan += [(k, f"{n}_{k}.pak") for k in ("anm", "eff", "voice_us", "voice_jp") if k in found]
+    if "portrait" in found:
+        plan.append(("portrait", "portrait.bin"))
+    for kind, target in plan:
+        body = found[kind][0].read_bytes()
+        (out / target).write_bytes(body.rstrip(b"\0") if kind == "portrait" else body)
+        print(f"{target:28s} <- {found[kind][0].name}")
+    for note in notes:
+        print(note)
+    model = found[models[0]][0].read_bytes()
+    why = "given"
+    if base is None and data is not None:  # the original whose model shares the most entries with this one
+        t = table(model)
+        mine = [section(model, t, i) for i in range(1, len(t))]
+        best = (0, None)
+        for c in range(161):
+            src_file = game_file(data, 0x590 + c * 10)
+            if not src_file.exists():
+                continue
+            other = src_file.read_bytes()
+            if pack_count(other) != len(mine):
+                continue
+            ot = table(other)
+            same = sum(1 for i, e in enumerate(mine) if len(e) and e == section(other, ot, i + 1))
+            if same > best[0]:
+                best = (same, c)
+        base, why = best[1], f"the original whose model is most like it ({best[0]} of {len(mine)} entries the same)"
+    if base is None:
+        base, why = found[models[0]][1], "the character whose place the file's number names"
+    if base is None:
+        base, why = 0, "nothing said which: Goku (Early). Give --base or --data"
+    (out / "base.txt").write_text(f"{base}\n")
+    (out / "name.txt").write_text((name or n) + "\n")
+    print(f"base character {base}: {why}")
+    par = section(model, table(model), 18)
+    forms = [x for x in par[0x98:0x9C] if x != 0xFF] + [x for x in par[0xB4:0xB7] if x != 0xFF]
+    if forms:
+        print(f"its table names other characters by id {forms} (transformations, fusions): see forms.txt in the notes")
+    missing = [w for w, k in (("voice bank", "voice_us"), ("animations", "anm"), ("effects", "eff")) if k not in found]
+    print("not among the files, so the base character's: " + ", ".join(missing + ["chip", "spoken lines"] + ([] if "portrait" in found else ["portrait"])))
+
+
 STAGES = (  # the original's stages by id (port/src/gs/namefont.c, kStageNames)
     "Wasteland - Noon", "Rocky Area - Noon", "Planet Namek", "Dying Namek", "World Tournament Stage - Noon",
     "Kami's Lookout", "Cell Games Arena - Evening", "Supreme Kai's World", "Hyperbolic Time Chamber",
@@ -479,16 +595,20 @@ def import_stages(data, out, against):
 
 
 def main():
-    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages") if f in sys.argv}
+    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages", "--loose") if f in sys.argv}
     args = [a for a in sys.argv[1:] if a not in flags]
     opt = {}
-    for key in ("--name", "--prefix", "--against"):
+    for key in ("--name", "--prefix", "--against", "--base", "--data"):
         if key in args:
             at = args.index(key)
             opt[key] = args[at + 1]
             del args[at:at + 2]
-    if len(args) != (2 if flags & {"--all", "--stages"} else 3):
+    if len(args) != (2 if flags & {"--all", "--stages", "--loose"} else 3):
         sys.exit(__doc__)
+    if "--loose" in flags:
+        import_loose(pathlib.Path(args[0]), pathlib.Path(args[1]), opt.get("--name"),
+                     int(opt["--base"], 0) if "--base" in opt else None, source(opt["--data"]) if "--data" in opt else None)
+        return
     data = source(args[0])
     if "--stages" in flags:
         import_stages(data, pathlib.Path(args[1]), source(opt["--against"]) if "--against" in opt else None)
