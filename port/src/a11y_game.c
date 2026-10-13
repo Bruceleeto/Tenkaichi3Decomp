@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "plat_charas.h"
 #include "plat_songs.h"
 #include "plat_stages.h"
 
@@ -1298,15 +1299,25 @@ static void sim_top(void) {
 
 /* Every name a select's text gave, kept for the screens that show the characters only as pictures (the replay
    list). Only in memory: it comes from the disc each run. */
-static char sNameCache[MCHR_RANDOM][64];
+static char sNameCache[0x100][64];
+/* A character from outside the disc (plat_charas.c; ids 0xC6..0xFE): its name and its form label are not at line
+   `chara` of a select's text but in the lines the port put after the disc's (Port_CharaNamePack). */
+#define A11Y_CHARA_ADDED(c) ((c) >= PORT_CHARA_FIRST && (c) < PORT_CHARA_FIRST + PORT_CHARA_MAX)
+#define A11Y_CHARA_CACHED(c) (((c) >= 0 && (c) < MCHR_RANDOM) || A11Y_CHARA_ADDED(c))
+extern int Port_CharaFormLine(int chara); /* plat_charas.c */
 
 /* The name of character `chara` from a select's own text (line chara of its name and form files: sections 43 and 44
    of the versus select, as CharSel_Draw shows them), and its form after it when that says something else. */
 static void chara_name(char *out, int cap, uint32_t GAME_PTR nameText, uint32_t GAME_PTR formText, int chara) {
     char form[256];
     size_t len;
+    int nameLine = chara, formLine = chara;
 
-    if (text_line(out, cap, nameText, chara) == 0) {
+    if (A11Y_CHARA_ADDED(chara)) {
+        nameLine = Port_CharaNameLine(chara);
+        formLine = Port_CharaFormLine(chara);
+    }
+    if (text_line(out, cap, nameText, nameLine) == 0) {
         if (chara >= MCHR_RANDOM && chara < MCHR_RANDOM + 4) {
             snprintf(out, cap, "%s", tr(kCellMarks[chara - MCHR_RANDOM]));
         } else {
@@ -1314,11 +1325,11 @@ static void chara_name(char *out, int cap, uint32_t GAME_PTR nameText, uint32_t 
         }
         return;
     }
-    if (text_line(form, sizeof(form), formText, chara) > 0 && strcmp(form, out) != 0) {
+    if (text_line(form, sizeof(form), formText, formLine) > 0 && strcmp(form, out) != 0) {
         len = strlen(out);
         snprintf(out + len, cap - len, ", %s", form);
     }
-    if (chara >= 0 && chara < MCHR_RANDOM) {
+    if (A11Y_CHARA_CACHED(chara)) {
         snprintf(sNameCache[chara], sizeof(sNameCache[chara]), "%s", out);
     }
 }
@@ -1342,7 +1353,7 @@ static void name_cache_fill(uint32_t GAME_PTR nameText, uint32_t GAME_PTR formTe
 
 /* A name from sNameCache, or the character's number when no select has given it yet. */
 static void cached_name(char *out, int cap, int chara) {
-    if (chara >= 0 && chara < MCHR_RANDOM && sNameCache[chara][0] != '\0') {
+    if (A11Y_CHARA_CACHED(chara) && sNameCache[chara][0] != '\0') {
         snprintf(out, cap, "%s", sNameCache[chara]);
     } else {
         snprintf(out, cap, tr("Character %d"), chara);
