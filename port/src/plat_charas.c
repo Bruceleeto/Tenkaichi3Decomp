@@ -574,6 +574,12 @@ static Chara *scan(const char *root, const char *name, const Chara *owner) {
     if ((len = read_text(side[4], text)) >= 0) {
         parse(c, text, (size_t)len);
     }
+    if (owner != NULL && c->replaces == -1 && !c->labelSet) {
+        /* a form (a folder inside a character's) that does not say its label: the folder's name is the label, as
+           the importer names such folders ("Super Saiyan") */
+        put(c->label, sizeof(c->label), name);
+        c->labelSet = 1;
+    }
     if (p != NULL) {
         put(p->name, sizeof(p->name), c->shown);
     }
@@ -1115,6 +1121,19 @@ int Port_CharaForms(int chara, int *out, int max) {
     if (reached(index)) {
         /* a form: it has no cell, unless its whole group has no head (forms that only lead to each other), in
            which case the first of them in the folder order is taken as the head */
+        /* (asked from every character no other turns into: a last form that has no way back leads to nobody,
+           and its own group is itself alone) */
+        for (i = 0; i < live(); i++) {
+            if (!reached(i)) {
+                int k;
+                n = closure(i, group, PORT_CHARA_MAX);
+                for (k = 1; k < n; k++) {
+                    if (group[k] == index) {
+                        return -1;
+                    }
+                }
+            }
+        }
         n = closure(index, group, PORT_CHARA_MAX);
         for (i = 0; i < n; i++) {
             if (!reached(group[i])) {
