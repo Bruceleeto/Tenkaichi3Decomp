@@ -15,6 +15,11 @@ each character.txt that name the others (".." is the character from inside a for
 disc. A name the disc does not give is the prefix ("C" unless given) and the id. --with-fusions follows the fusions as well: their results, the
 partners, and the forms of all of those (that can be many folders; the port takes 57).
 
+    port/tools/import_chara.py <data folder or .iso> --names
+
+--names prints the disc's characters: the id (what `base=`, `replaces=` and `disc:<id>` take), the name and the
+form's label, as the character select has them.
+
     port/tools/import_chara.py <data folder or .iso> <folder of folders> --all
 
     port/tools/import_chara.py <data folder or .iso> <folder> --stages [--against <original data folder or .iso>]
@@ -621,8 +626,15 @@ def import_stages(data, out, against):
 
 
 def main():
-    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages", "--loose", "--replace") if f in sys.argv}
+    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages", "--loose", "--replace", "--names") if f in sys.argv}
     args = [a for a in sys.argv[1:] if a not in flags]
+    if "--names" in flags and len(args) == 1:
+        names, labels = menu_names(source(args[0]))
+        if not names:
+            sys.exit("the names could not be read from this data (another edition's menu archive?)")
+        for c in range(min(161, len(names))):
+            print(f"{c:3d}  {names[c]}" + (f"  [{labels[c]}]" if c < len(labels) and labels[c] else ""))
+        return
     opt = {}
     for key in ("--name", "--prefix", "--against", "--base", "--data"):
         if key in args:
