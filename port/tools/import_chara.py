@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""import_chara.py - make a character folder (docs/port/adding_characters.md) from a character of a game data folder.
+"""import_chara.py - make a character package (docs/port/character_packages.md) from a character of a game data folder.
 
-    port/tools/import_chara.py <data folder> <character id 0..160> <output folder> [--name "Name In The Menu"]
-    port/tools/import_chara.py <data folder> <id> <folder of folders> --with-forms [--with-fusions] [--prefix P]
+    port/tools/import_chara.py <data folder> <character id 0..160> <output folder> [--name "Name In The Menu"] [--replace]
+    port/tools/import_chara.py <data folder> <id> <folder of folders> --with-forms [--with-fusions] [--prefix P] [--replace]
+
+Without --replace the folder ADDS a character (its character.txt says `base=<id>`). With --replace it REPLACES the
+disc's character of that id (`replaces=<id>`): put into `characters/` as it is, the game plays exactly as before,
+and every file in it can then be edited or taken out (a file the folder does not have stays the disc's). That is
+the start of a mod of an existing character: export, edit, drop back in.
 
 With --with-forms the character's transformations are imported too, and theirs: a folder named as the disc
-names the character, its forms in folders inside it named by their labels ("Super Saiyan"), with a forms.txt in
-each that names the others (".." is the character from inside a form's folder): the set works as it does on its
+names the character, its forms in folders inside it named by their labels ("Super Saiyan"), with link lines in
+each character.txt that name the others (".." is the character from inside a form's folder): the set works as it does on its
 disc. A name the disc does not give is the prefix ("C" unless given) and the id. --with-fusions follows the fusions as well: their results, the
 partners, and the forms of all of those (that can be many folders; the port takes 57).
 
@@ -36,13 +41,20 @@ character is copied as it is, under the names the port looks for in a folder of 
 
     <n>_1p.pak .. <n>_4p.pak, <n>_1p_dmg.pak ..   the models (file 0x590 + id * 10 + 0..7)
     <n>_anm.pak, <n>_eff.pak                      animations and effects (+ 8, + 9)
-    <n>_voice_us.pak, <n>_voice_jp.pak            the voice banks (0xBDA + id, 0xC7B + id)
-    voice_us/NNN.adx, voice_jp/NNN.adx            the spoken lines (0x8D4E + id * 100 + line, 0xCC32 + ...)
+    <n>_voice_jp.pak, <n>_voice_us.pak            the voice banks (0xBDA + id Japanese, 0xC7B + id English)
+    voice_jp/NNN.adx, voice_us/NNN.adx            the spoken lines (0x8D4E + id * 100 + line, 0xCC32 + ...)
     portrait.bin                                  the large picture of the menus (0x2F9 + id)
     member_1p.bin, member_2p.bin                  the team mate's small picture in the fight (8 + id * 2 + side)
-    chip.bin, name.txt                            the select's chip and the name (menu archive, file 0x1C1)
-    base.txt                                      the id: the tables of the game the folder is put into are asked
-                                                  for this character (health, cost, the lines before a fight)
+    chip.bin                                      the select's chip (menu archive, file 0x1C1)
+    character.txt                                 the manifest: format=1, name, form (the label under the name),
+                                                  and base=<id> (the tables of the game the folder is put into
+                                                  are asked for this character: health, cost, the lines before a
+                                                  fight) or, with --replace, replaces=<id>; the links to the
+                                                  other folders of a set (left= up= right= down= fusion1.. partner1..)
+
+(Until 2026-10-13 the two voice names were the other way round, and the texts were in files of their own, name.txt,
+form.txt, base.txt, forms.txt, which the game still reads. A folder made then has its two languages exchanged now:
+make it again, or exchange the names.)
 
 Nothing is converted. The folder holds game data: it is for the player's own use and is not to be passed on with
 the game's own art in it.
@@ -184,9 +196,20 @@ def params(data, c):
     return section(model, table(model), 18)
 
 
-def import_one(data, c, out, name=None, quiet=False):
+def write_manifest(out, pairs):
+    """character.txt: the lines `key=value` in the order given."""
+    (out / "character.txt").write_text("".join(f"{k}={v}\n" for k, v in pairs), encoding="utf-8")
+
+
+def read_manifest(out):
+    lines = (out / "character.txt").read_text(encoding="utf-8").split("\n")
+    return [tuple(line.split("=", 1)) for line in lines if "=" in line and not line.startswith("#")]
+
+
+def import_one(data, c, out, name=None, quiet=False, replace=False):
     out.mkdir(parents=True, exist_ok=True)
     n = out.name
+    pairs = [("format", "1")]
 
     def copy(file_id, target, least=0):
         src = game_file(data, file_id)
@@ -213,16 +236,16 @@ def import_one(data, c, out, name=None, quiet=False):
     say = (lambda *a: None) if quiet else print
     copy(0x590 + c * 10 + 8, f"{n}_anm.pak")
     copy(0x590 + c * 10 + 9, f"{n}_eff.pak")
-    copy(0xBDA + c, f"{n}_voice_us.pak")
-    copy(0xC7B + c, f"{n}_voice_jp.pak")
+    copy(0xBDA + c, f"{n}_voice_jp.pak")
+    copy(0xC7B + c, f"{n}_voice_us.pak")
     spoken = [sum(1 for line in range(100) if copy(first + c * 100 + line, f"voice_{tag}/{line:03d}.adx"))
-              for tag, first in (("us", 0x8D4E), ("jp", 0xCC32))]
+              for tag, first in (("jp", 0x8D4E), ("us", 0xCC32))]
     portrait = game_file(data, 0x2F9 + c)
     if portrait.exists():
         (out / "portrait.bin").write_bytes(portrait.read_bytes().rstrip(b"\0"))
     for side in (0, 1):
         copy(8 + c * 2 + side, f"member_{side + 1}p.bin")
-    (out / "base.txt").write_text(f"{c}\n")
+    shown = name or n
 
     # the name and the chip: the menu archive's second screen is the character select's pack (BPE-packed);
     # its section 43 is the names (a pack of UTF-16 lines), 45 the chips (a pack, entry id + 1)
@@ -235,29 +258,32 @@ def import_one(data, c, out, name=None, quiet=False):
         own = (line[2:] if line[:2] == b"\xff\xfe" else line).decode("utf-16-le", "replace").split("\0")[0].strip()
         chips = section(res, ro, 45)
         (out / "chip.bin").write_bytes(section(chips, table(chips), c + 1))
-        (out / "name.txt").write_text((name or own) + "\n")
+        shown = name or own
+        pairs.append(("name", shown))
         forms = section(res, ro, 44)  # the label under the name ("Super Saiyan"); many characters have none
         line = section(forms, table(forms), c + 1)
         label = (line[2:] if line[:2] == b"\xff\xfe" else line).decode("utf-16-le", "replace").split("\0")[0].strip()
-        (out / "form.txt").write_text(label + "\n")
+        pairs.append(("form", label))
         say(f"name: {name or own!r}; chip saved")
     except Exception as err:  # (another edition's menu archive: the folder works without, with its base's chip)
         print("name and chip not read:", err)
-        if name:
-            (out / "name.txt").write_text(name + "\n")
+        pairs = [("format", "1")] + ([("name", name)] if name else [])
+    pairs.append(("replaces" if replace else "base", str(c)))
+    write_manifest(out, pairs)
 
     # the forms: the character's table (entry 18 of the model's pack) names them by id; an id means the character
-    # of that number in the game the folder is put into, unless forms.txt says otherwise
+    # of that number in the game the folder is put into, unless the links of character.txt say otherwise
     model = (out / f"{n}_1p.pak").read_bytes()
     par = section(model, table(model), 18)
     trans = [x for x in par[0x98:0x9C] if x != 0xFF]
     fusion = [x for x in par[0xB4:0xB7] if x != 0xFF]
-    say(f"{costumes} costumes, spoken lines {spoken[0]} / {spoken[1]}, base character {c}")
-    if (trans or fusion) and not quiet:
+    say(f"{costumes} costumes, spoken lines {spoken[0]} (jp) / {spoken[1]} (us), "
+        + (f"replaces character {c}" if replace else f"base character {c}"))
+    if (trans or fusion) and not quiet and not replace:
         print(f"its table names other characters by id: transformations {trans}, fusions {fusion}. Put into a game, "
-              "those ids are that game's characters; import them too and name them in forms.txt "
+              "those ids are that game's characters; import them too and name them in character.txt "
               "(left= up= right= down= fusion1.. partner1..) to have this disc's.")
-    return (out / "name.txt").read_text().strip() if (out / "name.txt").exists() else n
+    return shown
 
 
 def menu_names(data):
@@ -287,9 +313,10 @@ def clean(text):
     return text
 
 
-def import_set(data, firsts, root, prefix, fusions, shelf=False):
+def import_set(data, firsts, root, prefix, fusions, shelf=False, replace=False):
     """The character and everyone its table reaches: a folder for each character, its forms in folders inside it,
-    named as the disc names them, with forms.txt naming the folders."""
+    named as the disc names them, with the links in each character.txt naming the folders. (With `replace` every
+    folder replaces its own disc character and no links are written: the ids in the tables are the right ones.)"""
     todo, tables, first = list(firsts), {}, firsts[0]
     while todo:
         c = todo.pop(0)
@@ -348,7 +375,7 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
             used.add(leaf.lower())
             place[c] = (name, leaf)
 
-    def ref(src, dst):  # how src's forms.txt names dst
+    def ref(src, dst):  # how src's links name dst
         (st, _), (dt, dl) = place[src], place[dst]
         if st == dt:
             return dl if dl is not None else ".."
@@ -358,10 +385,10 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
         par = tables[c]
         t, leaf = place[c]
         folder = root / t if leaf is None else root / t / leaf
-        shown = import_one(data, c, folder, quiet=True)
+        shown = import_one(data, c, folder, quiet=True, replace=replace)
         lines = [f"{key}={ref(c, par[0x98 + i])}" for i, key in enumerate(("left", "up", "right", "down"))
-                 if par[0x98 + i] in tables and par[0x98 + i] != c]
-        for i in range(3):
+                 if par[0x98 + i] in tables and par[0x98 + i] != c and not replace]
+        for i in range(0 if replace else 3):
             # only when the fusions were asked for (or the whole disc is made): else the ids stay the characters of
             # the game the folder is put into, and no folder is named that may not be there
             if (fusions or shelf) and par[0xB4 + i] in tables:
@@ -370,7 +397,7 @@ def import_set(data, firsts, root, prefix, fusions, shelf=False):
                 if who:
                     lines.append(f"partner{i + 1}=" + ",".join(who))
         if lines:
-            (folder / "forms.txt").write_text("\n".join(lines) + "\n")
+            write_manifest(folder, read_manifest(folder) + [tuple(line.split("=", 1)) for line in lines])
         print(f"{t if leaf is None else '  ' + leaf}  [{c}: {shown}]" + (f"  {', '.join(lines)}" if lines else ""))
     print(f"{len(tables)} characters in {len(groups)} folder{'s' if len(groups) != 1 else ''} of {root}")
 
@@ -410,9 +437,9 @@ def import_loose(src, out, name, base, data):
                 who, k = divmod(fid - 0x590, 10)
                 kind = ("anm" if k == 8 else "eff" if k == 9 else f"dmg{k - 4}" if k >= 4 else f"model{k}")
             elif 0xBDA <= fid < 0xBDA + 161:
-                who, kind = fid - 0xBDA, "voice_us"
+                who, kind = fid - 0xBDA, "voice_jp"
             elif 0xC7B <= fid < 0xC7B + 161:
-                who, kind = fid - 0xC7B, "voice_jp"
+                who, kind = fid - 0xC7B, "voice_us"
             elif 0x2F9 <= fid < 0x2F9 + 161:
                 who, kind = fid - 0x2F9, "portrait"
         # the contents decide where the number is missing or says something else
@@ -472,14 +499,13 @@ def import_loose(src, out, name, base, data):
         base, why = found[models[0]][1], "the character whose place the file's number names"
     if base is None:
         base, why = 0, "nothing said which: Goku (Early). Give --base or --data"
-    (out / "base.txt").write_text(f"{base}\n")
-    (out / "name.txt").write_text((name or n) + "\n")
+    write_manifest(out, [("format", "1"), ("name", name or n), ("base", str(base))])
     print(f"base character {base}: {why}")
     par = section(model, table(model), 18)
     forms = [x for x in par[0x98:0x9C] if x != 0xFF] + [x for x in par[0xB4:0xB7] if x != 0xFF]
     if forms:
-        print(f"its table names other characters by id {forms} (transformations, fusions): see forms.txt in the notes")
-    missing = [w for w, k in (("voice bank", "voice_us"), ("animations", "anm"), ("effects", "eff")) if k not in found]
+        print(f"its table names other characters by id {forms} (transformations, fusions): see the links of character.txt in docs/port/character_packages.md")
+    missing = [w for w, k in (("voice bank", "voice_jp"), ("animations", "anm"), ("effects", "eff")) if k not in found]
     print("not among the files, so the base character's: " + ", ".join(missing + ["chip", "spoken lines"] + ([] if "portrait" in found else ["portrait"])))
 
 
@@ -595,7 +621,7 @@ def import_stages(data, out, against):
 
 
 def main():
-    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages", "--loose") if f in sys.argv}
+    flags = {f for f in ("--with-forms", "--with-fusions", "--all", "--stages", "--loose", "--replace") if f in sys.argv}
     args = [a for a in sys.argv[1:] if a not in flags]
     opt = {}
     for key in ("--name", "--prefix", "--against", "--base", "--data"):
@@ -620,10 +646,11 @@ def main():
     c, out = int(args[1], 0), pathlib.Path(args[2])
     if not 0 <= c <= 160:
         sys.exit("the character id is 0..160")
-    if flags:
-        import_set(data, [c], out, opt.get("--prefix", "C"), "--with-fusions" in flags)
+    replace = "--replace" in flags
+    if flags - {"--replace"}:
+        import_set(data, [c], out, opt.get("--prefix", "C"), "--with-fusions" in flags, replace=replace)
     else:
-        import_one(data, c, out, opt.get("--name"))
+        import_one(data, c, out, opt.get("--name"), replace=replace)
 
 
 if __name__ == "__main__":
