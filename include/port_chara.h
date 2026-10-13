@@ -86,6 +86,7 @@ extern int Port_CharaPool(void);
 #define PORT_CELL_IN(n, count) ((s32)(n) >= 0 && (s32)(n) < (s32)(count))
 #define PORT_SAVE_CHARA(c) (PORT_CHARA_ADDED(c) ? CHARA_T(c) : (s32)(c))
 #else
+#define PORT_CHARA_ADDED(c) (0)
 #define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
 #define PORT_NAME_LINE(c) (c)
 #define PORT_FORM_LINE(c) (c)

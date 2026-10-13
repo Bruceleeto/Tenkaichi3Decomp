@@ -91,11 +91,13 @@ s32 ChrTbl_IsRelated(s32 a, s32 b) {
     if (a == b) {
         return 1;
     }
-    a = CHARA_T(a); /* (PC build: an added character is related to whom its base character is) */
+#ifdef PORT /* (PC build: an added character is related to whom its base character is) */
+    a = CHARA_T(a);
     b = CHARA_T(b);
     if (a == b) {
         return 1;
     }
+#endif
     for (i = 0; i < CHRTBL_LINK_COUNT; i++) {
         if (table[a].link[i] != CHRTBL_LINK_NONE && table[a].link[i] == b) {
             return 1;
