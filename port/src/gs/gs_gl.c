@@ -216,6 +216,10 @@ static char *translate(const char *src, int is_vertex) {
     while (*p) {
         if (!strncmp(p, "#version 450", 12)) { PUSH("#version 330 core"); p += 12; continue; }
         if (!strncmp(p, "gl_VertexIndex", 14)) { PUSH("gl_VertexID"); p += 14; continue; }
+        if (!strncmp(p, "layout(depth_less)", 18)) { /* (GL 4.2's; without it gl_FragDepth is simply written) */
+            while (*p && *p != '\n') { p++; }
+            continue;
+        }
         if (!strncmp(p, "layout(set", 10)) {
             const char *e = strchr(p, ')');
             if (e) { p = e + 1; if (*p == ' ') p++; continue; }
@@ -344,7 +348,7 @@ static GLuint make_present_program(void) {
 /* ---- state -------------------------------------------------------------------------------------- */
 static SDL_Window *sWindow;
 static SDL_GLContext sCtx;
-static GLuint sMainProg[4]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag */
+static GLuint sMainProg[8]; /* gs.vert / vu0 / vu4 / vu6 + gs.frag; 4..7: the same with gsnz.frag (key bit 23) */
 static GLuint sOutlineProg, sKeyProg, sDclutProg, sPresentProg;
 static GLuint sVaoGs, sVaoVu, sVboGs, sVboVu, sIboVu;
 static GLuint sSamplers[16];
@@ -359,7 +363,7 @@ static const char *sGsSamplers[2] = {"tex", "dateTex"};
 static const char *sOneSampler[1] = {"aux"};
 static const char *sDclutSamplers[3] = {"depthTex", "auxTex", "clutTex"};
 
-typedef struct Pipe { uint32_t key, bkey, wmask; int ztst, zwrite, topo, vu, fx; } Pipe;
+typedef struct Pipe { uint32_t key, bkey, wmask; int ztst, zwrite, topo, vu, fx, nz; } Pipe;
 static Pipe sPipes[1024];
 static int sPipeCount;
 
@@ -465,6 +469,7 @@ static void pipe_decode(Pipe *p, uint32_t key) {
     p->zwrite = (int)((key >> 12) & 1);
     p->topo = (int)((key >> 13) & 3);
     p->vu = (int)((key >> 20) & 3);
+    p->nz = (int)((key >> 23) & 1);
     p->fx = (int)((key >> 22) & 1);
     p->wmask = (key >> 16) & 15;
 }
@@ -533,7 +538,7 @@ static void set_pipe(int pipe) {
     sCurPipe = pipe;
     p = &sPipes[pipe];
     {
-        GLuint prog = p->fx ? sDclutProg : sMainProg[p->vu];
+        GLuint prog = p->fx ? sDclutProg : sMainProg[p->vu + (p->nz ? 4 : 0)];
         if (sCurProgram != prog) { sCurProgram = prog; glUseProgram(prog); }
     }
     apply_blend(p->bkey);
@@ -625,6 +630,12 @@ static void bind_target(int i, int clear) {
     }
 }
 
+void GsGl_Vsync(int on) { /* the settings window's "V-sync" */
+    if (sCtx != NULL) {
+        SDL_GL_SetSwapInterval(on != 0);
+    }
+}
+
 /* ---- init --------------------------------------------------------------------------------------- */
 static int gl_init(void) {
     static const uint32_t white = 0xFFFFFFFFu;
@@ -644,7 +655,7 @@ static int gl_init(void) {
         fprintf(stderr, "bt3: gl: no GL 3.3 core context: %s\n", SDL_GetError());
         return 0;
     }
-    SDL_GL_SetSwapInterval(0);
+    SDL_GL_SetSwapInterval(Port_Setting("vsync", 0) != 0);
     if (getenv("BT3_GL_TRACE") != NULL) { fprintf(stderr, "gl: current, loading the functions\n"); }
     if (!load_gl()) { return 0; }
     fprintf(stderr, "bt3: GL renderer: %s (%s)\n", (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
@@ -663,6 +674,10 @@ static int gl_init(void) {
     sMainProg[1] = make_program(kVu0VertGlsl, kGsFragGlsl, "vu0", sGsSamplers, 2);
     sMainProg[2] = make_program(kVu4VertGlsl, kGsFragGlsl, "vu4", sGsSamplers, 2);
     sMainProg[3] = make_program(kVu6VertGlsl, kGsFragGlsl, "vu6", sGsSamplers, 2);
+    sMainProg[4] = make_program(kGsVertGlsl, kGsnzFragGlsl, "gs nz", sGsSamplers, 2);
+    sMainProg[5] = make_program(kVu0VertGlsl, kGsnzFragGlsl, "vu0 nz", sGsSamplers, 2);
+    sMainProg[6] = make_program(kVu4VertGlsl, kGsnzFragGlsl, "vu4 nz", sGsSamplers, 2);
+    sMainProg[7] = make_program(kVu6VertGlsl, kGsnzFragGlsl, "vu6 nz", sGsSamplers, 2);
     sOutlineProg = make_program(kFxVertGlsl, kOutlineFragGlsl, "outline", sOneSampler, 1);
     sKeyProg = make_program(kFxVertGlsl, kAlphakeyFragGlsl, "alphakey", sOneSampler, 1);
     sDclutProg = make_program(kFxVertGlsl, kDclutFragGlsl, "dclut", sDclutSamplers, 3);
@@ -702,7 +717,7 @@ static int gl_init(void) {
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, sUboU);
     glGenBuffers(1, &sUboParams);
     glBindBuffer(GL_UNIFORM_BUFFER, sUboParams);
-    glBufferData(GL_UNIFORM_BUFFER, 64, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 80, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, sUboParams);
 
     for (i = 0; i < 16; i++) {
@@ -756,14 +771,16 @@ static void frame_end(void) {
     SDL_Event ev;
     int cur = -1, best = -1, i;
     uint32_t n;
-    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; } fu, lastFu;
+    struct { int32_t mode[4]; float misc[4]; float rect[4]; float orig[4]; float extra[4]; } fu, lastFu;
     int haveFu = 0;
 
+    GsGpu_TitlePoll();
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F1) { Ui_Toggle(); continue; }
+        { extern void PortA11y_Event(const SDL_Event *ev); PortA11y_Event(&ev); } /* a11y.c: the repeat key and button */
+        if (PortInput_Hotkey(&ev)) { Ui_Toggle(); continue; }
         if (Ui_Event(&ev)) { continue; }
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { exit(0); }
+        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE) { if (!ev.key.repeat && !Ui_QuitAsk()) { exit(0); } /* (asks first) */ }
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F9) { /* in-between pictures on / off */
             extern int gsInterp;
             extern void Port_SettingSave(const char *name, int value);
@@ -860,7 +877,10 @@ static void frame_end(void) {
         if (d->native == 5 || d->native == 4) {
             GLuint dst = d->native == 5 ? sDateCopy : sAuxCopy;
             GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+            int rx = 0, ry = 0, rw = GS_W * SCALE, rh = GS_H * SCALE;
             if (!gsTargets[d->target].cleared) { continue; }
+            /* the DATE copy: only what the draws that follow read (gs_draw.c); rows as in the Vulkan back end */
+            if (d->native == 5 && !GsDraw_DateRegion(n, &rx, &ry, &rw, &rh)) { continue; }
             /* The copy of the frame's alpha ids (the outline and the DATE passes read it). glBlitFramebuffer is
                clipped by the scissor test, so with a partial scissor in force (the split screen's halves) only
                part of the alpha would be copied and the outline would draw a stale silhouette; turn it off for
@@ -872,7 +892,7 @@ static void frame_end(void) {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
             glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
             glDrawBuffers(1, one);
-            glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBlitFramebuffer(rx, ry, rx + rw, ry + rh, rx, ry, rx + rw, ry + rh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glEnable(GL_SCISSOR_TEST);
@@ -928,6 +948,7 @@ static void frame_end(void) {
         memcpy(fu.misc, d->misc, sizeof(fu.misc));
         memcpy(fu.rect, d->rect, sizeof(fu.rect));
         memcpy(fu.orig, d->orig, sizeof(fu.orig));
+        fu.extra[0] = d->vu ? (gsVuUni[d->uniform].misc[2] > 0.0f ? gsVuUni[d->uniform].misc[2] : 0.0f) : gsZMax;
         if (!haveFu || memcmp(&fu, &lastFu, sizeof(fu)) != 0) {
             set_params(&fu, sizeof(fu));
             memcpy(&lastFu, &fu, sizeof(fu));
@@ -958,7 +979,8 @@ static void frame_end(void) {
         glClear(GL_COLOR_BUFFER_BIT);
         glEnable(GL_SCISSOR_TEST);
         if (best >= 0 && gsTargets[best].cleared) {
-            float want = (float)Port_AspectMilli() / 1000.0f;
+            extern int Port_PageAspectMilli(void); /* plat_stub.c: 4:3 while the menus run, if asked for */
+            float want = (float)Port_PageAspectMilli() / 1000.0f;
             int w = sw, h = sh, dx, dy;
             if ((float)sw > (float)sh * want) { w = (int)((float)sh * want + 0.5f); } else { h = (int)((float)sw / want + 0.5f); }
             dx = (sw - w) / 2;
@@ -1071,6 +1093,46 @@ static void frame_end(void) {
     gsNative = 0;
 }
 
+/* Target i's picture, reduced to the GS's 512 x 448 (as the Vulkan back end's). */
+static int gl_target_read(int i, uint8_t *rgba) {
+    GLsizei w = 512 * SCALE, h = 448 * SCALE; /* (the picture's part of the target, as the screenshot's) */
+    uint8_t *px;
+    int x, y;
+
+    if (sTgFbo[i] == 0 || (px = malloc((size_t)w * h * 4)) == NULL) {
+        return 0;
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sTgFbo[i]);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    for (y = 0; y < 448; y++) { /* (rows come back in texture order: the first is the scene's top) */
+        for (x = 0; x < 512; x++) {
+            memcpy(rgba + (y * 512 + x) * 4, px + ((size_t)(y * SCALE + SCALE / 2) * w + x * SCALE + SCALE / 2) * 4, 4);
+        }
+    }
+    free(px);
+    return 1;
+}
+
+static void gl_target_copy(int src, int dst) {
+    GLenum one[1] = {GL_COLOR_ATTACHMENT0};
+    if (sTgCol[src] == 0 || sTgCol[dst] == 0) {
+        return;
+    }
+    glDisable(GL_SCISSOR_TEST); /* (the copy must be whole; frame_end sets its own state when it runs) */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, sScratchRead);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[src], 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sScratchDraw);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sTgCol[dst], 0);
+    glDrawBuffers(1, one);
+    glBlitFramebuffer(0, 0, GS_W * SCALE, GS_H * SCALE, 0, 0, GS_W * SCALE, GS_H * SCALE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
 GsBackend sGlBackend = {
     "opengl",
     gl_init,
@@ -1087,4 +1149,6 @@ GsBackend sGlBackend = {
     target_aux,
     target_depth,
     pipe_get,
+    gl_target_read,
+    gl_target_copy,
 };

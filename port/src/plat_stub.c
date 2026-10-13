@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <time.h>
+#include "port_addr.h"
 extern void Port_StateTouch(void *p, unsigned long n); /* gs/state.c */
 
 /* ---- second processor (IOP): heap and remote calls ---- */
@@ -25,7 +26,7 @@ int sceSifFreeIopHeap(void *addr) { Port_LowFree(addr); return 0; }
 int sceSifQueryTotalFreeMemSize() { return 0x100000; }
 int sceSifQueryMaxFreeMemSize() { return 0x100000; }
 /* The bind is answered at once: sceSifClientData.serve (offset 0x24) becomes non-NULL. */
-int sceSifBindRpc(void *client, int id, int mode) { (void)id; (void)mode; *(uint32_t *)((uint8_t *)client + 0x24) = (uint32_t)(uintptr_t)client; /* a 4-byte pointer field of the game */ return 0; }
+int sceSifBindRpc(void *client, int id, int mode) { (void)id; (void)mode; *(uint32_t *)((uint8_t *)client + 0x24) = Port_Addr(client); /* a 4-byte pointer field of the game */ return 0; }
 int func_002B4AF0() { return 0; }      /* sceSifCheckStatRpc: never busy */
 /* sceSifCallRpc, sceSifSetDma, sceSdRemote: the sound effects, port/src/gs/snd_se.c */
 int sceSifDmaStat() { return -1; }     /* transfer finished */
@@ -41,8 +42,22 @@ int func_00296B48() { return 0; }      /* sceSdRemoteCallbackInit */
 static int (*sVsyncHandler)(int);
 void sceGsResetGraph() {}
 void sceGsResetPath() {}
-void sceGsSetDefStoreImage() {}
-int sceGsExecStoreImage() { return 0; }
+/* Reading pixels back from the GS (the screen cross-fade of the fight's scenes reads the frame being shown: stg_b.c).
+   SetDef says what: the place in GS memory (in 64-pixel units), the size; Exec delivers it, 3 bytes a pixel. */
+static int sStoreBp, sStoreW, sStoreH;
+int sceGsSetDefStoreImage(void *si, int sbp, int sbw, int spsm, int x, int y, int w, int h) {
+    (void)si; (void)sbw; (void)spsm; (void)x; (void)y;
+    sStoreBp = sbp & 0xFFFF;
+    sStoreW = w & 0xFFFF;
+    sStoreH = h & 0xFFFF;
+    return 0;
+}
+int sceGsExecStoreImage(void *si, void *dst) {
+    extern void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb); /* gs/gs_core.c */
+    (void)si;
+    Gs_StoreImage((unsigned)sStoreBp, (unsigned)sStoreW, (unsigned)sStoreH, (unsigned char *)dst);
+    return 0;
+}
 int sceGsSyncPath() { return 0; }
 void *sceGsSyncVCallback(int (*handler)(int)) { void *old = (void *)sVsyncHandler; sVsyncHandler = handler; return old; }
 /* One vertical blank: runs the game's VBlank handler, as the interrupt would. */
@@ -78,6 +93,44 @@ int Port_VBlankUsLeft(void) {
     return sPaceNext > t && sPaceNext - t < 100000000ull ? (int)((sPaceNext - t) / 1000ull) : 0;
 }
 
+/* How far behind its grid the game is, in microseconds: the coming vertical blank was due that long ago (0: it
+   is not due yet, or there is no grid). For gs/gs_draw.c, which leaves pictures out when the machine is behind. */
+int Port_PaceBehindUs(void) {
+    unsigned long long t = now_ns();
+    return sPaceNext != 0 && t > sPaceNext && t - sPaceNext < 100000000ull ? (int)((t - sPaceNext) / 1000ull) : 0;
+}
+
+/* The game's pace, 1000 = its own. Online it is the match's and nothing else (gs/net.c: 1000 or 1200, the same on
+   both copies); otherwise the player's own "Game speed" of the Cheats tab (setting game_speed, percent, 50..200),
+   which an online match never reads. Like the match's speed it is the vertical blanks' pace and the pitch of what
+   is heard: every step of the game is computed as always. (PORT_HOST: not the game's state.) */
+extern int Port_NetSpeedMilli(void);
+extern int Port_NetSession(void);
+extern int Port_NetActive(void);
+extern int Port_Setting(const char *name, int def); /* plat_settings.c */
+extern void Port_SettingSave(const char *name, int value);
+PORT_HOST static int sSpeedPercent = -1;
+int Port_GameSpeed(void) {
+    if (sSpeedPercent < 0) {
+        int v = Port_Setting("game_speed", 100);
+        sSpeedPercent = v < 50 ? 50 : v > 200 ? 200 : v;
+    }
+    return sSpeedPercent;
+}
+void Port_GameSpeedSet(int percent) {
+    percent = percent < 50 ? 50 : percent > 200 ? 200 : percent;
+    if (percent != Port_GameSpeed()) {
+        sSpeedPercent = percent;
+        Port_SettingSave("game_speed", percent);
+    }
+}
+int Port_SpeedMilli(void) {
+    return Port_NetSession() || Port_NetActive() ? Port_NetSpeedMilli() : Port_GameSpeed() * 10;
+}
+/* A vertical blank's length: 16.68 ms at the game's own pace. */
+#define BLANK_NS (16683350ull * 1000ull / (unsigned long long)Port_SpeedMilli())
+unsigned long long Port_BlankNs(void) { return BLANK_NS; }
+
 static void vblank_wait(void) {
     struct timespec ts;
     unsigned long long t = now_ns(), after;
@@ -96,7 +149,7 @@ static void vblank_wait(void) {
            a new grid instead, as this did before, added a full period to every such frame: a machine that needed
            20 ms per frame ran the fight at 27 frames per second and unevenly, though it was within the budget.) */
         after = t;
-        next += 16683350ull;
+        next += BLANK_NS;
         sPaceLate++;
     } else if (next > t && next - t < 100000000ull) {
 #ifdef _WIN32
@@ -120,10 +173,10 @@ static void vblank_wait(void) {
 #endif
         after = now_ns();
         gPortSleptNs += after - t; /* the time really spent waiting (a sleep can return early or late) */
-        next += 16683350ull;
+        next += BLANK_NS;
     } else {
         after = t;
-        next = t + 16683350ull; /* the first one, or more than a tenth of a second behind: a new grid from now */
+        next = t + BLANK_NS; /* the first one, or more than a tenth of a second behind: a new grid from now */
         sPaceReset++;
     }
     /* BT3_GS_VERBOSE: once a second, how evenly the vertical blanks came (they should be 16.68 ms apart) */
@@ -185,6 +238,10 @@ void Port_VBlank(void) {
                 GsGpu_InterpPump(6, 0);
             }
         }
+    }
+    {
+        extern void PortA11y_GameTick(void); /* a11y_game.c: what the screen reader says (off without its library) */
+        PortA11y_GameTick();
     }
     {   /* BT3_PAD_TABLE=<file>: what each pad read during the blank that ends here, 36 bytes per blank (the input
            of a session by blank and by pad: gs/net.c plays one player's column of it for its tests) */
@@ -317,7 +374,17 @@ static int pad_read(int socket, unsigned char *data) {
     return 18;
 }
 int sceVibGetProfile() { return 0; }
-int sceVibSetActParam() { return 0; }
+/* The game's motor command for a port, sent every frame (Pad_SendActuator, src/sys/pad.c): two bytes, bit 0 = the
+   small motor, bits 1..7 = the large motor's power. To the player's controller (gs/gs_input.c). Only read here:
+   nothing of it goes back into the game. */
+int sceVibSetActParam(int socket, int profileSize, unsigned char *profile, int dataSize, unsigned char *data) {
+    extern void Port_PadVibrate(int socket, int small, int large);
+    (void)profileSize; (void)profile;
+    if (dataSize >= 1 && data != NULL) {
+        Port_PadVibrate(socket, data[0] & 1, data[0] >> 1);
+    }
+    return 0;
+}
 
 /* ---- MPEG movies: port/src/plat_movie.c ---- */
 
@@ -330,7 +397,11 @@ int sceVibSetActParam() { return 0; }
    The game's projection, culling and effect proportions take Port_WideFactor() (src/battle/btl_cam.c, stg_a.c,
    eft_*.c, all #ifdef PORT); the renderer keeps 2D art in proportion and shows the picture at this shape
    (port/src/gs/gs_gpu.c). */
-static int sAspectMilli = -1;
+/* (PORT_HOST: the player's setting, not the game's state. Without it the shape was saved and put back with the
+   game: a session starts by going back to the state of the program's first moments, so a shape chosen in the
+   settings window during the run went back to what it was at start, 4:3 on a first run. Reported as "joining a
+   match resets the screen to 4:3".) */
+PORT_HOST static int sAspectMilli = -1;
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
 int Port_AspectMilli(void) {
     if (sAspectMilli < 0) {
@@ -348,6 +419,24 @@ int Port_AspectMilli(void) {
         if (sAspectMilli < 1333) { sAspectMilli = 1333; }
         if (sAspectMilli > 4000) { sAspectMilli = 4000; }
     }
+    {
+        /* BT3_ASPECT_AT=<frame>:<w>:<h> (testing): from that frame on the shape is w:h, as if it had been changed in
+           the settings window at that moment (a run without a window can then show a change made during a fight). */
+        static int at = -2, to;
+        extern unsigned gGsFrame; /* gs_core.c */
+        if (at == -2) {
+            int f = 0, w = 0, h = 0;
+            const char *e = getenv("BT3_ASPECT_AT");
+            at = -1;
+            if (e != NULL && sscanf(e, "%d:%d:%d", &f, &w, &h) == 3 && w > 0 && h > 0) {
+                at = f;
+                to = w * 1000 / h;
+            }
+        }
+        if (at >= 0 && (int)gGsFrame >= at) {
+            return to < 1333 ? 1333 : to > 4000 ? 4000 : to;
+        }
+    }
     return sAspectMilli;
 }
 /* The settings overlay changes the shape while the game runs: the game asks every frame. */
@@ -363,4 +452,21 @@ int Port_IsWide(void) {
 extern int gPortMenuMode; /* headless.c */
 float Port_WideFactor(void) {
     return Port_IsWide() && !gPortMenuMode ? (float)Port_AspectMilli() * 3.0f / 4000.0f : 1.0f;
+}
+/* "Menus in 4:3" (F1, UI; setting menus_43): the menus' pages are shown at the shape they were composed for, in the
+   middle with black at the sides, instead of stretched to the picture's width. A fight is not changed.
+   Port_PageAspectMilli is the shape of the page being shown now: what the present step and the loading screens
+   go by. (PORT_HOST: the player's setting, not the game's state.) */
+PORT_HOST static int sMenus43 = -1;
+int Port_Menus43(void) {
+    if (sMenus43 < 0) {
+        sMenus43 = Port_Setting("menus_43", 0) != 0;
+    }
+    return sMenus43;
+}
+void Port_Menus43Set(int on) {
+    sMenus43 = on != 0;
+}
+int Port_PageAspectMilli(void) {
+    return gPortMenuMode && Port_Menus43() ? 1333 : Port_AspectMilli();
 }

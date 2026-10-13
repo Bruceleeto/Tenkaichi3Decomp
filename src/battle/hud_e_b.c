@@ -48,6 +48,8 @@ extern void HudSprite_Show(HudESprite *spr, s32 show);
    side's data is the same, where it is drawn is the other side's place. HUD_SCR(side) is the place of a side. */
 extern int Port_HudSwap(void);
 #define HUD_SCR(side) ((side) ^ Port_HudSwap())
+#else
+#define HUD_SCR(side) (side)
 #endif
 extern void HudSprite_SetMirror(HudESprite *spr, s32 mirror);
 extern void HudSprite_SetRect(HudESprite *spr, s32 x0, s32 x1, s32 y0, s32 y1); /* screen rectangle */
@@ -1114,6 +1116,9 @@ void HudPrompt_DrawNames(void) {
             idx = -1;
         }
         if (idx >= 0) {
+#ifdef PORT
+            Port_GsMarker(HUD_SCR(i) ? PORT_2D_RIGHT : PORT_2D_LEFT); /* (widescreen: each name with its side, as HudCombo_DrawText) */
+#endif
             BtlMenu_SetScript2(BtlCtrl_GetObj(i)->unkBC);
             BtlText_DrawEntryName(pos->x, pos->y, idx, HUD_SCR(i), alpha); /* (the 4th: left or right aligned) */
         }

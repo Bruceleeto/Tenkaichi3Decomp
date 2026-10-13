@@ -27,11 +27,13 @@ game's data from it, and it stays on your computer.
   count for 1, 1.5, 1.75 or 2 (1.75 unless set: the d-pad has four buttons to tap in turn, Square is one).
 - Texture packs made for PCSX2 (`.dds` or `.png`): copied into the `textures` folder next to the game, they are used as they are.
 - Stages and music from outside the disc: a stage model (`.unk`) dropped into the `stages` folder next to the
-  game, or a song (`.adx`) into `songs`, is added to the stage select, its name written in the game's own
+  game, or a song (`.mp3`, converted in the background when the game starts, or `.adx`) into `songs`, is added to the stage select, its name written in the game's own
   lettering (cut from the disc's name pictures while the game runs). They are not written to the save and are
   not offered in an online match. See [docs/port/adding_stages.md](docs/port/adding_stages.md) and
   [adding_songs.md](docs/port/adding_songs.md).
-- In the game, **F1** opens the settings. Its Cheats tab has "Unlock everything" (a debug function the game's
+- In the game, **F1** opens the settings, or **START + SELECT** on a controller (which also works the window: d-pad and
+  Cross, Circle to leave, L1 / R1 for the tabs). Controls has a row to choose another key or button. **Esc** asks
+  before it closes the game, and the window has an "Exit game" button. Its Cheats tab has "Unlock everything" (a debug function the game's
   developers left in: all characters, stages, music, items and Zenni).
 
 - **Online play, experimental** (from release 0.1.8): the main menu's hidden "Dragon Net Battle"
@@ -66,6 +68,7 @@ See [docs/port/README.md](docs/port/README.md) for the running log of what is do
 - A 64-bit x86 processor and a graphics card with Vulkan support. Most of the work is on the processor (the
   game's arithmetic is reproduced exactly as on the PS2); a recent mid-range CPU is recommended.
 - Linux (glibc 2.35 or newer) or Windows 10 / 11.
+- macOS on Apple Silicon: **experimental**, built from source only (see below).
 - About 4 GB of disc space, and your disc image as an `.iso` file.
 
 ## Installing a release
@@ -87,6 +90,22 @@ python3 install.py --iso <your disc image>
 does everything on Linux: checks the tools, reads the disc, builds the 64-bit program and runs the game's demo
 fight as a test. `python3 install.py --check` lists what is missing. `port/setup/build.sh && ./Tenkaichi3Decomp-setup` is
 the same with a window.
+
+### macOS (experimental)
+
+Apple Silicon Macs, native arm64, built from source on the Mac itself; there is no macOS release archive. The
+attract-demo fight gives the same state as the Linux program on every frame, the rewind test (rollback) passes,
+and the game draws through Metal with sound; online play against Linux / Windows has not been tried on two machines
+yet. With [Homebrew](https://brew.sh):
+
+```
+xcode-select --install                       # (once: Apple's command line tools)
+brew install llvm sdl3 shaderc spirv-cross
+python3 install.py --iso <your disc image>   # then ./play.sh
+```
+
+`python3 install.py --check` lists what is missing. How the build works and what is left:
+[docs/port/macos_plan.md](docs/port/macos_plan.md).
 
 The release archives for Linux and Windows are built from the repository alone, with no disc involved:
 `port/release/build.sh` (needs only docker) or the GitHub workflow in `.github/workflows/release.yml`. The

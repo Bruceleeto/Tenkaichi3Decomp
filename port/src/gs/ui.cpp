@@ -1,4 +1,5 @@
-// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it.
+// The settings window of the PC build: Dear ImGui over the finished picture. F1 opens and closes it, or START + SELECT
+// of a controller, or the key and button of its Controls list (gs_input.c: PortInput_Hotkey).
 // Everything it shows lives elsewhere (ui.h): the renderer's settings in gs_gpu.c, the bindings in gs_input.c.
 // It runs on the render thread, which owns the window and its events.
 #include <stdio.h>
@@ -11,6 +12,8 @@
 #include "imgui_impl_opengl3.h"
 #include "ui.h"
 #include "namefont.h"
+#include "../port_release.h"
+#include "menu_text.h"
 
 static int sMeter = -1; // the meter (frame rate, connection): -1 not read yet
 static bool meter_on(void);
@@ -20,7 +23,17 @@ extern "C" {
 extern volatile int gPortNetMenuRequest;
 void Port_NetOptions(int rollback, int delay); // gs/net.c
 void Port_NetRulesSet(int type, int dp, int time); // gs/net.c: the host's battle type, DP limit row, time limit
+void Port_NetSpeedSet(int percent);                // ... and the match's speed, 100..200 (set before the rules)
+int Port_NetSpeedStandard(void);                   // what a quick match runs at
 void Port_NetNameSet(const char *name);         // gs/net.c: this player's name for the match
+int Port_IsWide(void);                         // plat_stub.c: the picture is wider than 4:3
+int Port_AspectMilli(void);
+void Match_UpdateAsk(void);                    // net_match.c: asks GitHub for the newest release, once
+int Match_UpdateLatest(void);                  // ... its number (0.1.33 is 133), 0 while unknown
+int Port_Menus43(void);                       // plat_stub.c: the menus are shown at 4:3 in a wider picture
+void Port_Menus43Set(int on);
+int Port_HudLayout(void);                      // gs_draw.c: 2 = the HUD is about the middle of the screen
+int GsDraw_HudShown(void);                     // ... and 1 while the game is drawing the HUD's side panels
 const char *Port_NetName(int player);          // the name of the player of side 0 or 1 ("" outside a match)
 int Port_HudSwap(void);                        // the two sides of the HUD are in each other's places on this copy
 int Port_NetActive(void);
@@ -40,6 +53,9 @@ const char *PortSongs_Name(int index);
 int PortSongs_Count(void);
 int Port_Setting(const char *name, int def);   // plat_settings.c
 void Port_SettingSave(const char *name, int value);
+void Port_SettingText(const char *name, const char *def, char *out, int size);
+void Port_SettingTextSave(const char *name, const char *value);
+void Port_SettingsWrite(void);
 int Port_ClashSquare(void);                    // gs_input.c: Square counts as a direction in clashes
 void Port_ClashSquareSet(int on);
 int Port_ClashSquareX(void);                   // what a press is worth, in quarters of a point (4, 6, 7, 8)
@@ -48,6 +64,11 @@ extern int gsInterp;                           // gs_draw.c: in-between pictures
 void Port_SettingsWrite(void);
 int Port_LobbyStart(int host, const char *address, int port); // gs/net.c
 int Port_LobbyStartCode(int host, const char *code);         // the same with a room code (the matchmaking service)
+int Port_LobbyStartQuick(int queue);                         // a quick match: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20
+void Port_LobbyQueuesAsk(void);                              // asks the service how many wait in each queue
+void Port_LobbyHelloAsk(void);                               // asks it whether this release is new enough
+int Port_LobbyRelease(int *min, int *latest);                // this release's number; the oldest let in and the newest (0: not known)
+int Port_LobbyQueueWaiting(int queue);                       // ... as last heard, -1 if not known
 const char *Port_LobbyCode(void);                            // the host's room code, "" until it is known
 const char *Port_LobbyError(void);                           // why the matchmaking failed (state -3)
 int Port_LobbyRelayed(void);                                 // the other player was reached through the relay
@@ -59,6 +80,12 @@ static bool sReady, sOpen;
 static bool sNet;                              // the open window is the online screen (Dragon Net Battle), not the settings
 static int sForceTab = -1;                     // BT3_UI_OPEN=<tab>: open at start on that tab (testing)
 static int sCapKind, sCapPlayer, sCapAction;   // waiting for a key (1) or a controller button (2) to bind
+static Uint64 sCapUntil;                       // ... until then: a controller has no button that is not a binding, so the wait ends by itself
+static bool sQuit;                             // the question before the game closes is up
+static bool sQuitNo;                           // ... and Esc answered it: no
+static bool sPadHold;                          // the controller does not work the window: a binding is waited for, or its button is still down
+static int sTab;                               // the settings tab that is open (the shoulder buttons go to its neighbours)
+static bool sPadTab;                           // the shoulder buttons changed the tab this frame
 static SDL_GPUDevice *sDevice;
 
 /* Name strips (gamedata/stages/names.rgba and gamedata/songs/names.rgba): the names of the stages and tracks added
@@ -177,6 +204,85 @@ static SDL_GPUTexture *load_strip(const char *env, const char *rel, uint32_t *w,
     return tex;
 }
 
+// ---- the side bars ----
+// Where the picture is narrower than the window (a 4:3 picture, or "Menus in 4:3", in a wide window) the sides are
+// black, or with "Side bars: Border" a panel with a border along the picture. Two pictures: the border (trim.png),
+// kept in proportion at the picture's edge and as high as the picture, and the plain panel (fill.png), stretched
+// over the rest, so a bar of any width looks right. Both are drawn as they are on the left and mirrored on the right.
+// The program carries a gold set (port/assets/bars, art by the project's owner: 34 x 720 and 126 x 720). A player
+// replaces it by putting a trim.png and / or a fill.png of any size into a folder "bars" next to the game.
+#include "bars_png.h"
+static SDL_GPUTexture *sBarTrim, *sBarFill;
+static int sBars = -1; // 0 black, 1 the border; -1 not read yet
+static int sBarsTried;
+
+static float sBarTrimShape = 34.0f / 720.0f; // the border's width over its height
+
+static SDL_GPUTexture *bar_texture(const char *file, const unsigned char *png, size_t size, float *shape) {
+    SDL_Surface *s = SDL_LoadPNG(file), *rgba; // the player's own picture, if there is one
+    if (s != NULL) {
+        fprintf(stderr, "bt3: side bars: %s, %d x %d\n", file, s->w, s->h);
+    } else {
+        s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true);
+    }
+    uint8_t *pix;
+    size_t bytes;
+    if (s == NULL) {
+        return NULL;
+    }
+    rgba = SDL_ConvertSurface(s, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(s);
+    if (rgba == NULL) {
+        return NULL;
+    }
+    if (shape != NULL && rgba->h > 0) {
+        *shape = (float)rgba->w / (float)rgba->h;
+    }
+    bytes = (size_t)rgba->w * rgba->h * 4;
+    pix = (uint8_t *)malloc(bytes);
+    for (int y = 0; pix != NULL && y < rgba->h; y++) {
+        memcpy(pix + (size_t)y * rgba->w * 4, (const uint8_t *)rgba->pixels + (size_t)y * rgba->pitch, (size_t)rgba->w * 4);
+    }
+    SDL_GPUTexture *tex = pix != NULL ? make_strip(pix, bytes, (uint32_t)rgba->w, (uint32_t)rgba->h, 1) : NULL;
+    SDL_DestroySurface(rgba);
+    return tex;
+}
+
+static bool bars_on(void) {
+    if (sBars < 0) {
+        sBars = Port_Setting("side_bars", 0) != 0;
+    }
+    return sBars != 0 && gUiPresentX > 0 && gUiPresentW > 0 && gUiPresentH > 0;
+}
+
+static void bars_draw(void) {
+    if (!sBarsTried) {
+        sBarsTried = 1;
+        sBarTrim = bar_texture("bars/trim.png", kBarsTrimPng, sizeof(kBarsTrimPng), &sBarTrimShape);
+        sBarFill = bar_texture("bars/fill.png", kBarsFillPng, sizeof(kBarsFillPng), NULL);
+    }
+    if (sBarTrim == NULL || sBarFill == NULL) {
+        return;
+    }
+    ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    float y0 = (float)gUiPresentY, y1 = y0 + (float)gUiPresentH;
+    float bar = (float)gUiPresentX; // the width of each side
+    float trim = (float)gUiPresentH * sBarTrimShape;
+    float u0 = 0.0f;
+    if (trim > bar) { // a bar narrower than the border: the border's inner part
+        u0 = 1.0f - bar / trim;
+        trim = bar;
+    }
+    float lx = (float)gUiPresentX, rx = lx + (float)gUiPresentW; // the picture's two edges
+    ImTextureRef tt((ImTextureID)(intptr_t)sBarTrim), ft((ImTextureID)(intptr_t)sBarFill);
+    if (bar > trim) {
+        dl->AddImage(ft, ImVec2(lx - bar, y0), ImVec2(lx - trim, y1), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        dl->AddImage(ft, ImVec2(rx + trim, y0), ImVec2(rx + bar, y1), ImVec2(1.0f, 0.0f), ImVec2(0.0f, 1.0f));
+    }
+    dl->AddImage(tt, ImVec2(lx - trim, y0), ImVec2(lx, y1), ImVec2(u0, 0.0f), ImVec2(1.0f, 1.0f));
+    dl->AddImage(tt, ImVec2(rx, y0), ImVec2(rx + trim, y1), ImVec2(1.0f, 0.0f), ImVec2(u0, 1.0f));
+}
+
 static void load_strips(void) {
     char path[600];
     // The names of added stages and songs are drawn by this overlay, over the menu: from a strip of pre-rendered
@@ -238,7 +344,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = NULL; // no window-layout file next to the game
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad; // (a controller opens it too: START + SELECT)
     style();
     for (size_t i = 0; i < sizeof(fonts) / sizeof(fonts[0]); i++) {
         FILE *fp = fopen(fonts[i], "rb");
@@ -264,6 +370,7 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             return 0;
         }
     }
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_AutoAll, NULL, 0); // any connected controller works the window
     sDevice = device;
     sReady = true;
     load_strips(); /* the stage- and song-name overlays; the ready flags stay 0 if there is no strip */
@@ -273,10 +380,24 @@ int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context) {
             sForceTab = -1;
             gPortNetMenuRequest = 1;
         }
+        if (sForceTab == 8) { // testing: the exit question over the settings
+            sForceTab = -1;
+            sQuit = true;
+        }
         sOpen = true;
         gPortOverlayOpen = 1;
     }
     return 1;
+}
+
+// The game gets nothing from keyboard or controller while the window or the exit question is up; and the button
+// that closed either is not the game's.
+static void input_owner(void) {
+    int up = sOpen || sQuit;
+    if (gPortOverlayOpen && !up) {
+        PortInput_Swallow();
+    }
+    gPortOverlayOpen = up;
 }
 
 static void set_open(bool open) {
@@ -284,7 +405,93 @@ static void set_open(bool open) {
     sNet = false;
     sCapKind = 0;
     gPortInputCapture = 0;
-    gPortOverlayOpen = open;
+    input_owner();
+}
+
+static void capture(int kind, int player, int action) {
+    sCapKind = kind; sCapPlayer = player; sCapAction = action; gPortInputCapture = 1;
+    sCapUntil = SDL_GetTicks() + 5000;
+    sPadHold = true;
+}
+
+// A controller button pressed in the window (not while it waits for a binding, a list is open or a field is edited).
+static bool pad_pressed(ImGuiKey key) {
+    return sCapKind == 0 && !sPadHold && !sQuit && !ImGui::IsAnyItemActive() &&
+           !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) && ImGui::IsKeyPressed(key, false);
+}
+
+int Ui_QuitAsk(void) {
+    if (!sReady) {
+        return 0;
+    }
+    sQuit = true;
+    input_owner();
+    return 1;
+}
+
+// The screen reader (a11y.c): it cannot see this window's question, which is drawn and not one of the game's screens,
+// so the question, the button under the keyboard's focus and the keys are said here. Nothing while it is off.
+extern "C" {
+void PortA11y_Say(const char *text, int flags); // flags 1: cuts what is being said
+const char *PortA11y_Label(const char *label);  // the label in the reader's language
+}
+
+static void say_quit_button(int which, int flags) {
+    char text[128], pos[32];
+    snprintf(pos, sizeof(pos), PortA11y_Label(", %d of %d"), which + 1, 2);
+    snprintf(text, sizeof(text), "%s%s", PortA11y_Label(which == 0 ? "Exit" : "Cancel"), pos);
+    PortA11y_Say(text, flags);
+}
+
+static void build_quit(void) {
+    static int said = -1; // the button last said: 0 Exit, 1 Cancel
+    ImGuiIO &io = ImGui::GetIO();
+    bool stay = sQuitNo;
+    int focus = -1;
+
+    sQuitNo = false;
+    if (!ImGui::IsPopupOpen("Exit game")) {
+        ImGui::OpenPopup("Exit game");
+    }
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Exit game", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+        static const char *const kAsk = "Close the game? Progress that was not saved is lost.";
+        // the two buttons under the middle of the question (the window is as wide as its text)
+        float line = ImGui::CalcTextSize(kAsk).x, pair = 140.0f * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::TextUnformatted(kAsk);
+        ImGui::Spacing();
+        if (line > pair) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (line - pair) * 0.5f);
+        }
+        if (ImGui::Button("Exit", ImVec2(140.0f, 0.0f))) {
+            exit(0);
+        }
+        focus = ImGui::IsItemFocused() ? 0 : focus;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) {
+            stay = true;
+        }
+        focus = ImGui::IsItemFocused() ? 1 : focus;
+        if (ImGui::IsWindowAppearing()) {
+            ImGui::SetItemDefaultFocus(); // (on Cancel: a second press of the same button does not close the game)
+            PortA11y_Say(PortA11y_Label(kAsk), 1);
+            say_quit_button(1, 0);
+            PortA11y_Say(PortA11y_Label("Left and right choose, Enter confirms, Escape goes back to the game"), 0);
+            said = 1;
+        } else if (focus >= 0 && focus != said) {
+            say_quit_button(focus, 1);
+            said = focus;
+        }
+        if (stay) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (stay) {
+        sQuit = false;
+        input_owner();
+        PortA11y_Say(PortA11y_Label("Back to the game"), 1);
+    }
 }
 
 // Dragon Net Battle: the screen behind the main menu's entry. For now only its shape: what a player fills in to
@@ -297,12 +504,65 @@ extern volatile int gPortNetWindowClose; // gs/state.c
 static void net_open(void) {
     set_open(true);
     sNet = true;
+    Port_LobbyHelloAsk(); // (once per opening: is there a newer release, and is this one still let in)
     gPortInputCapture = 1; // the game takes no input at all while this is open (it sits on the main menu behind it)
+}
+
+// Quick match (the third tab of the online screen): what stands under the queues.
+static bool sNetBusy;   // the lobby is waiting or connecting
+static int sQueue = -1; // the queue chosen: 0 single, 1 team, 2..4 DP battle of 10 / 15 / 20 DP
+
+static void quick_status(int state, int &lastState, const char *name) {
+    // A search ends by itself after three minutes: a window left open does not go on asking the service for hours,
+    // and the player is told that nobody was there instead of being left to wonder. One press searches again.
+    static const Uint64 kSearchMs = 180000;
+    static Uint64 since;
+    if (state == 3 && since != 0 && SDL_GetTicks() - since > kSearchMs) {
+        Port_LobbyCancel();
+        lastState = -5;
+        state = 0;
+    }
+    if (state == 3 || state == 1) {
+        ImGui::TextUnformatted(state == 1 ? "Found a player. Connecting..." : "Searching for a player in this queue...");
+        if (state == 3 && since != 0) {
+            Uint64 left = kSearchMs - (SDL_GetTicks() - since);
+            ImGui::TextDisabled("Searching for %d:%02d more. Leave the window open.", (int)(left / 60000), (int)(left / 1000 % 60));
+        }
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f))) {
+            Port_LobbyCancel();
+            lastState = 0;
+        }
+        return;
+    }
+    if (lastState == -3) {
+        ImGui::TextWrapped("%s", Port_LobbyError());
+    } else if (lastState == -4) {
+        ImGui::TextWrapped("The two games could not reach each other, directly or through the relay. Search again for another player.");
+    } else if (lastState == -2) {
+        ImGui::TextWrapped("The other player's game is a different version. Search again.");
+    } else if (lastState == -5) {
+        ImGui::TextWrapped("Nobody was searching this queue in the last three minutes. Search again, or try another queue.");
+    }
+    if (ImGui::Button(lastState == -5 ? "Search again" : "Search for a match", ImVec2(200.0f, 0.0f))) {
+        since = SDL_GetTicks() + 1;
+        // The same for everyone in a quick match, whoever turns out to be the host: rollback of up to 8 frames and
+        // the input delay measured from the connection. (The Host tab's own choices are for matches with someone
+        // you can agree them with; a stranger's saved ones were not to be inherited unseen.)
+        Port_NetOptions(Port_RollCan() ? 8 : 0, -2);
+        Port_NetSpeedSet(Port_NetSpeedStandard()); // (every quick match: the competitive standard)
+        Port_NetRulesSet(sQueue == 0 ? 0 : sQueue == 1 ? 1 : 2, sQueue >= 2 ? sQueue - 2 : 0, 4);
+        Port_NetNameSet(name);
+        Port_SettingTextSave("net_name", name);
+        Port_SettingSave("net_queue", sQueue);
+        Port_SettingsWrite();
+        lastState = 0;
+        Port_LobbyStartQuick(sQueue);
+    }
 }
 
 static void build_net(void) {
     static char name[17] = "Player", address[64] = "", port[8] = "7000";
-    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3;
+    static int tab, roll = -1, delay = 1, battle = -1, timeLimit = 3, speed = -1;
     static bool useCode = true;       // host with a room code (no port forwarding) or on a port
     static char roomCode[8] = "";     // the code to join with
     static int lastState = 0;         // what the lobby said last (for its messages after a failure)
@@ -311,11 +571,39 @@ static void build_net(void) {
 
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window, as its close button
+        open = false;
+    }
     if (ImGui::Begin("Dragon Net Battle", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            int min = 0, latest = 0, mine = Port_LobbyRelease(&min, &latest);
+            if (min > mine) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.35f, 1.0f));
+                ImGui::TextWrapped("Update available. Online servers are unreachable until you update.");
+                ImGui::PopStyleColor();
+                ImGui::TextDisabled("You have 0.%d.%d; 0.%d.%d or newer is needed. github.com/z3xox/Tenkaichi3Decomp/releases", mine / 100, mine % 100, min / 100, min % 100);
+                ImGui::Separator();
+            } else if (latest > mine) {
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: release 0.%d.%d.", latest / 100, latest % 100);
+                ImGui::TextDisabled("github.com/z3xox/Tenkaichi3Decomp/releases");
+                ImGui::Separator();
+            }
+        }
         ImGui::TextWrapped("Fight a player on another computer. One of you hosts, the other joins with the host's address.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(260.0f);
+        {
+            static bool read;
+            if (!read) { // the name used last time
+                read = true;
+                Port_SettingText("net_name", "Player", name, sizeof(name));
+            }
+        }
         ImGui::InputText("Player name", name, sizeof(name));
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            Port_SettingTextSave("net_name", name);
+            Port_SettingsWrite();
+        }
         ImGui::Spacing();
         if (ImGui::BeginTabBar("net")) {
             if (ImGui::BeginTabItem("Host")) {
@@ -370,14 +658,81 @@ static void build_net(void) {
                     ImGui::Combo("Battle", &battle, kBattle, 5);
                     ImGui::SetNextItemWidth(260.0f);
                     ImGui::Combo("Time limit", &timeLimit, kTime, 5);
+                    {
+                        if (speed < 0) {
+                            speed = Port_Setting("net_speed_host", Port_NetSpeedStandard()) /* (a new name with 0.1.31: the standard went from 120 to 114) */;
+                        }
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::SliderInt("Game speed", &speed, 100, 150, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+                        ImGui::SetItemTooltip("How fast the match runs, for both players; the sound keeps its pitch.\n"
+                                              "100%% is the game's own speed. %d%% is the competitive standard, and what\n"
+                                              "quick matches run at.\n"
+                                              "With a player on 0.1.29 only 100%% and 120%% are possible, with an older\n"
+                                              "release only 100%%.", Port_NetSpeedStandard());
+                    }
                 }
                 ImGui::TextDisabled("The host's choices apply to both players.");
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Quick match")) {
+                static const char *const kQueue[] = {"Single battle", "Team battle", "DP battle (10 DP)", "DP battle (15 DP)", "DP battle (20 DP)"};
+                static Uint64 asked;
+                bool busy = sNetBusy; // (a search is under way: the queue is not changed under it)
+                tab = 2;
+                if (sQueue < 0) {
+                    sQueue = Port_Setting("net_queue", 0);
+                    if (sQueue < 0 || sQueue > 4) { sQueue = 0; }
+                }
+                {
+                    // How many wait: asked when the tab is opened and then every thirty seconds, but only while the
+                    // player is doing something here (a window left open all day asks nothing after two minutes),
+                    // and not during a search (the search hears from the service anyway).
+                    static Uint64 active;
+                    bool moved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f || ImGui::IsAnyItemActive();
+                    for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !moved; k++) {
+                        moved = ImGui::IsKeyDown((ImGuiKey)k);
+                    }
+                    if (moved || active == 0) {
+                        active = SDL_GetTicks() + 1;
+                    }
+                    if (!sNetBusy && (asked == 0 || (SDL_GetTicks() - asked > 30000 && SDL_GetTicks() - active < 120000))) {
+                        asked = SDL_GetTicks() + 1;
+                        Port_LobbyQueuesAsk();
+                    }
+                }
+                ImGui::TextWrapped("Be matched with whoever is searching the same queue. All quick matches have no time limit and run at %d%% speed.", Port_NetSpeedStandard());
+                ImGui::BeginDisabled(busy);
+                for (int i = 0; i < 5; i++) {
+                    char label[80];
+                    int n = Port_LobbyQueueWaiting(i);
+                    if (n < 0) {
+                        snprintf(label, sizeof(label), "%s", kQueue[i]);
+                    } else {
+                        snprintf(label, sizeof(label), "%s   (%d searching)###q%d", kQueue[i], n, i);
+                    }
+                    ImGui::RadioButton(label, &sQueue, i);
+                }
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("The two games connect to each other directly when they can, as in most online fighting");
+                ImGui::TextDisabled("games: a player who inspects their own network traffic can see the other's address.");
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Join")) {
                 tab = 1;
                 ImGui::SetNextItemWidth(120.0f);
                 ImGui::InputText("Room code", roomCode, sizeof(roomCode), ImGuiInputTextFlags_CharsUppercase | ImGuiInputTextFlags_CharsNoBlank);
+                ImGui::SameLine();
+                if (ImGui::Button("Paste")) { // the letters and digits of what was copied, as capitals
+                    char *clip = SDL_GetClipboardText();
+                    size_t n = 0;
+                    for (const char *c = clip; c != NULL && *c != '\0' && n + 1 < sizeof(roomCode); c++) {
+                        if ((*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z')) {
+                            roomCode[n++] = (char)(*c >= 'a' ? *c - 32 : *c);
+                        }
+                    }
+                    roomCode[n] = '\0';
+                    SDL_free(clip);
+                }
                 ImGui::TextDisabled("or, without a code, the host's address and port:");
                 ImGui::BeginDisabled(roomCode[0] != '\0');
                 ImGui::SetNextItemWidth(260.0f);
@@ -392,6 +747,7 @@ static void build_net(void) {
         ImGui::Spacing();
         {
             int state = Port_LobbyPoll();
+            sNetBusy = state == 1 || state == 3;
             if (state == 2) {
                 Port_LobbyLaunch(); // the other player is there: the game turns into the session at its next blank
                 set_open(false);
@@ -401,13 +757,27 @@ static void build_net(void) {
             if (state != 0) {
                 lastState = state;
             }
-            if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
+            if (tab == 2) {
+                quick_status(state, lastState, name);
+            } else if (state == 3 || (state == 1 && byCode)) { // a room code: asking the service, then reaching the other player
                 if (tab == 0 && Port_LobbyCode()[0] != '\0') {
                     ImGui::TextUnformatted("Room code:");
                     ImGui::SameLine();
                     ImGui::SetWindowFontScale(1.8f);
                     ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "%s", Port_LobbyCode());
                     ImGui::SetWindowFontScale(1.0f);
+                    {
+                        static Uint64 copiedAt;
+                        ImGui::SameLine();
+                        if (ImGui::Button("Copy")) {
+                            copiedAt = SDL_SetClipboardText(Port_LobbyCode()) ? SDL_GetTicks() : 0;
+                        }
+                        ImGui::SetItemTooltip("Copy the code, to paste it to the other player.");
+                        if (copiedAt != 0 && SDL_GetTicks() - copiedAt < 2000) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("Copied");
+                        }
+                    }
                     ImGui::TextUnformatted(state == 3 ? "Tell the other player this code. Waiting for them to join..." : "The other player has joined. Connecting...");
                 } else {
                     ImGui::TextUnformatted(state == 1 ? "Found the room. Connecting to the host..." : tab == 0 ? "Getting a room code..." : "Looking for the room...");
@@ -441,6 +811,8 @@ static void build_net(void) {
                     if (tab == 0 && roll >= 0) {
                         Port_NetOptions(roll * 2, delay == 0 ? -2 : delay - 1);
                         if (battle >= 0) {
+                            Port_NetSpeedSet(speed);
+                            Port_SettingSave("net_speed_host", speed);
                             Port_NetRulesSet(battle == 0 ? 0 : battle == 1 ? 1 : 2, battle >= 2 ? battle - 2 : 0, timeLimit);
                             Port_SettingSave("net_battle", battle);
                             Port_SettingSave("net_time", timeLimit);
@@ -452,6 +824,8 @@ static void build_net(void) {
                         Port_NetOptions(-1, -1); // joining: the host's choices arrive with its answer
                     }
                     Port_NetNameSet(name);
+                    Port_SettingTextSave("net_name", name);
+                    Port_SettingsWrite();
                     lastState = 0;
                     if (byCode) {
                         Port_LobbyStartCode(tab == 0, roomCode);
@@ -490,7 +864,13 @@ void Ui_Toggle(void) {
 }
 
 static void bind(int value) {
-    if (sCapKind == 1) {
+    if (sCapAction == PORT_ACTIONS) { // the row "Open this window"
+        if (sCapKind == 1) {
+            *PortInput_OverlayKey() = value > 0 ? value : SDL_SCANCODE_F1; // (cleared = F1 again: a keyboard always has a way in)
+        } else if (value < PORT_PAD_LT) { // (a button, not a trigger)
+            *PortInput_OverlayPad() = value;
+        }
+    } else if (sCapKind == 1) {
         PortInput_Keys(sCapPlayer)[sCapAction] = value;
     } else {
         PortInput_PadButtons(sCapPlayer)[sCapAction] = value;
@@ -499,7 +879,23 @@ static void bind(int value) {
 }
 
 int Ui_Event(const SDL_Event *ev) {
-    if (!sReady || !sOpen) {
+    if (!sReady) {
+        return 0;
+    }
+    if (ev->type == SDL_EVENT_GAMEPAD_ADDED || ev->type == SDL_EVENT_GAMEPAD_REMOVED) { // (also while it is closed: its list of controllers)
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return 0;
+    }
+    if (sQuit) { // the exit question: Esc again takes it away; the rest is the question's
+        if (ev->type == SDL_EVENT_KEY_DOWN && ev->key.scancode == SDL_SCANCODE_ESCAPE) {
+            sQuitNo = sQuitNo || !ev->key.repeat; // (taken away where it is drawn)
+            return 1;
+        }
+        ImGui_ImplSDL3_ProcessEvent(ev);
+        return ev->type == SDL_EVENT_KEY_DOWN || ev->type == SDL_EVENT_KEY_UP || ev->type == SDL_EVENT_TEXT_INPUT ||
+               ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP || ev->type == SDL_EVENT_MOUSE_WHEEL;
+    }
+    if (!sOpen) {
         return 0;
     }
     if (sCapKind != 0) { // the next key or button is the binding; Esc leaves it as it was, Delete clears it
@@ -552,7 +948,11 @@ static const char *pad_source_name(int src) {
 
 static bool tab(const char *label, int index) {
     ImGuiTabItemFlags flags = sForceTab == index ? ImGuiTabItemFlags_SetSelected : 0;
-    return ImGui::BeginTabItem(label, NULL, flags);
+    bool on = ImGui::BeginTabItem(label, NULL, flags);
+    if (on && sForceTab < 0) {
+        sTab = index;
+    }
+    return on;
 }
 
 static void video_tab(PortVideo &v) {
@@ -579,10 +979,28 @@ static void video_tab(PortVideo &v) {
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Wider than 4:3 shows more of the fight to the sides. Menus are stretched.");
+    if (ImGui::BeginCombo("2D filtering", v.smooth2d ? "Smooth" : "Sharp (console)")) {
+        if (ImGui::Selectable("Sharp (console)", !v.smooth2d)) { v.smooth2d = 0; }
+        if (ImGui::Selectable("Smooth", v.smooth2d != 0)) { v.smooth2d = 1; }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("How the display of a fight, the menus and text are drawn above 1x internal resolution.\n"
+                          "Sharp: each of the PlayStation 2's pixels is a block. Smooth: as an emulator shows them.\n"
+                          "No difference at 1x.");
     bool full = v.fullscreen != 0;
     if (ImGui::Checkbox("Full screen", &full)) { v.fullscreen = full; }
     ImGui::SameLine();
     ImGui::TextDisabled("(F11)");
+    {
+        bool vs = v.vsync != 0, fs = v.frameSkip != 0;
+        if (ImGui::Checkbox("V-sync", &vs)) { v.vsync = vs; }
+        ImGui::SetItemTooltip("Each picture waits for the display's refresh. Turn it on if the picture tears.\n"
+                              "Off is the default: it adds a little delay.");
+        if (ImGui::Checkbox("Skip pictures instead of slowing down", &fs)) { v.frameSkip = fs; }
+        ImGui::SetItemTooltip("When this machine cannot show a picture in time, the game normally runs slower.\n"
+                              "With this on it stays at full speed and leaves pictures out instead (choppier,\n"
+                              "not slower). It helps where the graphics chip is the slow part. On by default.");
+    }
     SDL_DisplayID *displays = SDL_GetDisplays(&count);
     if (v.display > count) { v.display = 0; }
     snprintf(label, sizeof(label), "%s", v.display == 0 ? "Chosen by the desktop" : SDL_GetDisplayName(displays[v.display - 1]));
@@ -652,14 +1070,15 @@ static void video_tab(PortVideo &v) {
 }
 
 static void effects_tab(PortVideo &v) {
-    static const struct { const char *name, *tip; } fx[5] = {
+    static const struct { const char *name, *tip; } fx[6] = {
         {"Outline", "The black line around the fighters."},
         {"See-through tint", "The tint that shows a fighter behind scenery."},
         {"Depth tint", "The haze that colours distant things."},
         {"Glare and glow", "The bloom around bright things and the sky's glare."},
         {"Distance blur", "The soft focus on distant scenery."},
+        {"Movement blur", "The blur of the scenery while the view turns or moves fast."},
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
         bool on = !((v.fxOff >> i) & 1);
         if (ImGui::Checkbox(fx[i].name, &on)) { v.fxOff = (v.fxOff & ~(1 << i)) | (on ? 0 : 1 << i); }
         ImGui::SetItemTooltip("%s", fx[i].tip);
@@ -669,10 +1088,149 @@ static void effects_tab(PortVideo &v) {
     ImGui::SetItemTooltip("100%% is what the PlayStation 2 draws; the default here is 60%%.");
 }
 
+// ---- "an update is available" ----
+// Once per run the newest published release's number is asked of GitHub (net_match.c), unless "Check for updates" is
+// off. If it is newer than this program: a line over the picture for ten seconds, and a line with a button to the
+// release page at the top of this window for the rest of the run. Nothing is downloaded by the game.
+// Not when nobody is looking (the offscreen and dummy video drivers); BT3_UPDATE_CHECK=1 / 0 says otherwise, and
+// BT3_UPDATE_LATEST=<number> is taken as the answer without asking (testing).
+static int sUpdCheck = -1; // the setting; -1 not read yet
+static bool sUpdAsked, sUpdTold;
+
+static int update_latest(void) {
+    const char *fake = SDL_getenv("BT3_UPDATE_LATEST");
+    if (sUpdCheck < 0) {
+        sUpdCheck = Port_Setting("update_check", 1) != 0;
+    }
+    if (fake != NULL) {
+        return SDL_atoi(fake);
+    }
+    if (!sUpdAsked) {
+        const char *drv = SDL_GetCurrentVideoDriver(), *env = SDL_getenv("BT3_UPDATE_CHECK");
+        bool seen = drv == NULL || (SDL_strcmp(drv, "offscreen") != 0 && SDL_strcmp(drv, "dummy") != 0);
+        sUpdAsked = true;
+        if (env != NULL ? SDL_atoi(env) != 0 : (sUpdCheck != 0 && seen)) {
+            Match_UpdateAsk();
+        }
+    }
+    return sUpdCheck != 0 || SDL_getenv("BT3_UPDATE_CHECK") != NULL ? Match_UpdateLatest() : 0;
+}
+
+static void misc_tab(void) {
+    {
+        bool chk = sUpdCheck != 0;
+        if (ImGui::Checkbox("Check for updates", &chk)) {
+            sUpdCheck = chk;
+            Port_SettingSave("update_check", sUpdCheck);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("Once per start, ask GitHub for the number of the newest release and say so if it is newer\n"
+                              "than this one. Nothing is downloaded: the settings window then has a button to the page.");
+    }
+    // the start of the game (PR #50): read by FirstRun_Main, so they count from the next start
+    static int sSkipLogos = -1, sSkipIntro = -1, sSkipCopy = -1;
+    if (sSkipLogos < 0) {
+        sSkipLogos = Port_Setting("skip_logos", 0) != 0;
+        sSkipIntro = Port_Setting("skip_intro", 0) != 0;
+        sSkipCopy = Port_Setting("skip_copyright", 0) != 0;
+    }
+    bool logos = sSkipLogos != 0, intro = sSkipIntro != 0, copy = sSkipCopy != 0;
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Skip logos", &logos)) {
+        sSkipLogos = logos;
+        Port_SettingSave("skip_logos", sSkipLogos);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the publisher and developer logos. From the next start of the game.");
+    if (ImGui::Checkbox("Skip intro video", &intro)) {
+        sSkipIntro = intro;
+        Port_SettingSave("skip_intro", sSkipIntro);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("Start without the opening movie. From the next start of the game.");
+    if (ImGui::Checkbox("Skip copyright page", &copy)) {
+        sSkipCopy = copy;
+        Port_SettingSave("skip_copyright", sSkipCopy);
+        Port_SettingsWrite();
+    }
+    ImGui::SetItemTooltip("The page of legal text shown for five seconds before the title screen, every time.");
+}
+
+static void ui_tab(PortVideo &v) {
+    if (ImGui::BeginCombo("Menu font", MenuText_FontName(v.menuFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 0)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.menuFont == i)) { v.menuFont = i; }
+            if (v.menuFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Original uses the game's sprites. Other fonts replace matching menu labels immediately.\nDecorative lettering keeps its original artwork.");
+    if (ImGui::BeginCombo("Dialogue / UI font", MenuText_FontName(v.textFont))) {
+        for (int i = 0; i < MenuText_FontCount(); i++) {
+            if (!MenuText_FontAvailable(i, 1)) { continue; }
+            ImGui::PushID(i);
+            if (ImGui::Selectable(MenuText_FontName(i), v.textFont == i)) { v.textFont = i; }
+            if (v.textFont == i) { ImGui::SetItemDefaultFocus(); }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Replace the shared font used by dialogue, subtitles and ordinary UI text.\n"
+                          "Original keeps the game's glyphs. Text placement, colors, shadows and icons are preserved.");
+    static const char *const kHud[] = {"At the screen's edges", "At the edges, long health bars", "In the middle, as in 4:3"};
+    ImGui::Combo("HUD Style", &v.hudLayout, kHud, 3);
+    ImGui::SetItemTooltip("Where a fight's health bars and gauges sit in a picture wider than 4:3.\n"
+                          "Long health bars: the bars reach from the edges to the timer.\n"
+                          "In the middle: the original 4:3 arrangement, next to the timer.");
+    {
+        bool m43 = Port_Menus43() != 0;
+        if (ImGui::Checkbox("Menus in 4:3", &m43)) {
+            Port_Menus43Set(m43);
+            Port_SettingSave("menus_43", m43);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("In a picture wider than 4:3, show the menus at their own shape with black at the sides\n"
+                              "instead of stretched to the width. Fights keep the wide picture.");
+    }
+    {
+        static const char *const kBars[] = {"Black", "Border"};
+        int b = sBars > 0;
+        if (ImGui::Combo("Side bars", &b, kBars, 2)) {
+            sBars = b;
+            Port_SettingSave("side_bars", sBars);
+            Port_SettingsWrite();
+        }
+        ImGui::SetItemTooltip("What fills the sides where the picture is narrower than the window:\n"
+                              "a 4:3 picture, or the menus with \"Menus in 4:3\", in a wide window.\n"
+                              "Your own: a folder \"bars\" next to the game with trim.png (the strip along the\n"
+                              "picture, kept in proportion) and fill.png (stretched over the rest). Read at start.");
+    }
+}
+
+extern "C" int gPortMusicFollows; // snd_adx.c: 1 = looping music is sped up or slowed down with the game
+
 static void audio_tab(PortVideo &v) {
     ImGui::SliderInt("Music", &v.music, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SliderInt("Sound effects and voices", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
-    ImGui::SetItemTooltip("Takes effect with the next sound that starts.");
+    ImGui::SliderInt("Sound effects", &v.effects, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("Hits, blasts, menu sounds. Takes effect with the next sound that starts.");
+    ImGui::SliderInt("Voices", &v.voices, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("The fighters' voices in a fight and the spoken lines outside one.");
+    ImGui::SliderInt("Stage sounds", &v.stage, 0, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SetItemTooltip("A stage's background sound (wind, water) and its own effects.");
+    {
+        bool follows = gPortMusicFollows > 0;
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Music follows game speed", &follows)) {
+            gPortMusicFollows = follows;
+            Port_SettingSave("music_follows_speed", follows);
+        }
+        ImGui::SetItemTooltip("When the game runs at another speed than 100%% (an online match, the Cheats tab):\n"
+                              "off, the music plays as it is; on, it is sped up or slowed down with the game,\n"
+                              "at its own pitch, as an emulator does. Spoken lines always follow the game.");
+    }
 }
 
 // Cheats. "Unlock everything" is the game's own leftover debug function (Save_UnlockAll, which nothing in the game
@@ -703,7 +1261,28 @@ static void mods_tab(void) {
                           "The computer then plays them with the behaviour of the character each is based on.");
 }
 
+extern "C" int Port_GameSpeed(void);          // plat_stub.c: the player's own game speed, percent; never used online
+extern "C" void Port_GameSpeedSet(int percent);
+extern "C" void Port_AudioRefresh(void);
+
 static void cheats_tab(void) {
+    {
+        int speed = Port_GameSpeed();
+        if (ImGui::SliderInt("Game speed", &speed, 50, 200, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+            Port_GameSpeedSet(speed);
+            Port_AudioRefresh();
+        }
+        ImGui::SetItemTooltip("How fast the game runs outside online play (the sound keeps its pitch). 100%% is the game's own;\n"
+                              "114%% is what competitive play uses. An online match never uses this value:\n"
+                              "its speed is the host's or the queue's.");
+        ImGui::SameLine();
+        if (ImGui::Button("Reset")) {
+            Port_GameSpeedSet(100);
+            Port_AudioRefresh();
+        }
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
     ImGui::TextWrapped("Unlock everything: all characters, stages, music and items, and the largest amount of Zenni. "
                        "This is a debug function the game's developers left in.");
     ImGui::Spacing();
@@ -729,6 +1308,114 @@ static void cheats_tab(void) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
+    }
+}
+
+// The Controls tab's part for the sticks: each stick of the player's controller as it is now (the dot), its deadzone
+// (the shaded middle: a circle, or the game's own square), what the game is given for it (the ring, and in numbers),
+// the triggers, and the settings for these and for vibration. For seeing a stick that drifts and choosing a deadzone
+// that covers it.
+static void sticks_panel(int player) {
+    static const char *const kStick[2] = {"Left stick", "Right stick"}, *const kTrigger[2] = {"Left trigger", "Right trigger"};
+    static const char *const kDir[5] = {"", "up", "down", "left", "right"};
+    const float R = 42.0f, box = 2.0f * R + 8.0f;
+    const ImU32 colZone = ImGui::GetColorU32(ImGuiCol_Text, 0.22f);
+    const ImU32 colRaw = ImGui::GetColorU32(ImGuiCol_Text), colGame = ImGui::GetColorU32(ImVec4(1.0f, 0.75f, 0.2f, 1.0f));
+    int *dead = PortInput_Deadzone(player), *vib = PortInput_Vibration(player);
+    PortStickView view;
+    char label[64];
+
+    PortInput_StickView(player, &view);
+    if (!ImGui::BeginTable("sticks", 2)) {
+        return;
+    }
+    float top = 0.0f;
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        if (s == 0) {
+            top = ImGui::GetCursorScreenPos().y;
+        } else { // (the second cell would start lower by the text offset of the first one's last line)
+            ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        }
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 at = ImGui::GetCursorScreenPos(), c(at.x + box * 0.5f, at.y + box * 0.5f);
+        ImGui::Dummy(ImVec2(box, box));
+        dl->AddCircleFilled(c, R, ImGui::GetColorU32(ImGuiCol_FrameBg), 48);
+        if (dead[s] < 0) { // the game's own: each axis by itself, 50 of 127.5
+            float h = R * 50.0f / 127.5f;
+            dl->AddRectFilled(ImVec2(c.x - h, c.y - h), ImVec2(c.x + h, c.y + h), colZone);
+        } else if (dead[s] > 0) {
+            dl->AddCircleFilled(c, R * (float)dead[s] / 100.0f, colZone, 48);
+        }
+        dl->AddLine(ImVec2(c.x - R, c.y), ImVec2(c.x + R, c.y), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddLine(ImVec2(c.x, c.y - R), ImVec2(c.x, c.y + R), ImGui::GetColorU32(ImGuiCol_Border));
+        dl->AddCircle(c, R, ImGui::GetColorU32(ImGuiCol_Border), 48);
+        if (view.connected) {
+            dl->AddCircle(ImVec2(c.x + view.game[s][0] * R, c.y + view.game[s][1] * R), 5.5f, colGame, 16, 1.5f);
+            dl->AddCircleFilled(ImVec2(c.x + view.raw[s][0] * R, c.y + view.raw[s][1] * R), 3.0f, colRaw, 12);
+        }
+        ImGui::SameLine();
+        ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, top));
+        ImGui::BeginGroup();
+        ImGui::AlignTextToFramePadding(); // (in both cells: the second one's lines start that much lower anyway)
+        if (view.connected) {
+            ImGui::Text(view.dir[s] != 0 ? "%s: %s" : "%s", kStick[s], kDir[view.dir[s]]);
+            ImGui::Text("stick  %+.2f %+.2f", view.raw[s][0], view.raw[s][1]);
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(colGame), "game   %+.2f %+.2f", view.game[s][0], view.game[s][1]);
+        } else {
+            ImGui::TextUnformatted(kStick[s]);
+            ImGui::TextDisabled("no controller");
+            ImGui::TextDisabled(" ");
+        }
+        ImGui::SetNextItemWidth(100.0f);
+        snprintf(label, sizeof(label), "Deadzone##%d", s);
+        ImGui::SliderInt(label, &dead[s], -1, PORT_DEADZONE_MAX, dead[s] < 0 ? "Original" : "%d%%", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            PortInput_Save();
+        }
+        ImGui::SetItemTooltip("How far the stick has to be moved before the game is told anything (the shaded middle).\n"
+                              "Original: the game's own, 39%% for left / right and for up / down separately, a square.\n"
+                              "0%% to 90%%: a round one of that size instead; from its edge the value grows evenly\n"
+                              "to full at full tilt, and the stick counts as a direction half way between the two.\n"
+                              "The white dot is the stick, the ring what the game is given; after the stick's name,\n"
+                              "the direction the game takes it for. Choose a size that covers where the dot rests\n"
+                              "when the stick is let go.");
+        ImGui::EndGroup();
+    }
+    for (int s = 0; s < 2; s++) {
+        ImGui::TableNextColumn();
+        snprintf(label, sizeof(label), "%d%%%s", (int)(view.trigger[s] * 100.0f + 0.5f), view.triggerHeld[s] ? " pressed" : "");
+        ImGui::ProgressBar(view.trigger[s], ImVec2(144.0f, 0.0f), label);
+        ImGui::SetItemTooltip("A trigger counts as pressed from %d%% on. The game is told pressed or not, nothing between.",
+                              (PORT_TRIGGER_AT * 100 + 16383) / 32767);
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::TextUnformatted(kTrigger[s]);
+    }
+    ImGui::EndTable();
+    bool on = vib[0] != 0;
+    if (ImGui::Checkbox("Vibration", &on)) {
+        vib[0] = on;
+        PortInput_Save();
+    }
+    ImGui::SetItemTooltip("The game's own vibration (hits, clashes, charging), on this player's controller.\n"
+                          "The game's Options > Controller > Vibration has to be on as well: it is, unless you turned it off.\n"
+                          "The game gives none in a replay or for a side the computer plays.");
+    ImGui::BeginDisabled(!on);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::SliderInt("Strength", &vib[1], 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        PortInput_Save();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Test")) {
+        PortInput_VibrationTest(player);
+    }
+    ImGui::SetItemTooltip("Half a second of both motors at this strength.");
+    ImGui::EndDisabled();
+    if (view.connected && !view.canVibrate) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(this controller has none)");
     }
 }
 
@@ -768,14 +1455,38 @@ static void controls_tab(void) {
         PortInput_ResetDefaults(player);
         PortInput_Save();
     }
-    ImGui::TextDisabled("Click a binding, then press the new key or button. Esc keeps it, Delete clears it.");
+    if (ImGui::CollapsingHeader("Sticks, triggers and vibration", ImGuiTreeNodeFlags_DefaultOpen)) {
+        sticks_panel(player);
+    }
+    ImGui::TextDisabled("Choose a binding, then press the new key or button. Esc keeps it, Delete clears it;");
+    ImGui::TextDisabled("with a controller, press nothing for five seconds to keep it.");
+    // (never lower than a few rows: in a small window the tab scrolls as a whole instead)
     if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
-                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) {
+                          ImVec2(0.0f, ImGui::GetContentRegionAvail().y > 140.0f ? ImGui::GetContentRegionAvail().y : 140.0f))) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Action");
         ImGui::TableSetupColumn("Keyboard");
         ImGui::TableSetupColumn("Controller");
         ImGui::TableHeadersRow();
+        {   // what opens and closes this window (not a player's: one for the program)
+            const int a = PORT_ACTIONS;
+            bool waitKey = sCapKind == 1 && sCapAction == a, waitPad = sCapKind == 2 && sCapAction == a;
+            int key = *PortInput_OverlayKey(), pad = *PortInput_OverlayPad();
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Open this window");
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : key > 0 ? SDL_GetScancodeName((SDL_Scancode)key) : "-", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(1, player, a);
+            }
+            ImGui::TableNextColumn();
+            snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad >= 0 ? pad_source_name(pad) : "START + SELECT", a);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
+                capture(2, player, a);
+            }
+        }
         for (int a = 0; a < PORT_ACTIONS; a++) {
             bool waitKey = sCapKind == 1 && sCapPlayer == player && sCapAction == a;
             bool waitPad = sCapKind == 2 && sCapPlayer == player && sCapAction == a;
@@ -786,13 +1497,13 @@ static void controls_tab(void) {
             ImGui::TableNextColumn();
             snprintf(label, sizeof(label), "%s##k%d", waitKey ? "press a key..." : keys[a] > 0 ? SDL_GetScancodeName((SDL_Scancode)keys[a]) : "-", a);
             if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                sCapKind = 1; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                capture(1, player, a);
             }
             ImGui::TableNextColumn();
             if (a < PORT_PAD_BUTTONS) {
                 snprintf(label, sizeof(label), "%s##p%d", waitPad ? "press a button..." : pad_source_name(pads[a]), a);
                 if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f))) {
-                    sCapKind = 2; sCapPlayer = player; sCapAction = a; gPortInputCapture = 1;
+                    capture(2, player, a);
                 }
             } else {
                 ImGui::AlignTextToFramePadding();
@@ -810,14 +1521,43 @@ static void build(void) {
 
     GsGpu_GetSettings(&v);
     was = v;
+    if (sCapKind == 2 && SDL_GetTicks() > sCapUntil) { // nothing was pressed: the binding stays
+        sCapKind = 0;
+        gPortInputCapture = 0;
+    }
+    if (pad_pressed(ImGuiKey_GamepadFaceRight)) { // Circle / B: out of the window
+        open = false;
+    }
+    if (sForceTab < 0 && (pad_pressed(ImGuiKey_GamepadL1) || pad_pressed(ImGuiKey_GamepadR1))) {
+        sForceTab = (sTab + (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 7 : 1)) % 8;
+        sPadTab = true;
+    }
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(640.0f, 560.0f), ImGuiCond_Appearing);
+    // (760 high where the picture has the room: the Controls tab's sticks and its list of bindings together)
+    ImGui::SetNextWindowSize(ImVec2(640.0f, io.DisplaySize.y >= 800.0f ? 760.0f : 600.0f), ImGuiCond_Appearing);
     if (ImGui::Begin("Settings", &open, ImGuiWindowFlags_NoCollapse)) {
+        {
+            int latest = update_latest();
+            if (latest > PORT_RELEASE) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Update available: 0.%d.%d (this is 0.%d.%d).", latest / 100, latest % 100,
+                                   PORT_RELEASE / 100, PORT_RELEASE % 100);
+                ImGui::SameLine();
+                if (ImGui::Button("Download page")) {
+                    SDL_OpenURL("https://github.com/" PORT_UPDATE_REPO "/releases/latest");
+                }
+                ImGui::SetItemTooltip("Opens the release page in your browser. To update, copy the new files over the old ones.");
+                ImGui::Separator();
+            }
+        }
+        // the tabs in a region of their own, above a last line that is always there
+        ImGui::BeginChild("body", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_NavFlattened);
         if (ImGui::BeginTabBar("tabs")) {
             if (tab("Video", 0)) { video_tab(v); ImGui::EndTabItem(); }
             if (tab("Effects", 1)) { effects_tab(v); ImGui::EndTabItem(); }
             if (tab("Audio", 2)) { audio_tab(v); ImGui::EndTabItem(); }
-            if (tab("Controls", 3)) {
+            if (tab("UI", 3)) { ui_tab(v); ImGui::EndTabItem(); }
+            if (tab("Controls", 4)) {
                 bool cs = Port_ClashSquare() != 0;
                 if (ImGui::Checkbox("Clashes: Square counts as a direction", &cs)) {
                     Port_ClashSquareSet(cs);
@@ -848,12 +1588,26 @@ static void build(void) {
                 controls_tab();
                 ImGui::EndTabItem();
             }
-            if (tab("Cheats", 4)) { cheats_tab(); ImGui::EndTabItem(); }
-            if (tab("Mods", 5)) { mods_tab(); ImGui::EndTabItem(); }
+            if (tab("Cheats", 5)) { cheats_tab(); ImGui::EndTabItem(); }
+            if (tab("Misc", 6)) { misc_tab(); ImGui::EndTabItem(); }
+            if (tab("Mods", 7)) { mods_tab(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
-        if (ImGui::GetFrameCount() > 3) {
+        ImGui::EndChild();
+        if (sPadTab) { // (a tab chosen with the shoulder buttons)
+            sPadTab = false;
+            sTab = sForceTab;
             sForceTab = -1;
+        } else if (ImGui::GetFrameCount() > 3) {
+            sForceTab = -1;
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Exit game")) {
+            sQuit = true;
+        }
+        if ((io.BackendFlags & ImGuiBackendFlags_HasGamepad) != 0) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("D-pad: move   Cross / A: choose   Circle / B: back   L1 / R1: tab");
         }
     }
     ImGui::End();
@@ -969,7 +1723,7 @@ static void name_text(ImDrawList *dl, const char *text, float x, float y, float 
    and down a list). */
 struct FontName {
     SDL_GPUTexture *tex; // NULL: this name cannot be drawn that way (a character the disc's names do not have)
-    int style, w, h;
+    int style, w, h, choice, resolution;
     char text[64];
     bool used;
 };
@@ -977,11 +1731,13 @@ static FontName sFontNames[12];
 static unsigned sFontNext;
 
 static const FontName *font_name(int style, const char *text) {
-    if (text == NULL || text[0] == '\0' || !NameFont_Ready()) { // (not ready: asked again next frame)
+    int choice = MenuText_GetFont();
+    int resolution = choice ? 4 : 1; // (a font's strip: 4 times the disc's, for a window larger than the game's picture)
+    if (text == NULL || text[0] == '\0' || (choice == 0 && !NameFont_Ready())) { // (not ready: asked again next frame)
         return NULL;
     }
     for (FontName &n : sFontNames) {
-        if (n.used && n.style == style && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
+        if (n.used && n.style == style && n.choice == choice && n.resolution == resolution && strncmp(n.text, text, sizeof(n.text) - 1) == 0) {
             return n.tex != NULL ? &n : NULL;
         }
     }
@@ -994,13 +1750,22 @@ static const FontName *font_name(int style, const char *text) {
         }
     }
     n.tex = NULL;
+    n.w = n.h = 0;
     n.used = true;
     n.style = style;
+    n.choice = choice; n.resolution = resolution;
     SDL_strlcpy(n.text, text, sizeof(n.text));
-    unsigned char *pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    unsigned char *pix;
+    if (choice) {
+        pix = style == NF_STAGE ? MenuText_RenderStage(n.text, resolution, &n.w, &n.h) :
+                                  MenuText_RenderSong(n.text, style == NF_SONG_LIT, resolution, &n.w, &n.h);
+    } else {
+        pix = NameFont_Compose(style, n.text, &n.w, &n.h);
+    }
     if (pix != NULL) {
         n.tex = make_strip(pix, (size_t)n.w * n.h * 4, (uint32_t)n.w, (uint32_t)n.h, 1); // (frees pix)
     }
+    if (choice) { n.w /= resolution; n.h /= resolution; }
     return n.tex != NULL ? &n : NULL;
 }
 
@@ -1026,6 +1791,12 @@ static bool frame_build(void) {
         gPortNetMenuRequest = 0;
         net_open();
     }
+    if (sReady && !sUpdTold && update_latest() > PORT_RELEASE && SDL_GetTicks() >= sNoticeUntil) {
+        int latest = update_latest(); // (told once, and not over another notice)
+        sUpdTold = true;
+        SDL_snprintf(sNotice, sizeof(sNotice), "Update available: 0.%d.%d. F1 for the download page.", latest / 100, latest % 100);
+        sNoticeUntil = SDL_GetTicks() + 10000;
+    }
     bool notice = sNotice[0] != '\0' && SDL_GetTicks() < sNoticeUntil;
     if (sNoticeNew) { // (set from the game's side: the time starts when it is first drawn)
         sNoticeNew = 0;
@@ -1039,10 +1810,29 @@ static bool frame_build(void) {
     bool meter = sReady && meter_on();
     // the players' names under the gauges of an online fight
     bool names = sReady && Port_NetActive() && BtlChar_FindByObjId(0) != NULL && (Port_NetName(0)[0] != '\0' || Port_NetName(1)[0] != '\0');
+    bool bars = sReady && bars_on();
     meter_count();
     sBuilt = false;
-    if (!sReady || (!sOpen && !notice && !overlay && !meter && !names)) {
+    if (!sReady || (!sOpen && !sQuit && !notice && !overlay && !meter && !names && !bars)) {
         return false;
+    }
+    if (sPadHold && sCapKind != 2) { // a binding was taken: the controller works the window again once nothing is held
+        int count = 0;
+        SDL_JoystickID *ids = SDL_GetGamepads(&count);
+        bool held = false;
+        for (int i = 0; i < count; i++) {
+            SDL_Gamepad *g = SDL_GetGamepadFromID(ids[i]);
+            for (int b = 0; g != NULL && b < SDL_GAMEPAD_BUTTON_COUNT; b++) {
+                held = held || SDL_GetGamepadButton(g, (SDL_GamepadButton)b);
+            }
+        }
+        SDL_free(ids);
+        sPadHold = held;
+    }
+    if (sPadHold) { // (the button that becomes the binding would also press the row it is bound in)
+        ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    } else {
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     }
     sBuilt = true;
     if (sGL) {
@@ -1052,6 +1842,9 @@ static bool frame_build(void) {
     }
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
+    if (bars) {
+        bars_draw();
+    }
     if (sOpen) {
         if (sNet) {
             build_net();
@@ -1059,10 +1852,13 @@ static bool frame_build(void) {
             build();
         }
     }
+    if (sQuit) {
+        build_quit();
+    }
     if (meter) {
         meter_draw();
     }
-    if (names && gUiPresentW > 0 && gUiPresentH > 0) {
+    if (names && GsDraw_HudShown() && gUiPresentW > 0 && gUiPresentH > 0) { // (with the HUD: not over an intro)
         // Under each side's health bar (the game's 512 x 448 page: the bars end at about y 50). The left place is
         // side 0's, or this player's own side when the HUD's sides are swapped.
         ImDrawList *dl = ImGui::GetBackgroundDrawList();
@@ -1075,7 +1871,12 @@ static bool frame_build(void) {
                 continue;
             }
             ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-            float x = place == 0 ? (float)gUiPresentX + 62.0f * sx : (float)gUiPresentX + (512.0f - 62.0f) * sx - ts.x;
+            // 106 of the HUD's own pixels in from its outer edge: clear of the panel of a team's waiting fighters,
+            // which reaches to about 100 (the name sat on it at 62: reported). The HUD is narrowed in a wide
+            // picture and sits at the edges or about the middle (gs_draw.c), and the name goes with it.
+            float narrow = Port_IsWide() ? 1333.333f / (float)Port_AspectMilli() : 1.0f;
+            float in = Port_HudLayout() == 2 ? 256.0f + (106.0f - 256.0f) * narrow : 106.0f * narrow;
+            float x = place == 0 ? (float)gUiPresentX + in * sx : (float)gUiPresentX + (512.0f - in) * sx - ts.x;
             float y = (float)gUiPresentY + 56.0f * sy;
             for (int ox = -1; ox <= 1; ox++) {
                 for (int oy = -1; oy <= 1; oy++) {
@@ -1102,9 +1903,20 @@ static bool frame_build(void) {
            window (the letterbox gs_gpu.c just blitted into). */
         float sx = (float)gUiPresentW / 512.0f;
         float sy = (float)gUiPresentH / 448.0f;
-        ImDrawList *dl = ImGui::GetForegroundDrawList();
+        // With a menu font every name is drawn here, so the names belong to the game picture, behind the settings
+        // and other windows. With "Original" only an added stage or song is, in front of everything as before.
+        ImDrawList *dl = MenuText_GetFont() != 0 ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
 
-        if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
+        if (nameOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(NF_STAGE, PortStages_Name(gUiNameIdx));
+            float x = (float)gUiPresentX + (float)gUiNameX * sx, y = (float)gUiPresentY + (float)gUiNameY * sy;
+            if (fn != NULL) {
+                float kx = (float)gUiNameW * sx / 384.0f, ky = (float)gUiNameH * sy / 48.0f;
+                font_draw(dl, fn, x - 64.0f * kx, y + (1.5f - 14.0f) * ky, kx, ky, true);
+            } else {
+                name_text(dl, PortStages_Name(gUiNameIdx), x, y, (float)gUiNameW * sx, (float)gUiNameH * sy, true);
+            }
+        } else if (nameOn && gUiNameIdx >= (int)sNameCount) { // no pre-rendered name for this one
             /* In the game's lettering if the disc's names have all its characters, else as plain text. The menu's
                rectangle is the strip image's (384x48, set 64 right and 14 down in the 512x64 row of the disc's own
                name picture); the lettering goes where that row is. The menu's movie draws the row a little below
@@ -1127,7 +1939,15 @@ static bool frame_build(void) {
                          ImVec2(0.0f, (float)gUiNameIdx / (float)sNameCount),
                          ImVec2(1.0f, (float)(gUiNameIdx + 1) / (float)sNameCount));
         }
-        if (songOn && gUiSongIdx >= (int)sSongCount) {
+        if (songOn && MenuText_GetFont() != 0) {
+            const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
+            float x = (float)gUiPresentX + (float)gUiSongX * sx, y = (float)gUiPresentY + (float)gUiSongY * sy;
+            if (fn != NULL) {
+                font_draw(dl, fn, x, y, (float)gUiSongW * sx / 512.0f, (float)gUiSongH * sy / 32.0f, false);
+            } else {
+                name_text(dl, PortSongs_Name(gUiSongIdx), x, y, (float)gUiSongW * sx, (float)gUiSongH * sy, false);
+            }
+        } else if (songOn && gUiSongIdx >= (int)sSongCount) {
             // (the rectangle is the 512x32 row of the disc's song-name picture itself)
             const FontName *fn = font_name(gUiSongLit ? NF_SONG_LIT : NF_SONG, PortSongs_Name(gUiSongIdx));
             if (fn != NULL) {

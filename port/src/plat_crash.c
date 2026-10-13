@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
+extern const char *Port_DataSummary(void); /* plat_verify.c */
 
 extern const char *volatile gPortStage; /* plat_mem.c: how far the start got */
 
@@ -98,6 +99,10 @@ static LONG WINAPI on_crash(EXCEPTION_POINTERS *e) {
     crash_hex((unsigned long long)(uintptr_t)tib->StackLimit);
     crash_put(" to ");
     crash_hex((unsigned long long)(uintptr_t)tib->StackBase);
+    if (Port_DataSummary()[0] != '\0') { /* (plat_verify.c: not the original disc's data) */
+        crash_put("\r\n");
+        crash_put(Port_DataSummary());
+    }
     crash_put("\r\nbacktrace (innermost first; addresses in Tenkaichi3Decomp.exe are looked up in the build's map file):\r\n");
     n = RtlCaptureStackBackTrace(0, 32, frames, NULL);
     for (i = 0; i < n; i++) {
@@ -132,10 +137,32 @@ __attribute__((constructor(101))) static void crash_init(void) {
 #include <string.h>
 #include <unistd.h>
 
+extern const char *Port_DataSummary(void); /* plat_verify.c */
+
 static void put(int fd, const char *s) {
     if (write(fd, s, strlen(s)) < 0) {
     }
 }
+
+#ifdef __APPLE__
+/* macOS: the address that was reached, and the same as a game address (port_addr.h): a game address used without
+   its conversion shows here as an address below 4 GB, which macOS never maps. */
+#include "port_addr.h"
+#include <sys/ucontext.h>
+static void *sFault;
+static ucontext_t *sCtx;
+static void put_hex(int fd, unsigned long long v) {
+    char b[19];
+    int i;
+    b[0] = '0';
+    b[1] = 'x';
+    for (i = 0; i < 16; i++) {
+        b[2 + i] = "0123456789abcdef"[(v >> (60 - 4 * i)) & 15];
+    }
+    b[18] = '\0';
+    put(fd, b);
+}
+#endif
 
 static void on_crash(int sig) {
     void *frames[48];
@@ -150,6 +177,33 @@ static void on_crash(int sig) {
         }
         put(out, "bt3: crashed: ");
         put(out, name);
+        if (Port_DataSummary()[0] != '\0') { /* (plat_verify.c: not the original disc's data) */
+            put(out, "\n");
+            put(out, Port_DataSummary());
+        }
+#ifdef __APPLE__
+        put(out, "\naddress ");
+        put_hex(out, (unsigned long long)(uintptr_t)sFault);
+        put(out, " (game address ");
+        put_hex(out, (unsigned long long)(uint32_t)((uintptr_t)sFault - PORT_WINDOW));
+        put(out, ")");
+        if (sCtx != NULL) { /* the registers when it happened: pc is the instruction (the backtrace starts above it) */
+            int r;
+            put(out, "\npc ");
+            put_hex(out, sCtx->uc_mcontext->__ss.__pc);
+            put(out, " lr ");
+            put_hex(out, sCtx->uc_mcontext->__ss.__lr);
+            put(out, " sp ");
+            put_hex(out, sCtx->uc_mcontext->__ss.__sp);
+            for (r = 0; r < 29; r++) {
+                put(out, r % 4 == 0 ? "\n" : " ");
+                put(out, "x");
+                put(out, (const char[]){(char)('0' + r / 10), (char)('0' + r % 10), 0});
+                put(out, " ");
+                put_hex(out, sCtx->uc_mcontext->__ss.__x[r]);
+            }
+        }
+#endif
         put(out, "\nbacktrace (innermost first):\n");
         backtrace_symbols_fd(frames, n, out);
     }
@@ -161,12 +215,28 @@ static void on_crash(int sig) {
     raise(sig);
 }
 
+#ifdef __APPLE__
+static void on_crash_info(int sig, siginfo_t *si, void *ctx) {
+    sCtx = (ucontext_t *)ctx;
+    sFault = si->si_addr;
+    on_crash(sig);
+}
+#endif
+
 __attribute__((constructor)) static void crash_init(void) {
     static const int sigs[] = {SIGSEGV, SIGFPE, SIGILL, SIGBUS, SIGABRT};
     unsigned i;
 
     for (i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
+#ifdef __APPLE__
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_sigaction = on_crash_info;
+        sa.sa_flags = SA_SIGINFO;
+        sigaction(sigs[i], &sa, NULL);
+#else
         signal(sigs[i], on_crash);
+#endif
     }
 }
 #endif

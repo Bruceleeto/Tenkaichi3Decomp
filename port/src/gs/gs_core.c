@@ -25,6 +25,7 @@
 #include <string.h>
 #include <time.h>
 #include "gs_internal.h"
+#include "../port_addr.h"
 
 #define SURF_W 1024
 #define SURF_H 1024
@@ -574,7 +575,7 @@ static void vertex(uint32_t x, uint32_t y, uint32_t z, int kick) {
     Target *sf;
     Vertex v;
 
-    if (gPortResim && !(type == 6 && ((gs.frame[ctx] >> 16) & 0x3F) == 1)) {
+    if (GS_NO_PICTURE && !(type == 6 && ((gs.frame[ctx] >> 16) & 0x3F) == 1)) {
         /* A frame that is only being re-run draws nothing, so its vertices are not even collected: all but the
            sprites into TEXTURE memory (the rectangle case below, which changes what later frames read). */
         return;
@@ -1025,7 +1026,23 @@ static void screenshot(void) {
             }
         }
     }
-    if (every > 0 && best != NULL && !sGpu && sFrame % (unsigned)every == 0) {
+    {
+        /* BT3_XFADE_AT=<frame> (testing): the fight's screen cross-fade is asked for at that frame, as the game does
+           between the shots of an intro, so a run without a window can show it in any fight. */
+        static int at = -2;
+        if (at == -2) {
+            at = getenv("BT3_XFADE_AT") != NULL ? atoi(getenv("BT3_XFADE_AT")) : -1;
+        }
+        if (at >= 0 && (int)sFrame == at) {
+            extern void ScrXfade_RequestCapture(void);
+            extern void ScrXfade_Start(int request, uint32_t seconds); /* (the game's float, as its 32 bits) */
+            ScrXfade_RequestCapture();
+            ScrXfade_Start(1, 0x3F800000u);
+        }
+    }
+    if (every > 0 && best != NULL && !sGpu && sFrame % (unsigned)every == 0 &&
+        (getenv("BT3_SHOT_FROM") == NULL || (int)sFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
+        (getenv("BT3_SHOT_TO") == NULL || (int)sFrame <= atoi(getenv("BT3_SHOT_TO")))) {
         uint64_t fr = (gs.frame[0] & 0x1FF) == best->fbp ? gs.frame[0] : (gs.frame[1] & 0x1FF) == best->fbp ? gs.frame[1] : shown;
         uint32_t fbw = (fr >> 16) & 0x3F, fpsm = (fr >> 24) & 0x3F;
 
@@ -1049,7 +1066,7 @@ static void screenshot(void) {
     for (i = 0; i < sTargetCount; i++) {
         sTargets[i].drawn = 0;
     }
-    if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture) */
+    if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture; a skipped one is counted) */
         sFrame++;
     }
 }
@@ -1080,16 +1097,16 @@ static void race_walk(uint32_t tadr, int which) {
     int guard;
 
     for (guard = 0; guard < 8192; guard++) {
-        const uint32_t *tag = (const uint32_t *)(uintptr_t)tadr, *data;
+        const uint32_t *tag = (const uint32_t *)Port_Ptr(tadr), *data;
         uint32_t qwc = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, addr = tag[1], i;
         uint64_t h = 1469598103934665603ull;
         int end = 0;
 
         switch (id) {
-        case 0: data = (const uint32_t *)(uintptr_t)addr; end = 1; break;
+        case 0: data = (const uint32_t *)Port_Ptr(addr); end = 1; break;
         case 1: data = tag + 4; tadr += 16 + qwc * 16; break;
         case 2: data = tag + 4; tadr = addr; break;
-        case 3: case 4: data = (const uint32_t *)(uintptr_t)addr; tadr += 16; break;
+        case 3: case 4: data = (const uint32_t *)Port_Ptr(addr); tadr += 16; break;
         case 5: data = tag + 4; if (sp < 2) { stack[sp++] = tadr + 16 + qwc * 16; } tadr = addr; break;
         case 6: data = tag + 4; if (sp > 0) { tadr = stack[--sp]; } else { end = 1; } break;
         default: data = tag + 4; end = 1; break;
@@ -1100,8 +1117,8 @@ static void race_walk(uint32_t tadr, int which) {
         for (i = 0; i < qwc * 4; i++) {
             h = (h ^ data[i]) * 1099511628211ull;
         }
-        sRace[which][n].tag = (uint32_t)(uintptr_t)tag;
-        sRace[which][n].data = (uint32_t)(uintptr_t)data;
+        sRace[which][n].tag = Port_Addr(tag);
+        sRace[which][n].data = Port_Addr(data);
         sRace[which][n].qwc = qwc;
         sRace[which][n].id = id;
         sRace[which][n].hash = h;
@@ -1260,15 +1277,15 @@ void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
         render_wait(); /* the GS is one device: this transfer goes after the list that is being drawn */
     }
     if (!chain) {
-        Gs_Gif((const uint8_t *)(uintptr_t)addr, qwc);
+        Gs_Gif((const uint8_t *)Port_Ptr(addr), qwc);
         return;
     }
     for (guard = 0; guard < 100000; guard++) {
-        const uint32_t *tag = (const uint32_t *)(uintptr_t)addr;
+        const uint32_t *tag = (const uint32_t *)Port_Ptr(addr);
         uint32_t n = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, ref = tag[1];
 
         if (id == 0 || id == 3 || id == 4) {
-            Gs_Gif((const uint8_t *)(uintptr_t)ref, n);
+            Gs_Gif((const uint8_t *)Port_Ptr(ref), n);
             addr += 16;
         } else {
             Gs_Gif((const uint8_t *)(tag + 4), n);
@@ -1373,22 +1390,22 @@ static void run_chain(uint32_t tadr, int tte) {
     int guard;
 
     for (guard = 0; guard < 100000; guard++) {
-        const uint32_t *tag = (const uint32_t *)(uintptr_t)tadr;
-        uint32_t qwc = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, addr = tag[1]; /* a host pointer: all 32 bits */
+        const uint32_t *tag = (const uint32_t *)Port_Ptr(tadr);
+        uint32_t qwc = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, addr = tag[1]; /* a game address: all 32 bits */
         const uint32_t *data;
         int end = 0;
 
         switch (id) {
-        case 0: data = (const uint32_t *)(uintptr_t)addr; end = 1; break;                 /* REFE */
+        case 0: data = (const uint32_t *)Port_Ptr(addr); end = 1; break;                 /* REFE */
         case 1: data = tag + 4; tadr += 16 + qwc * 16; break;                             /* CNT */
         case 2: data = tag + 4; tadr = addr; break;                                       /* NEXT */
-        case 3: case 4: data = (const uint32_t *)(uintptr_t)addr; tadr += 16; break;      /* REF, REFS */
+        case 3: case 4: data = (const uint32_t *)Port_Ptr(addr); tadr += 16; break;      /* REF, REFS */
         case 5: data = tag + 4; if (sp < 2) { stack[sp++] = tadr + 16 + qwc * 16; } tadr = addr; break; /* CALL */
         case 6: data = tag + 4; if (sp > 0) { tadr = stack[--sp]; } else { end = 1; } break;          /* RET */
         default: data = tag + 4; end = 1; break;                                          /* END */
         }
         if (sDumpFrame == (int)sFrame) {
-            fprintf(stderr, "  dma tag at %08x: id %u qwc %u addr %08x | %08x %08x (depth %u)\n", (unsigned)(uintptr_t)tag, id, qwc, addr, tag[2], tag[3], sp);
+            fprintf(stderr, "  dma tag at %08x: id %u qwc %u addr %08x | %08x %08x (depth %u)\n", (unsigned)Port_Addr(tag), id, qwc, addr, tag[2], tag[3], sp);
         }
         sStat[0]++;
         if (tte) {
@@ -1426,4 +1443,64 @@ static void run_chain(uint32_t tadr, int tte) {
         fprintf(stderr, "gs: frame %u: %u texel reads from textures that were never uploaded\n", sFrame, sMissingTex);
     }
     sMissingTex = 0;
+}
+
+/* The game reads a piece of a frame buffer back (sceGsExecStoreImage; the cross-fade of the fight's scenes takes the
+   frame being shown, 512 x 224 at a time). `bp` in units of 64 pixels: 0xE00 a frame buffer (32 a page), 8 a row of
+   512. Delivered as 3 bytes a pixel, top row first.
+     - software renderer: from its GS memory;
+     - GPU back end: the frame buffer's picture is read from the card once and kept for the calls that follow in the
+       same frame (two halves), reduced to the GS's 512 x 448;
+     - nothing drawn (tests) or the back end on a thread of its own: black, and the game is not told otherwise. */
+void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
+    extern int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba); /* gs_draw.c */
+    static uint8_t kept[512 * 448 * 4];
+    static unsigned keptFrame = ~0u, keptFbp = ~0u;
+    unsigned fbp = bp / 0xE00 * 0x70, y0 = bp % 0xE00 / 8, x, y;
+
+    if (w > 512) { w = 512; }
+    memset(rgb, 0, (size_t)w * h * 3);
+    if (getenv("BT3_GS_VERBOSE") != NULL || getenv("BT3_STORE_LOG") != NULL) {
+        fprintf(stderr, "gs: frame %u: the game reads %ux%u back from buffer %#x, row %u\n", sFrame, w, h, fbp, y0);
+    }
+    if (sGpu) {
+        if (sThreaded) {
+            return;
+        }
+        {
+            /* First choice: the frame stays on the card as it was drawn and the cross-fade draws from that (the
+               game is handed black, which it uploads and never shows). BT3_XFADE_READ=1: the game's own way. */
+            extern int GsGpu_Snapshot(uint32_t fbp);
+            static unsigned snapFrame = ~0u, snapFbp = ~0u;
+            if (getenv("BT3_XFADE_READ") == NULL) {
+                if (snapFrame == sFrame && snapFbp == fbp) {
+                    return;
+                }
+                if (GsGpu_Snapshot(fbp)) {
+                    snapFrame = sFrame;
+                    snapFbp = fbp;
+                    return;
+                }
+            }
+        }
+        if (keptFrame != sFrame || keptFbp != fbp) {
+            if (!GsGpu_ReadFrame(fbp, kept)) {
+                return;
+            }
+            keptFrame = sFrame;
+            keptFbp = fbp;
+        }
+        for (y = 0; y < h && y0 + y < 448; y++) {
+            for (x = 0; x < w; x++) {
+                memcpy(rgb + (y * w + x) * 3, kept + ((y0 + y) * 512 + x) * 4, 3);
+            }
+        }
+    } else if (gs_mode() != NULL) {
+        for (y = 0; y < h && y0 + y < 448; y++) {
+            for (x = 0; x < w; x++) {
+                uint32_t c = vram_rw(fbp << 5, 8, 0, x, y0 + y, 0, 0);
+                memcpy(rgb + (y * w + x) * 3, &c, 3);
+            }
+        }
+    }
 }
