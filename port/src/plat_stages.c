@@ -76,6 +76,10 @@ extern void Res_RelocateOffsets(void *out, void *base, void *hdr); /* src/sys/gf
 /* The added stages' own icons, made ready as the select makes the disc's (in the game's memory: its 32-bit
    pointers must reach them). The select calls Load when it has set up the disc's and Free when it ends. */
 void PortStageIcons_Free(void) {
+    extern int Port_NetSession(void); /* gs/net.c */
+    if (Port_NetSession()) { /* (online: no added stage, and none of the game's memory taken; as PortChips_Free) */
+        return;
+    }
     if (sIconMem != NULL) {
         Heap_Free(sIconMem);
         sIconMem = NULL;
@@ -85,6 +89,10 @@ void PortStageIcons_Free(void) {
 
 void PortStageIcons_Load(void) {
     int i;
+    extern int Port_NetSession(void); /* gs/net.c */
+    if (Port_NetSession()) {
+        return;
+    }
     PortStageIcons_Free();
     if (gPortExtraStageCount == 0) {
         return;
@@ -102,8 +110,9 @@ void PortStageIcons_Load(void) {
 
 /* The icon of stage `id` (0x24 on), or NULL where its file has none. */
 void *PortStageIcons_Get(int id) {
+    extern int Port_NetSession(void); /* gs/net.c */
     int i = id - PORT_STAGE_FIRST;
-    return i >= 0 && i < gPortExtraStageCount ? sIconRes[i] : NULL;
+    return i >= 0 && i < gPortExtraStageCount && !Port_NetSession() ? sIconRes[i] : NULL;
 }
 
 /* Adds one added stage: its next id, its display name, and the file aliases it needs. */

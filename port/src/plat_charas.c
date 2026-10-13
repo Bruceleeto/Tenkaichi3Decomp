@@ -58,6 +58,17 @@ static Chara sChara[PORT_CHARA_MAX];
 static int sCount;
 static int sInit;
 
+/* Online play does not know the added characters. In a session (Dragon Net Battle; gs/net.c) everything this file
+   answers is what it answers with no `characters` folder at all: no character, no cell, no name line, no chip, no
+   memory of the game's taken, the original's model buffers; so the two copies of a match compute the same game
+   whatever each player has installed. A session that starts the program again does not read the folder either
+   (PortCharas_Init). One that begins in the running program (gs/state.c) finds the folder read: live() hides it
+   until the session is over. */
+extern int Port_NetSession(void); /* gs/net.c */
+static int live(void) {
+    return Port_NetSession() ? 0 : sCount;
+}
+
 /* which of the twelve files a name is, by its ending; -1 if none */
 static int kind_of(const char *name) {
     static const struct { const char *end; int kind; } kEnds[] = {
@@ -262,6 +273,9 @@ void PortCharas_Init(void) {
         return;
     }
     sInit = 1;
+    if (getenv("BT3_NET_SESSION") != NULL && (getenv("BT3_NET_HOST") != NULL || getenv("BT3_NET_JOIN") != NULL)) {
+        return; /* the program was started for an online session: the folder is not read */
+    }
     if (!PortExtras_Dir("characters", "BT3_CHARACTERS", root, sizeof(root))) {
         return;
     }
@@ -360,12 +374,18 @@ int Port_ModelSize(void) {
 
 int Port_CharaCount(void) {
     PortCharas_Init();
+    return live();
+}
+
+/* How many the folder holds, in a session too (for the settings window, which says they are not used there). */
+int Port_CharaInstalled(void) {
+    PortCharas_Init();
     return sCount;
 }
 
 int Port_CharaBase(int chara) {
     PortCharas_Init();
-    if (chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + sCount) {
+    if (chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + live()) {
         return sChara[chara - PORT_CHARA_FIRST].base;
     }
     return chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + PORT_CHARA_MAX ? 0 : chara; /* (an id nothing is behind) */
@@ -373,15 +393,37 @@ int Port_CharaBase(int chara) {
 
 int Port_CharaCostumes(int chara) {
     PortCharas_Init();
-    return chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + sCount ? sChara[chara - PORT_CHARA_FIRST].costumes : 0;
+    return chara >= PORT_CHARA_FIRST && chara < PORT_CHARA_FIRST + live() ? sChara[chara - PORT_CHARA_FIRST].costumes : 0;
 }
 
 const char *Port_CharaName(int index) {
     PortCharas_Init();
-    return index >= 0 && index < sCount ? sChara[index].name : "";
+    return index >= 0 && index < live() ? sChara[index].name : "";
 }
 
+static int alias(const char *rel, char *out, unsigned n);
+
+/* (BT3_CHARA_LOG: every file answered for an added character, once each: the folder's own or the disc's it falls
+   back on) */
 int PortCharas_Alias(const char *rel, char *out, unsigned n) {
+    static char said[64][24];
+    static int saidCount, log = -1;
+    int r = alias(rel, out, n), i;
+    if (log < 0) {
+        log = getenv("BT3_CHARA_LOG") != NULL;
+    }
+    if (r && log) {
+        for (i = 0; i < saidCount && strcmp(said[i], rel) != 0; i++) {
+        }
+        if (i == saidCount && saidCount < 64 && strlen(rel) < sizeof(said[0])) {
+            strcpy(said[saidCount++], rel);
+            fprintf(stderr, "bt3: characters: file %s is %s\n", rel, out);
+        }
+    }
+    return r;
+}
+
+static int alias(const char *rel, char *out, unsigned n) {
     int index = -1, who, k;
     const Chara *c;
 
@@ -394,7 +436,7 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
            there), or the base character's line of the disc (0x8D4E + id * 100 + line, and 0xCC32 + ...) */
         int alt = (index - PORT_CHARA_LINE_INDEX) % 200 / 100, line = (index - PORT_CHARA_LINE_INDEX) % 100, t;
         who = (index - PORT_CHARA_LINE_INDEX) / 200;
-        for (t = 0; who < sCount && t < 2; t++) {
+        for (t = 0; who < live() && t < 2; t++) {
             FILE *f;
             snprintf(out, n, "%s/voice_%s/%03d.adx", sChara[who].dir, (alt ^ t) ? "jp" : "us", line);
             if ((f = fopen(out, "rb")) != NULL) {
@@ -402,7 +444,7 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
                 return 1;
             }
         }
-        snprintf(out, n, "pzs3us2/%05d.bin", (alt ? 0xCC32 : 0x8D4E) - 0xD48 + (who < sCount ? sChara[who].base : 0) * 100 + line);
+        snprintf(out, n, "pzs3us2/%05d.bin", (alt ? 0xCC32 : 0x8D4E) - 0xD48 + (who < live() ? sChara[who].base : 0) * 100 + line);
         return 1;
     }
     if (index >= PORT_CHARA_MEMBER_INDEX && index < PORT_CHARA_MEMBER_INDEX + PORT_CHARA_MAX * 2) {
@@ -411,23 +453,23 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
         FILE *f;
         int side = (index - PORT_CHARA_MEMBER_INDEX) % 2;
         who = (index - PORT_CHARA_MEMBER_INDEX) / 2;
-        if (who < sCount) {
+        if (who < live()) {
             snprintf(out, n, "%s/member_%dp.bin", sChara[who].dir, side + 1);
             if ((f = fopen(out, "rb")) != NULL) {
                 fclose(f);
                 return 1;
             }
         }
-        snprintf(out, n, "pzs3us1/%05d.bin", 7 + (who < sCount ? sChara[who].base : 0) * 2 + side);
+        snprintf(out, n, "pzs3us1/%05d.bin", 7 + (who < live() ? sChara[who].base : 0) * 2 + side);
         return 1;
     }
     if (index >= PORT_CHARA_FACE_INDEX && index < PORT_CHARA_FACE_INDEX + PORT_CHARA_MAX) {
         /* the large picture: the folder's, or the base character's (the disc's 0x2F9 + id) */
         who = index - PORT_CHARA_FACE_INDEX;
-        if (who < sCount && sChara[who].portrait[0] != '\0') {
+        if (who < live() && sChara[who].portrait[0] != '\0') {
             snprintf(out, n, "%s", sChara[who].portrait);
         } else {
-            snprintf(out, n, "pzs3us1/%05d.bin", 0x2F8 + (who < sCount ? sChara[who].base : 0));
+            snprintf(out, n, "pzs3us1/%05d.bin", 0x2F8 + (who < live() ? sChara[who].base : 0));
         }
         return 1;
     }
@@ -440,8 +482,8 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
     } else {
         return 0;
     }
-    c = &sChara[who < sCount ? who : 0];
-    if (who >= sCount) { /* an id nothing is behind (a save or a replay of another set-up): the first character of the disc */
+    c = &sChara[who < live() ? who : 0];
+    if (who >= live()) { /* an id nothing is behind (a save or a replay of another set-up): the first character of the disc */
         snprintf(out, n, k >= F_VOICE ? "pzs3us1/%05d.bin" : "pzs3us1/%05d.bin", k >= F_VOICE ? (k == F_VOICE ? 3033 : 3194) : 1423 + k);
         return 1;
     }
@@ -464,13 +506,13 @@ int PortCharas_Alias(const char *rel, char *out, unsigned n) {
 int Port_CharaFormTarget(int chara, int slot) {
     int index = chara - PORT_CHARA_FIRST;
     PortCharas_Init();
-    return index >= 0 && index < sCount && slot >= 0 && slot < 19 ? sChara[index].target[slot] : -1;
+    return index >= 0 && index < live() && slot >= 0 && slot < 19 ? sChara[index].target[slot] : -1;
 }
 
 /* whether added character j is reached by a transformation (left, up, right) of another added one */
 static int reached(int j) {
     int i, k;
-    for (i = 0; i < sCount; i++) {
+    for (i = 0; i < live(); i++) {
         for (k = 0; k < 3; k++) {
             if (i != j && sChara[i].target[k] == PORT_CHARA_FIRST + j) {
                 return 1;
@@ -487,7 +529,7 @@ static int closure(int head, int *out, int max) {
     for (at = 0; at < n; at++) {
         for (k = 0; k < 4; k++) {
             int t = sChara[out[at]].target[k] - PORT_CHARA_FIRST;
-            if (t < 0 || t >= sCount) {
+            if (t < 0 || t >= live()) {
                 continue;
             }
             for (i = 0; i < n && out[i] != t; i++) {
@@ -503,7 +545,7 @@ static int closure(int head, int *out, int max) {
 int Port_CharaForms(int chara, int *out, int max) {
     int index = chara - PORT_CHARA_FIRST, group[PORT_CHARA_MAX], n, i, head = -1, lowest = PORT_CHARA_MAX;
     PortCharas_Init();
-    if (index < 0 || index >= sCount || max < 1) {
+    if (index < 0 || index >= live() || max < 1) {
         return 0;
     }
     if (reached(index)) {
@@ -532,7 +574,7 @@ int Port_CharaForms(int chara, int *out, int max) {
 void *Port_CharaChipLoad(int index) {
     FILE *f;
     PortCharas_Init();
-    if (index < 0 || index >= sCount) {
+    if (index < 0 || index >= live()) {
         return NULL;
     }
     sChipHave[index] = 0;
@@ -546,7 +588,7 @@ void *Port_CharaChipLoad(int index) {
 
 void *Port_CharaChip(int chara) {
     int index = chara - PORT_CHARA_FIRST;
-    return index >= 0 && index < sCount && sChipHave[index] ? sChip[index] : NULL;
+    return index >= 0 && index < live() && sChipHave[index] ? sChip[index] : NULL;
 }
 
 extern int Port_Setting(const char *name, int def); /* plat_settings.c */
@@ -554,6 +596,9 @@ extern void Port_SettingSave(const char *name, int value);
 static int sPool = -1;
 
 int Port_CharaPool(void) {
+    if (Port_NetSession()) {
+        return 0;
+    }
     if (sPool < 0) {
         sPool = getenv("BT3_CHARA_POOL") != NULL ? atoi(getenv("BT3_CHARA_POOL")) != 0 : Port_Setting("chara_pool", 0) != 0;
     }
@@ -578,7 +623,12 @@ extern void Res_RelocateOffsets(void *out, void *base, void *hdr); /* src/sys/gf
 static unsigned char *sChipMem;
 static void *sChipRes[PORT_CHARA_MAX];
 
+/* (In a session neither does anything: the chips a screen of the player's own game had loaded when the session was
+   asked for lie in that game's memory, which comes back as it was when the session is over.) */
 void PortChips_Free(void) {
+    if (Port_NetSession()) {
+        return;
+    }
     if (sChipMem != NULL) {
         Heap_Free(sChipMem);
         sChipMem = NULL;
@@ -588,13 +638,16 @@ void PortChips_Free(void) {
 
 void PortChips_Load(void) {
     int i;
-    PortCharas_Init();
-    PortChips_Free();
-    if (sCount == 0) {
+    if (Port_NetSession()) {
         return;
     }
-    sChipMem = Heap_Alloc(sCount * CHIP_SIZE, 0x40, 0, 2);
-    for (i = 0; sChipMem != NULL && i < sCount; i++) {
+    PortCharas_Init();
+    PortChips_Free();
+    if (live() == 0) {
+        return;
+    }
+    sChipMem = Heap_Alloc(live() * CHIP_SIZE, 0x40, 0, 2);
+    for (i = 0; sChipMem != NULL && i < live(); i++) {
         void *file = Port_CharaChipLoad(i);
         if (file != NULL) {
             void *res = sChipMem + i * CHIP_SIZE;
@@ -607,7 +660,7 @@ void PortChips_Load(void) {
 
 void *PortChips_Get(int chara) {
     int index = chara - PORT_CHARA_FIRST;
-    return index >= 0 && index < sCount ? sChipRes[index] : NULL;
+    return index >= 0 && index < live() ? sChipRes[index] : NULL;
 }
 
 /* A text of the folders' as the game's lines are: UTF-16 after the mark FF FE. (UTF-8 in; a character past the
@@ -648,11 +701,11 @@ static void *text_pack(void *pack, unsigned char *out, unsigned size, int form, 
 
     PortCharas_Init();
     memcpy(&count, src, 4);
-    if (sCount == 0 || count == 0 || count > NAME_LINES_MAX) {
+    if (live() == 0 || count == 0 || count > NAME_LINES_MAX) {
         *first = -1;
         return pack;
     }
-    total = count + (unsigned)sCount;
+    total = count + (unsigned)live();
     head = (4 * (total + 2) + 63) & ~63u;
     memset(out, 0, size);
     words[0] = total;
@@ -696,19 +749,19 @@ void *Port_CharaFormPack(void *pack) {
 
 int Port_CharaFormLine(int chara) {
     int index = chara - PORT_CHARA_FIRST;
-    return sFormFirst >= 0 && index >= 0 && index < sCount ? sFormFirst + index : Port_CharaBase(chara);
+    return sFormFirst >= 0 && index >= 0 && index < live() ? sFormFirst + index : Port_CharaBase(chara);
 }
 
 int Port_CharaNameLine(int chara) {
     int index = chara - PORT_CHARA_FIRST;
-    return sNameFirst >= 0 && index >= 0 && index < sCount ? sNameFirst + index : Port_CharaBase(chara);
+    return sNameFirst >= 0 && index >= 0 && index < live() ? sNameFirst + index : Port_CharaBase(chara);
 }
 
 /* BT3_TEST_CHARA=<id>[,<id>]: the first fighter of side 0 (and of side 1) of every battle the menus set up is
    that character, whatever was chosen (testing: a recorded session then plays on an added character). */
 int Port_TestChara(int side) {
     const char *e = getenv("BT3_TEST_CHARA"), *comma;
-    if (e == NULL || e[0] == '\0') {
+    if (e == NULL || e[0] == '\0' || Port_NetSession()) {
         return -1;
     }
     comma = strchr(e, ',');
@@ -721,5 +774,5 @@ int Port_TestChara(int side) {
 /* BT3_TEST_CELL: the character select starts with side 0's cursor on the first added character (testing). */
 int Port_TestCell(void) {
     const char *e = getenv("BT3_TEST_CELL");
-    return e != NULL && e[0] != '\0';
+    return e != NULL && e[0] != '\0' && !Port_NetSession();
 }

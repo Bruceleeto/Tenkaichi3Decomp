@@ -13,7 +13,8 @@
 #define PORT_CHARA_LINE_INDEX 74000  /* two hundred per added character: its spoken lines, a hundred in each language */
 
 void PortCharas_Init(void); /* reads the folder; once */
-int Port_CharaCount(void);
+int Port_CharaCount(void);     /* the added characters; 0 in an online session, as everything here then answers */
+int Port_CharaInstalled(void); /* how many the folder holds, in a session too */
 int Port_CharaBase(int chara);           /* an added character's base character; any other id as it is */
 int Port_CharaCostumes(int chara);       /* how many costumes an added character's folder has (0: not an added one) */
 const char *Port_CharaName(int index);   /* the folder's name */

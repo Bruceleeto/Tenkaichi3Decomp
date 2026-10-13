@@ -1240,12 +1240,18 @@ extern volatile int gPortUnlockAll, gPortUnlockDone;
 }
 
 extern "C" int Port_CharaCount(void);
+extern "C" int Port_CharaInstalled(void);
+extern "C" int Port_NetSession(void);
 extern "C" int Port_CharaPool(void);
 extern "C" void Port_CharaPoolSet(int on);
 
 // Characters from outside the disc (the `characters` folder next to the game).
 static void mods_tab(void) {
-    int count = Port_CharaCount();
+    int count = Port_CharaInstalled();
+    if (Port_NetSession()) {
+        ImGui::TextWrapped("Added characters are not part of online play: an online match has the game's own characters only.");
+        return;
+    }
     if (count == 0) {
         ImGui::TextWrapped("No added characters. A character from outside the disc is a folder in \"characters\" next to the game.");
         return;
