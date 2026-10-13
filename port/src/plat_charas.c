@@ -413,16 +413,16 @@ static int fits(const Chara *c, char *path, long limit, const char *what) {
         return 1;
     }
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
-        note(c, "%s cannot be read; not used", strrchr(path, '/') + 1);
+        note(c, "%s cannot be read; that file is left out", strrchr(path, '/') + 1);
         path[0] = '\0';
         return 0;
     }
     padded = (long)((st.st_size + 2047) / 2048 * 2048);
     if (st.st_size < 16 || st.st_size > 0x7FFFFFF || padded > limit) {
         if (st.st_size < 16) {
-            note(c, "%s is empty; not used", strrchr(path, '/') + 1);
+            note(c, "%s is empty; that file is left out", strrchr(path, '/') + 1);
         } else {
-            note(c, "%s is %ld bytes, more than the %ld the game has room for (%s); not used", strrchr(path, '/') + 1, (long)st.st_size, limit, what);
+            note(c, "%s is %ld bytes, more than the %ld the game has room for (%s); that file is left out", strrchr(path, '/') + 1, (long)st.st_size, limit, what);
         }
         path[0] = '\0';
         return 0;
@@ -594,7 +594,7 @@ static Chara *scan(const char *root, const char *name, const Chara *owner) {
     fits(c, c->member[0], MEMBER_MAX, "the member block");
     fits(c, c->member[1], MEMBER_MAX, "the member block");
     if (c->chip[0] != '\0' && !chip_read(c->chip, chip)) {
-        note(c, "chip.bin is not a chip of the game (one entry of the select's chip pack, 5504 bytes); not used");
+        note(c, "chip.bin is not a chip of the game (one entry of the select's chip pack, 5504 bytes); the chip is left out");
         c->chip[0] = '\0';
     }
 
@@ -614,12 +614,12 @@ static Chara *scan(const char *root, const char *name, const Chara *owner) {
             has |= c->form[k][0] != '\0';
         }
         if (!has) {
-            note(c, "replaces character %d but holds nothing to put in its place; not used", c->replaces);
+            note(c, "replaces character %d but holds nothing to put in its place", c->replaces);
             return NULL;
         }
         if (sReplOf[c->replaces] != 0) {
             const Chara *first = &sRepl[sReplOf[c->replaces] - 1];
-            note(c, "character %d is already replaced by %s%s%s (the first by name counts); not used", c->replaces, first->owner,
+            note(c, "character %d is already replaced by %s%s%s (the first by name counts)", c->replaces, first->owner,
                  first->owner[0] != '\0' ? "/" : "", first->name);
             return NULL;
         }
@@ -638,14 +638,14 @@ static Chara *scan(const char *root, const char *name, const Chara *owner) {
         /* no first costume: not an added character's folder. (A folder with a manifest and no `replaces` is said;
            one without a manifest that holds only other files is passed over, as before.) */
         if (side[4][0] != '\0') {
-            note(c, "no model of the first costume (*_1p.pak) and no `replaces`; not used");
+            note(c, "no model of the first costume (*_1p.pak) and no `replaces`: not a character");
         } else if (c->pkg >= 0 && c->pkg == sPkgCount - 1 && p->problem[0] == '\0') {
             sPkgCount--;
         }
         return NULL;
     }
     if (sCount >= PORT_CHARA_MAX) {
-        note(c, "there are already %d added characters, the most the game takes; not used", PORT_CHARA_MAX);
+        note(c, "there are already %d added characters, the most the game takes", PORT_CHARA_MAX);
         return NULL;
     }
     for (c->costumes = 1; c->costumes < 4 && c->file[c->costumes][0] != '\0'; c->costumes++) {
