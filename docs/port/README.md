@@ -3312,3 +3312,71 @@ Not tested: Windows at run time beyond the maker under wine (the Windows build l
 and the drawing were not run there); a release package made with `package.py` and its setup (the game was run
 with `BT3_DATA` pointing at a folder like a release's `gamedata`); the settings window during the hand-over (read
 in the code, not operated); the OpenGL renderer; macOS.
+
+## Character packages: replacing a disc character, one manifest (2026-10-13, branch `char-packages`)
+
+Not released: on top of `charslots-next` (0.1.34 with the characters from outside the disc). The standard for
+people who make packages is `character_packages.md`; the working notes are in `adding_characters.md`.
+
+What there is now: a folder in `characters` either adds a character (as before) or, with `replaces=<id>` in its
+`character.txt`, takes the place of a disc character in that character's own slot: whichever of its files are
+there are loaded for the disc character's own file numbers, the rest stay the disc's, so a folder with one model
+file is a skin. `character.txt` is the one manifest (name, label, base, replaces, author, version, about, the
+links between folders, and `health` / `ki` / `blast`); the files of the earlier builds are still read. F1 > Mods
+lists the packages with what each does and what is wrong with it. `import_chara.py` writes the manifest and makes
+a replacement folder with `--replace`.
+
+Decided on the way, and why:
+
+- The two voice names were exchanged in the port. They follow the community's file lists now (`_Voice_US` is the
+  bank 0xC7B + id and the lines from 0xCC32, the set the game uses with a new save). Evidence in the notes.
+- A file too large for the buffer the game reads it into is left out when the folder is read, for every kind of
+  file (it was the models only). `Port_ModelSize` looks at `gamedata/mods/` too, and the reference viewer's model
+  buffers follow it.
+- A replacement with animations or effects of its own shows its first costume for a costume it lacks; a skin
+  leaves the disc's other costumes alone. The number of costumes of a replaced character stays the disc's.
+- Online: nothing of a package exists in a session. Three things were needed beyond the existing `live()`: the
+  fingerprint opens files without the packages, the loader forgets its open files when a session begins or ends,
+  and the numbers and links answer the table's own in a session.
+
+Checked, all without a window (Linux, 64-bit):
+
+1. The added character of the earlier checks (a copy of disc character 55, id 198) in the title's demonstration
+   fights: hp at ticks 60..1200 of the first fight `30000 40000`, `24010 38830`, `19480 31830`, `18190 27280`,
+   `15980 27280`, as before the change; the same folder with a `character.txt` in place of its three text files:
+   whole state the same on 43,384 blanks.
+2. Replacement of character 0 by that folder (`replaces=0`): the log names the folder's files for 01423, 01431,
+   01432 (model, animations, effects), 03194 (voice bank), 00007 (member block) of the first archive and the
+   spoken lines 48954.. of the second; the fights run; two runs the same on every blank. A skin (character 0's own
+   second costume as `*_1p.pak`, nothing else): every fight value as without it, two runs the same. Character 0's
+   own files as a replacement (`--replace`): every fight value as without it. With the folder taken away again:
+   whole state the same as a run that never had one.
+3. Through the character select (the recorded session `session1.pad`, `BT3_TEST_CELL=disc:0`): the name, the
+   label, the chip and the portrait of the replaced character are the folder's (log, and one offscreen picture),
+   and the fight that follows loads its files.
+4. `health=20000` on character 0: the first hp line is `20000 39400` (it is `39650 40000` without);
+   `health=50000` on the added character: `50000 40000`; `health=150000` runs. `ki` and `blast` go through the same
+   hook and were not read back from a run.
+5. Online, two copies over loopback, a folder that replaces all 161 characters, sets their numbers and adds one,
+   on ONE side (host, then joiner): a session begun in the running program, one started with the program, and one
+   asked for in the middle of a fight of the player's own that had replaced characters loaded: whole state the
+   same on every blank compared (15,000 to 42,000 blanks each). With the loader's forgetting taken out (a build
+   made for the test), that last one differs from blank 1100: the check does see the difference.
+6. The reader on its own under the address and undefined-behaviour sanitizers, gcc and clang
+   (`port/tests/chara_packages/packages.c`): 35 manifests with a known reading, 300,000 made-up ones, and a
+   folder of awkward packages (files that are folders, a 3 MB manifest, a binary one, chips with offsets outside
+   the file, 70 added characters, links to nothing and to themselves, a link that is a loop): nothing reported.
+7. Builds: Linux (`clang64`) and Windows (`win64`) link. The replay check prints `hp 23050 0` at tick 2111. Every
+   file under `src/` that differs from `port` gives the same assembly from the PS2 compiler as `port`'s, and the
+   full matching build passes (`build/DBZP.ok`, `build/SLUS_216.78.ok`).
+
+A fault of the released game found with the two-copy harness, fixed in a commit of its own: a program started
+for its session from the environment (`BT3_NET_HOST` / `BT3_NET_JOIN` with `BT3_NET_SESSION=1`) crashed when the
+session ended (`Port_NetLeave` went back to a kept game of the player's own, and that program had kept none).
+The lobby never takes that way on a build that can exchange the game's state, so players did not meet it; the
+test harness and anyone starting a session by hand did. It starts again as the normal game now.
+
+Not seen by a person: a replacement on a screen, in a menu or in a fight; the Mods tab operated; the voices by ear
+(which language `_voice_us` plays is argued from the file lists and the code, not heard); a transformation from a
+replaced character into an added one; the fight's display with more health than the disc gives; Windows and
+macOS at run time.

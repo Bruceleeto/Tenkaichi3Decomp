@@ -1,5 +1,7 @@
 # Characters from outside the disc (work in progress, branch `charslots`)
 
+For people who make packages: `character_packages.md` is the standard. This file is the working notes.
+
 Started 2026-10-08. The aim: a `characters` folder next to the game, one folder per character holding a
 community character pack as it comes, each taking a slot of its own instead of replacing a disc character.
 
@@ -344,3 +346,73 @@ twice with the same state on every blank.
 
 Known: the direct battle of `BT3_DEMO` / `BT3_REPLAY` (no menus) never mounts the second archive, where every
 file number of an added character lies: `BT3_CHARA=198` there waits for ever. Use `BT3_TEST_CHARA` with the menus.
+
+## Character packages: replacement, one manifest, numbers (2026-10-13, branch `char-packages`)
+
+The standard for people who make packs is now `docs/port/character_packages.md` (format 1). What changed in the
+code, and what was found on the way:
+
+- **`character.txt`**, a manifest of `key=value` lines: `format`, `name`, `form`, `base`, `replaces`, `author`,
+  `version`, `about`, the links (`left` .. `partner3`), `health`, `ki`, `blast`. One reader (`apply` / `parse` in
+  plat_charas.c) takes it and the older files (`name.txt`, `form.txt`, `base.txt`, `forms.txt`, each fed to it as
+  its key); the manifest is read last and wins. Unknown keys are ignored. Everything is matched without regard to
+  case now (the older files' names and the two voice folders were exact before).
+- **Replacement** (`replaces=<id>`): the folder's files are answered for the disc character's own file numbers
+  (`alias_replaced`), in the one opener of the loader and in the streamed-audio path (both go through
+  `PortCharas_Alias`), ahead of `gamedata/mods/`. No id is taken. Its chip is copied over the disc's entry in the
+  screen's own chip pack (`PortChips_Load(pack)`: same 5,504 bytes, no memory of the game's taken), its name and
+  label are put on the character's own line of the text packs the six roster screens already get from
+  `Port_CharaNamePack` / `Port_CharaFormPack`. Two folders for one id: the first by name. Inner folders with
+  their own `replaces=` replace the forms.
+- **Whole character or skin.** A replacement that has its own animations or effects serves its first costume for
+  a costume it does not have; one without them leaves the disc's other costumes alone. Found by a crash: character
+  55's model alone in slot 0 stops the game in `BtlObj_BindTables` when a move asks for an effect that slot 0's
+  effect file does not have. The costume count of a replaced character is the disc table's (not opened up: the
+  count is read in more places than `ChrTbl_WrapCostume` was checked for, and nothing of it can be seen windowless).
+- **The links work for a replaced disc character too** (`BtlParam_PortTarget` no longer asks whether the fighter
+  is an added one; `Port_CharaFormTarget` answers -1 for everyone without a package). So a replaced character can
+  transform into an added one. Wired, NOT tried.
+- **Numbers**: `PORT_STAT` around the three reads of `paramTbl` in `BtlMember_LoadParams` (health, starting ki,
+  blast stocks). The disc's table (common file 2, 161 rows of 16 bytes): health 30000..50000, ki 0..100000, blast
+  4..7; the third word is 100000 in every row.
+- **Every file is checked against the buffer it is read into** when the folder is read; nothing in the game looks
+  at a size before reading (`File_Request` ignores its third argument). Before, only the eight models were. The
+  buffers: model `BtlRes_ModelSize()` (up to `PORT_MODEL_MAX`), animations `BTL_RES_ANIM0_SIZE` 0x160800, effects
+  `BTL_RES_ANIM1_SIZE` 0xCE800, voice bank `BTL_BANK_BUF_SIZE` 0x90800 (the reload buffer; the first load takes
+  memory by the file's size), portrait 0x16800 in every screen, member block `BTL_MEMBER_BUF_SIZE` 0x1000. A file
+  that does not fit is left out and said. `chip.bin` is checked to be a texture file whose offsets stay inside
+  its 5,504 bytes (the game turns them into pointers).
+- **Two gaps closed with it.** `Port_ModelSize` did not look at `gamedata/mods/pzs3us1/`, so a larger model put
+  there was read past the buffer; it does now. The reference viewer's two model buffers (`ChrView_Init`,
+  view_a_d.c) were the original's 0xCE000 whatever was installed; they follow `Port_ModelSize` now.
+  Still open: a model under `mods/` larger than the original's buffer in an ONLINE session, where the buffers
+  are the original's on purpose.
+- **The voice names were the wrong way round.** `_voice_us` was taken as the bank 0xBDA and `voice_us/` as the
+  lines from 0x8D4E. The community's file lists of the disc call 0xBDA + id `<Name>_Voice_JP.pak` and 0xC7B + id
+  `<Name>_Voice_US.pak` (compared byte for byte: five characters' banks, six spoken lines), and the game takes
+  0xC7B / 0xCC32 with `SAVE_FLAG_VOICE` set, which a new save has and which "reset to default" in the sound
+  options sets (menu_x_c.c). So US = 0xC7B = 0xCC32 + ..., JP = 0xBDA = 0x8D4E + ...; the port and the importer
+  follow that now. A folder made with the importer before today has its languages exchanged.
+- **Online.** `rlive()` beside `live()`; the fingerprint opens files with `Port_FileOpenData`, which knows no
+  package (before, it would have hashed a replacement's model as the disc character's); the loader's table of open
+  files (plat_fcache.c) is emptied when a session begins and when it ends (`PortCharas_Epoch`), because a file
+  number that was open from a folder would otherwise stay the folder's in the session. That last one was shown
+  to matter: with the emptying taken out, a session asked for in the middle of a fight with replaced characters
+  differs from blank 1100 and ends; with it, the same on every blank.
+- **F1 > Mods** lists the packages (`Port_CharaPkg`): name, adds / replaces which id, author, version, about, and
+  what was found wrong. No switch per package: the ids of added characters come from the folder order at start,
+  so a switch would need a restart and a place for names in the settings file. Next.
+- **`import_chara.py`** writes `character.txt`, the corrected voice names, `--replace` (a replacement of the same
+  id, also with `--with-forms`) and `--names` (the disc's ids and names).
+- `BT3_TEST_CELL=disc:<id>` puts the select's cursor on a disc character. `BT3_CHARA_LOG` also says the names,
+  labels and chips put on a select.
+- `port/tests/chara_packages/packages.c`: the reader on its own under the address and undefined-behaviour
+  sanitizers (fixed cases, made-up manifests, a folder of awkward packages).
+
+Seen in the run-to-run comparison, not from this work: two runs of the title's demonstration fights with the
+same binary and no folder at all agree in every fight value but can differ in the whole-state checksum from
+blank 27160 on (the binary of 0.1.34 does the same; four runs fall into two groups). Not looked into.
+
+Checked (all without a window): see the section of 2026-10-13 in README.md.
+NOT seen on a screen by a person: any replacement; the Mods tab's list (one offscreen picture); a link from a
+replaced character; numbers on the fight's display beyond the disc's range.
