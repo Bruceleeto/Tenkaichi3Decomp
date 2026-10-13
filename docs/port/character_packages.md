@@ -108,7 +108,7 @@ Rules of the reader, so that every tool and every hand writes files it accepts:
 |---|---|---|
 | `format` | `1` | The format this page describes. A higher number draws a remark; what the game knows is still read. |
 | `name` | text, up to 63 bytes | The name on the roster screens. Without it: an added character is called by its folder's name; a replaced character keeps the disc's name. |
-| `form` | text, up to 95 bytes; may be empty | The second line under the name ("Super Saiyan"). `form=` with nothing after it means "no label". Without the key: the base character's label (added), the disc's own (replaced). |
+| `form` | text, up to 95 bytes; may be empty | The second line under the name ("Super Saiyan"). `form=` with nothing after it means "no label". Without the key: the folder's name for a form (a folder inside a character's folder), the base character's label for an added character, the disc's own for a replaced one. |
 | `base` | disc character id, `0`..`160` | Adding only: the disc character this one stands on (section 4). Without it: `0`. |
 | `replaces` | disc character id, `0`..`160` | Makes the package a **replacement** of that character (section 5). `base` is then that id, whatever `base=` says. |
 | `author`, `version`, `about` | text (63, 31, 199 bytes) | Shown in F1 > Mods. Free text. |

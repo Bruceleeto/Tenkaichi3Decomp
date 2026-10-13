@@ -13,6 +13,8 @@ Contents:  Tenkaichi3Decomp, Tenkaichi3Decomp.dat   the game without the data ta
            a11y_<code>.txt the screen reader's lines in other languages (port/lang; its own labels, no game text)
 
            fonts/          the fonts of F1 > UI with their licences (port/third_party/fonts as it is)
+           characters/     a note, the guide to character packages (docs/port/character_packages.md) and the
+                           tool that makes a package from a character of the player's own disc (import_chara.py)
            README.txt, licenses/
 The user needs nothing but their disc image. Nothing from the disc is in the zip."""
 import os, pathlib, re, shutil, subprocess, sys, zipfile
@@ -43,6 +45,9 @@ in the background): the fonts appear under "Menu font" when it is done.
 Screen reader: with Prism's library (prism.dll, libprism.so; release 0.18.3) placed next to the program, the menus
 and the fight's gauges are spoken and shown in braille. a11y_es.txt is its Spanish; another language is a file
 a11y_<code>.txt of the same kind, and lines of your own go into a11y_<code>_own.txt, which no update replaces.
+
+Characters from outside the disc go into characters/, a folder for each: see README.txt and the guide
+character_packages.md there. F1 > Mods lists what was found. They are not used in an online match.
 
 This package contains no game data. The game's data comes from your disc and stays on your computer.
 """
@@ -87,6 +92,33 @@ and an order.
 Added songs are not written to your save, and they are not offered in an online match (Dragon Net Battle).
 """
 
+CHARACTERS_NOTE = """Characters from outside the disc.
+
+Put a character package here, a folder for each (characters/My Fighter/...). A package adds a character to the
+character select, or replaces one of the disc's (a line `replaces=<id>` in its character.txt). The game reads the
+folder when it starts; F1 > Mods lists every package, what it does, and what is wrong with it.
+
+character_packages.md, in this folder, is the guide: the files of a package, character.txt, transformations,
+health, limits, and how to test one.
+
+import_chara.py, in this folder, makes a package from a character of your own disc, as a start (it needs Python 3):
+
+    python3 import_chara.py <your disc image .iso or gamedata folder> --names
+    python3 import_chara.py <disc image or gamedata folder> <character id> <output folder> --with-forms
+    python3 import_chara.py <disc image or gamedata folder> <character id> <output folder> --replace
+
+Up to 57 added characters at once (a transformation counts as one). Packages are not written to your save, and
+none is used in an online match (Dragon Net Battle): there the game is the original on both sides.
+"""
+
+
+def take_characters(out, newline):
+    """The `characters` folder of a release: the note, the guide and the importer. Nothing of a disc."""
+    d = out / "characters"
+    d.mkdir()
+    (d / "README.txt").write_text(CHARACTERS_NOTE.replace("\n", newline))
+    shutil.copy2(ROOT / "docs/port/character_packages.md", d / "character_packages.md")
+    shutil.copy2(ROOT / "port/tools/import_chara.py", d / "import_chara.py")
 
 def take_program(exe, out):
     """The program without the game's data, and its list, into the release folder. A program built from the blank
@@ -193,6 +225,7 @@ def main_win():
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
         (out / kind).mkdir()
         (out / kind / "README.txt").write_text(note.replace("\n", "\r\n"))
+    take_characters(out, "\r\n")
     (lic / "sdl3.txt").write_text("SDL3 (SDL3.dll) is distributed under the zlib license: https://www.libsdl.org/license.php\n")
     for f in (out / "Tenkaichi3Decomp.exe", out / "Tenkaichi3Decomp-setup.exe"):
         subprocess.run([toolchain.PREFIX + "strip", "--strip-debug", str(f)], check=False)
@@ -237,6 +270,7 @@ def main():
     for kind, note in (("stages", STAGES_NOTE), ("songs", SONGS_NOTE)):
         (OUT / kind).mkdir()
         (OUT / kind / "README.txt").write_text(note)
+    take_characters(OUT, "\n")
     (lic / "sdl3.txt").write_text("SDL3 (lib/libSDL3.so.0) is distributed under the zlib license: https://www.libsdl.org/license.php\n")
     for f in (OUT / "Tenkaichi3Decomp", OUT / "Tenkaichi3Decomp-setup"):
         subprocess.run(["strip", "--strip-debug", str(f)], check=False)  # the symbol names stay (crash reports use them)
