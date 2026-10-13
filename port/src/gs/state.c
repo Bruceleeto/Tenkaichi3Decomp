@@ -900,6 +900,7 @@ volatile int gPortNetWindowClose; /* for the overlay (ui.cpp): back from a sessi
 
 static Snapshot sBoot, sOwn;
 static int sBootTaken, sReqRole, sReqPort;
+static int sOwnKept; /* sOwn holds the player's own game: a session began in this run of the program */
 static volatile int sReq;
 static char sReqAddr[128];
 
@@ -907,6 +908,12 @@ void Port_SessionReturn(void);
 
 int Port_SessionCan(void) {
     return sBootTaken > 0;
+}
+
+/* Whether there is a game of the player's own to go back to: not in a program that was started for its session
+   (BT3_NET_HOST / BT3_NET_JOIN with BT3_NET_SESSION), which has kept none. */
+int Port_SessionOwn(void) {
+    return sOwnKept;
 }
 
 void Port_SessionRequest(int role, const char *address, int port) {
@@ -968,10 +975,12 @@ void Port_SessionPoll(void) {
         sReq = 0;
         Gs_StateKeep();
         if (state_save(&sOwn) == 0) {
+            sOwnKept = 1;
             Port_NetSessionBegin(sReqRole, sReqAddr, sReqPort); /* connects (waits for the other side) */
             state_load(&sBoot);
         } else {
             /* back from the session, at the blank it was asked for */
+            sOwnKept = 0;
             gPortResim = 0; /* (a session left before its start-up was over was still running without picture) */
             Gs_StateBack();
             Port_AdxResync();
@@ -993,6 +1002,7 @@ void Port_StateTouch(void *p, unsigned long n) { (void)p; (void)n; }
 volatile int gPortNetWindowClose;
 void Port_SyncTest(unsigned vblank) { (void)vblank; }
 int Port_SessionCan(void) { return 0; }
+int Port_SessionOwn(void) { return 0; }
 void Port_SessionRequest(int role, const char *address, int port) { (void)role; (void)address; (void)port; }
 void Port_SessionPoll(void) {}
 void Port_SessionReturn(void) {}

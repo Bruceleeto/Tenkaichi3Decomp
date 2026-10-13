@@ -1340,6 +1340,7 @@ int Port_NetFixedStart(void) {
 extern int Port_SessionCan(void);                                    /* gs/state.c */
 extern void Port_SessionRequest(int role, const char *address, int port);
 extern void Port_SessionReturn(void);
+extern int Port_SessionOwn(void);
 static char sSavesBefore[512];
 static int sSavesWasSet;
 
@@ -1411,9 +1412,11 @@ void Port_NetLeave(void) {
             net_send(bye, sizeof(bye), &sPeer);
         }
     }
-    if (Port_SessionCan()) {
+    if (Port_SessionCan() && Port_SessionOwn()) {
         Port_SessionReturn(); /* the game as it was when the session was asked for (does not return) */
     }
+    /* (also for a program that was started for its session, from the environment: it has no game of the player's
+       own kept, and going "back" to one put a state that was never saved in place: a crash at the session's end) */
     relaunch(0, NULL, 0);
 }
 
