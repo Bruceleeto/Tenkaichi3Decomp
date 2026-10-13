@@ -54,17 +54,25 @@ extern int Port_CharaBase(int chara); /* an added character's base character; an
 #define CHARA_LINE_FILE(c, base, alt, line) \
     (PORT_CHARA_ADDED(c) ? PORT_CHARA_LINE0 + ((s32)(c) - PORT_CHARA_FIRST) * 200 + ((alt) ? 100 : 0) + (line) : (base) + ((s32)(c) * 100 + (line)))
 /* For the screens with a roster (the same in each): an added character's own chip, name and number of item sets.
-   PORT_CHIP: the texture list of a chip (`pack` = the screen's chip pack); the screen calls PortChips_Load() after
+   PORT_CHIP: the texture list of a chip (`pack` = the screen's chip pack); the screen calls PortChips_Load(pack) after
    it has made the disc's chips ready and PortChips_Free() when it ends. PORT_NAME_LINE: the line of a name in the
    pack Port_CharaNamePack() made of the screen's. PORT_IS_CHARA: a cell id that is a character (the disc's tests
    are `id < 0xA1`, which would take an added character for a marker). */
-extern void PortChips_Load(void), PortChips_Free(void);
+extern void PortChips_Load(void *pack), PortChips_Free(void);
 extern void *PortChips_Get(int chara), *Port_CharaNamePack(void *pack);
 extern int Port_CharaNameLine(int chara), Port_CharaCount(void), Port_NetSession(void);
 extern int Port_CharaForms(int chara, int *out, int max);
 extern void Port_CharaCellLog(int cell, int chara, int forms); /* BT3_CHARA_LOG: the cells made for added characters */
 #define PORT_CHIP(pack, id) \
     (PORT_CHARA_ADDED(id) && PortChips_Get(id) != NULL ? PortChips_Get(id) : (void *)MPACK_AT(pack, CHARA_T(id) + 1))
+/* A disc character that a folder REPLACES (`replaces=` in its character.txt) keeps its id, and needs nothing of
+   the above: its files are answered for the disc's own file numbers (PortCharas_Alias), PortChips_Load(pack) puts
+   its chip over the disc's entry of the screen's pack, and Port_CharaNamePack / Port_CharaFormPack change its own
+   line. */
+/* A number of a character's package (`health=`, `ki=`, `blast=` in character.txt: which 0, 1, 2) in place of the
+   value `v` of the game's table; `v` where no package says one, and always in an online session. */
+extern int Port_CharaStat(int chara, int which, int value);
+#define PORT_STAT(c, which, v) Port_CharaStat((s32)(c), which, v)
 #define PORT_NAME_LINE(c) (PORT_CHARA_ADDED(c) ? Port_CharaNameLine(c) : (s32)(c))
 /* The label under the name ("Super Saiyan"): the pack Port_CharaFormPack() made of the screen's, its line. */
 extern void *Port_CharaFormPack(void *pack);
@@ -87,6 +95,7 @@ extern int Port_CharaPool(void);
 #define PORT_SAVE_CHARA(c) (PORT_CHARA_ADDED(c) ? CHARA_T(c) : (s32)(c))
 #else
 #define PORT_CHARA_ADDED(c) (0)
+#define PORT_STAT(c, which, v) (v)
 #define PORT_CHIP(pack, id) ((void *)MPACK_AT(pack, (id) + 1))
 #define PORT_NAME_LINE(c) (c)
 #define PORT_FORM_LINE(c) (c)

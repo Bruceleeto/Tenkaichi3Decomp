@@ -1351,16 +1351,17 @@ s32 BtlParam_GetUnkAC(BtlTechChr *chr) {
 }
 
 #ifdef PORT
-/* PC build: the forms of a character from outside the disc. Its parameter table names them by the numbers of
-   whoever made the pack; forms.txt in its folder says which installed folder each is (port/src/plat_charas.c).
-   The fighter's character is the object's (+0xC), taken from its model file. `slot`: 0..3 the transformations,
-   4..6 the fusion results. */
+/* PC build: the forms of a character of a package (an added character, or a disc character a folder replaces).
+   Its parameter table names them by the numbers of whoever made the pack; the links of its manifest say which
+   installed folder each is (port/src/plat_charas.c; -1 where the manifest says nothing, and for every other
+   character). The fighter's character is the object's (+0xC), taken from its model file. `slot`: 0..3 the
+   transformations, 4..6 the fusion results. */
 extern int Port_CharaFormTarget(int chara, int slot);
 static s32 BtlParam_PortTarget(BtlTechChr *chr, s32 slot, s32 own) {
     s32 chara = *(s32 *)((u8 *)BtlChar_GetObj(chr) + 0xC);
     s32 t;
 
-    if (PORT_CHARA_ADDED(chara) && (t = Port_CharaFormTarget(chara, slot)) >= 0) {
+    if ((t = Port_CharaFormTarget(chara, slot)) >= 0) {
         return t;
     }
     return own;

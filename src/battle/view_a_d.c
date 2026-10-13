@@ -342,6 +342,17 @@ s32 ChrView_IsVisible(void) {
     return gChrView->visible;
 }
 
+#ifdef PORT
+/* PC build: the viewer's model buffers are as large as the fight's (BtlRes_ModelSize, btl_obj.c): the original's
+   0xCE000, or the largest model there is to load where a package or the data folder has a larger one; a file is
+   read whole whatever the buffer's size. In an online session the original's. */
+extern int Port_ModelSize(void);
+extern int Port_NetSession(void);
+#define ChrView_ModelSize() (Port_NetSession() ? CHRVIEW_MODEL_SIZE : Port_ModelSize())
+#else
+#define ChrView_ModelSize() CHRVIEW_MODEL_SIZE
+#endif
+
 /* Starts the viewer: two model buffers, the battle object, stage and scene modules, the backdrop, a fade in. */
 void ChrView_Init(void) {
     s32 i;
@@ -352,7 +363,7 @@ void ChrView_Init(void) {
     memset(gChrView, 0, sizeof(ChrView));
     gChrView->anim = 7;
     for (i = 0; i < CHRVIEW_SLOT_COUNT; i++) {
-        gChrView->slot[i].file[0].buf = Heap_Alloc(CHRVIEW_MODEL_SIZE, 0x40, 0, HEAP_ANY);
+        gChrView->slot[i].file[0].buf = Heap_Alloc(ChrView_ModelSize(), 0x40, 0, HEAP_ANY);
         gChrView->slot[i].file[0].size = 0;
         gChrView->slot[i].file[0].id = -1;
         *(s32 *)gChrView->slot[i].file[0].buf = 0;

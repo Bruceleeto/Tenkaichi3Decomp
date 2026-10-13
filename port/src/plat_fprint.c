@@ -15,7 +15,8 @@
  *     characters, animations, stages, effects, scripts, menus) is the hash of its files' lists; the fingerprint
  *     is the hash of the seven components;
  *   - what is hashed is what the game would LOAD: a file in <root>/mods/ in place of the one it replaces
- *     (Port_FileOpenHost, plat_fcache.c: the loader's own function).
+ *     (Port_FileOpenData, plat_fcache.c: the loader's own function). A character package (the `characters`
+ *     folder, which can replace a disc character's files) is NOT looked at: an online session loads none.
  *
  * It runs on the data check's thread (plat_verify.c), is printed in the log, and is kept per file in
  * <root>/.fingerprint with the file's size and time, so a later start only looks at those. Nothing is enforced
@@ -31,7 +32,7 @@
 #include "plat_fprint_tab.h"
 
 extern const char *Port_FileRoot(void);                              /* plat_file.c */
-extern FILE *Port_FileOpenHost(const char *rel, char *path, size_t n); /* plat_fcache.c */
+extern FILE *Port_FileOpenData(const char *rel, char *path, size_t n); /* plat_fcache.c: without the character packages */
 extern int PortStages_Count(void);                                   /* plat_stages.c */
 
 #define FP_VERSION 1 /* the definition's version: part of the hash, of the table and of the cache */
@@ -1273,7 +1274,7 @@ static int file_update(int n) {
     FILE *f;
 
     snprintf(rel, sizeof(rel), "pzs3us1/%05d.bin", x->fid - 1);
-    f = Port_FileOpenHost(rel, path, sizeof(path));
+    f = Port_FileOpenData(rel, path, sizeof(path));
     if (f == NULL || stat(path, &st) != 0) {
         if (f != NULL) {
             fclose(f);
@@ -1409,7 +1410,7 @@ static void added_stages(void) {
         FILE *f;
 
         snprintf(rel, sizeof(rel), "pzs3us2/%05d.bin", 70000 + i);
-        f = Port_FileOpenHost(rel, path, sizeof(path));
+        f = Port_FileOpenData(rel, path, sizeof(path));
         if (f != NULL && stat(path, &st) == 0) {
             d = read_all(f, (size_t)st.st_size);
         }

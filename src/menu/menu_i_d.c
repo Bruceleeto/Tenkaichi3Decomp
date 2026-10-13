@@ -279,7 +279,7 @@ void EntrySel_Init(s32 section) {
         Res_RelocateOffsets(&res, res, res);
     }
 #ifdef PORT /* (the folders' chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(gEntrySel->chips);
 #endif
     gEntrySel->grid = ((ESelGridList *)MPACK_AT(gEntrySel->res, 29))->cell;
     gEntrySel->gridCount = gEntrySel->res[gEntrySel->res[29] >> 2];

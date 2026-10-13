@@ -227,7 +227,7 @@ void SoloSel_Init(s32 section) {
         Res_RelocateOffsets(&res, res, res);
     }
 #ifdef PORT /* (the folders' chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(gSoloSel->chips);
 #endif
     gSoloSel->grid = ((LChrGridList *)MPACK_AT(gSoloSel->res, 30))->cell;
     gSoloSel->gridCount = gSoloSel->res[gSoloSel->res[30] >> 2];

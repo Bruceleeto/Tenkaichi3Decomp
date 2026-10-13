@@ -387,7 +387,7 @@ void UbTeamSel_Init(s32 section) {
         Res_RelocateOffsets(&res, res, res);
     }
 #ifdef PORT /* (the folders' chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(gUbTeamSel->chips);
 #endif
     gUbTeamSel->grid = (UbCell *)(MPACK_AT(gUbTeamSel->res, 30) + 0x10);
     gUbTeamSel->gridCount = gUbTeamSel->res[gUbTeamSel->res[30] >> 2];

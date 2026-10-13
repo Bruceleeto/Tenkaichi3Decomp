@@ -132,7 +132,7 @@ void BtlMember_LoadParams(BtlMemberChr *chr, s32 member, s32 init, f32 healthPct
         g->fused = 0;
     }
     if (g->fused == 0) {
-        g->healthMax = gBtlChars->paramTbl[CHARA_T(m->chara)].healthMax;
+        g->healthMax = PORT_STAT(m->chara, 0, gBtlChars->paramTbl[CHARA_T(m->chara)].healthMax);
         if (BtlMember_HasAbilityOf(chr, member, 100)) {
             g->healthMax += 30000;
         } else if (BtlMember_HasAbilityOf(chr, member, 99)) {
@@ -150,12 +150,12 @@ void BtlMember_LoadParams(BtlMemberChr *chr, s32 member, s32 init, f32 healthPct
         g->healthMax = BtlUtil_Max(g->healthMax, 10000);
     }
     g->kiMax = 100000;
-    g->blastMax = gBtlChars->paramTbl[CHARA_T(m->chara)].blastStocks * 100000;
+    g->blastMax = PORT_STAT(m->chara, 2, gBtlChars->paramTbl[CHARA_T(m->chara)].blastStocks) * 100000;
     if (init) {
         g->health = g->healthMax * healthPct / 100.0f;
         g->health = BtlUtil_Max(g->health, 1);
         g->healthMax = BtlUtil_Max(g->healthMax, g->health);
-        g->ki = gBtlChars->paramTbl[CHARA_T(m->chara)].kiStart;
+        g->ki = PORT_STAT(m->chara, 1, gBtlChars->paramTbl[CHARA_T(m->chara)].kiStart);
         if (BtlMember_HasAbilityOf(chr, member, 0x18)) {
             g->ki = 0;
         } else if (BtlMember_HasAbilityOf(chr, member, 0x19)) {

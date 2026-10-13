@@ -547,7 +547,7 @@ void CharSel_Init(s32 section) {
         CS_RES(gCharSel->chipPack, i + 1);
     }
 #ifdef PORT /* (the added characters' own chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(gCharSel->chipPack);
 #endif
     gCharSel->stagePack = (u32 *)MPACK_AT(gCharSel->res, 46);
     for (i = 0; i < 38; i++) {
@@ -719,12 +719,14 @@ void CharSel_Init(s32 section) {
     *(CharSelPick *)gCharSel->side[1] = CSPROG->side[1].pick;
 #ifdef PORT
     {
-        /* PC build, testing (BT3_TEST_CELL): side 0's cursor starts on the first added character's cell, so that a
-           recorded session that only confirms chooses it. */
+        /* PC build, testing (BT3_TEST_CELL): side 0's cursor starts on the first added character's cell (with
+           BT3_TEST_CELL=disc:<id>, on that character of the disc), so that a recorded session that only confirms
+           chooses it. */
         extern int Port_TestCell(void);
+        extern int Port_TestCellIs(int id);
         s32 k;
         for (k = 0; Port_TestCell() && k < gCharSel->cellCount[0]; k++) {
-            if (PORT_CHARA_ADDED(gCharSel->cells[0][k].id)) {
+            if (Port_TestCellIs(gCharSel->cells[0][k].id)) {
                 memset(gCharSel->side[0], 0, 0x30);
                 gCharSel->side[0]->col = k % MCHR_COLS;
                 gCharSel->side[0]->row = k / MCHR_COLS;

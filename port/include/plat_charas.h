@@ -13,6 +13,24 @@
 #define PORT_CHARA_LINE_INDEX 74000  /* two hundred per added character: its spoken lines, a hundred in each language */
 
 void PortCharas_Init(void); /* reads the folder; once */
+#define PORT_CHARA_FORMAT 1 /* the package format this game knows (`format=` of character.txt) */
+enum { PORT_STAT_HEALTH, PORT_STAT_KI, PORT_STAT_BLAST, PORT_STAT_COUNT };
+/* The folders looked at, for the settings window: every folder that is a package or was meant as one, in the
+   order they were read (a character's inner folders after it). Also in a session, where none of them is used. */
+enum { PORT_PKG_ADDS, PORT_PKG_REPLACES, PORT_PKG_OFF };
+typedef struct PortCharaPkg {
+    char folder[132];  /* "Name" or "Character/Form" */
+    char name[64];     /* the name for the menus */
+    char author[64], version[32], about[200]; /* the manifest's; "" where it says nothing */
+    char problem[400]; /* what was found wrong with it, "" if nothing */
+    int kind;          /* PORT_PKG_ADDS, PORT_PKG_REPLACES, or PORT_PKG_OFF: not used (the problem says why) */
+    int id;            /* the id it got (an added character), the disc character it replaces; -1 */
+} PortCharaPkg;
+int Port_CharaPkgCount(void);
+const PortCharaPkg *Port_CharaPkg(int index);
+/* A number of a package (`health=`, `ki=`, `blast=`) for a character, or `value` where none is said. */
+int Port_CharaStat(int chara, int which, int value);
+int PortCharas_Epoch(void); /* changes when a session begins or ends: what a file number answers may change with it */
 int Port_CharaCount(void);     /* the added characters; 0 in an online session, as everything here then answers */
 int Port_CharaInstalled(void); /* how many the folder holds, in a session too */
 int Port_CharaBase(int chara);           /* an added character's base character; any other id as it is */
@@ -34,7 +52,7 @@ void *Port_CharaChip(int chara);
    the select screens and the tournament's computer entrants may be added characters. */
 int Port_CharaPool(void);
 void Port_CharaPoolSet(int on);
-void PortChips_Load(void);
+void PortChips_Load(void *pack);
 void *PortChips_Get(int chara);
 void PortChips_Free(void);
 /* The names of a screen with the added characters' after them: a copy of the screen's names pack (`pack`, the

@@ -22,10 +22,11 @@ static unsigned long sClock;
 static volatile int sLock;
 
 /* Opens the host file the game gets for `rel` (its path under the data root) and says which it is: a stage or a
-   song added from outside the disc (the stage / song list names the file), else the file under mods/, else the
-   original. NULL if there is none; `path` then holds the last place looked at. This is the ONE place that
-   decides which file is loaded: the gameplay fingerprint (plat_fprint.c) hashes what this opens. */
-FILE *Port_FileOpenHost(const char *rel, char *path, size_t n) {
+   song added from outside the disc (the stage / song list names the file), a file of a character package (an
+   added character's, or one that replaces a disc character's own: plat_charas.c), else the file under mods/, else
+   the original. NULL if there is none; `path` then holds the last place looked at. This is the ONE place that
+   decides which file is loaded: the gameplay fingerprint (plat_fprint.c) hashes what this opens with `charas` 0. */
+static FILE *open_host(const char *rel, char *path, size_t n, int charas) {
     extern int PortStages_Alias(const char *rel, char *out, unsigned n); /* plat_stages.c */
     extern int PortSongs_Alias(const char *rel, char *out, unsigned n);  /* plat_songs.c: the same for a song */
     extern int PortCharas_Alias(const char *rel, char *out, unsigned n); /* plat_charas.c: an added character's files */
@@ -35,7 +36,7 @@ FILE *Port_FileOpenHost(const char *rel, char *path, size_t n) {
     /* a stage added from outside the disc: the game asks for a file id past the disc's own, and the file is
        the one the stage list names (plat_stages.c), under the data folder */
     if (PortStages_Alias(rel, target, (unsigned)sizeof(target)) || PortSongs_Alias(rel, target, (unsigned)sizeof(target)) ||
-        PortCharas_Alias(rel, target, (unsigned)sizeof(target))) {
+        (charas && PortCharas_Alias(rel, target, (unsigned)sizeof(target)))) {
         snprintf(path, n, "%s", target); /* as it is (the stages / songs folder), or in the data */
         fp = fopen(path, "rb");
         if (fp == NULL) {
@@ -54,10 +55,34 @@ FILE *Port_FileOpenHost(const char *rel, char *path, size_t n) {
     return fp;
 }
 
+FILE *Port_FileOpenHost(const char *rel, char *path, size_t n) {
+    return open_host(rel, path, n, 1);
+}
+
+/* The same without the character packages (the `characters` folder): the file of the data folder, or of mods/. For
+   the gameplay fingerprint, which says what an online match is computed from: a session knows no package. */
+FILE *Port_FileOpenData(const char *rel, char *path, size_t n) {
+    return open_host(rel, path, n, 0);
+}
+
 static int slot_of(const char *rel) {
+    extern int PortCharas_Epoch(void); /* plat_charas.c */
+    static int epoch = -1;
     char path[512];
     int i, old = 0;
     FILE *fp;
+
+    /* A file number of a disc character is answered from a package's folder in the player's own game and from the
+       data in an online session: when a session begins or ends, every file is looked up again. */
+    if (epoch != PortCharas_Epoch()) {
+        epoch = PortCharas_Epoch();
+        for (i = 0; i < SLOTS; i++) {
+            if (sSlot[i].fp != NULL) {
+                fclose(sSlot[i].fp);
+                sSlot[i].fp = NULL;
+            }
+        }
+    }
 
     for (i = 0; i < SLOTS; i++) {
         if (sSlot[i].fp != NULL && strcmp(sSlot[i].rel, rel) == 0) {

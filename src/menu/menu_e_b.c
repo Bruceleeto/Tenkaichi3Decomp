@@ -644,7 +644,7 @@ void TeamSel_Init(s32 section) {
         Res_RelocateOffsets(&res, res, res);
     }
 #ifdef PORT /* (the folders' chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(gTeamSel->chipPack);
 #endif
     gTeamSel->stagePack = (u32 *)MPACK_AT(gTeamSel->res, 46);
     for (i = 0; i < 38; i++) {

@@ -201,7 +201,7 @@ void Bracket_Load(LBracket *b) {
         Res_RelocateOffsets(&res, res, res);
     }
 #ifdef PORT /* (the folders' chips, made ready like the disc's) */
-    PortChips_Load();
+    PortChips_Load(b->chips);
 #endif
     b->grid = (LChrCell *)(MPACK_AT(b->res, 24) + 0x10);
     b->gridCount = b->res[b->res[24] >> 2];
