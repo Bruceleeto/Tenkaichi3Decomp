@@ -310,3 +310,37 @@ more cells fit (forms share a cell).
 The character reference; fusion between added characters (wired, never tried); a form added to a character of the
 disc; the save audit (what a play with added characters leaves in the save and in replays); zip files; a guide
 to the pack format for people who make packs.
+
+## Brought up to release 0.1.34 (2026-10-13, branch `charslots-next`)
+
+`port` merged in (netcode version 4 with the desync check, the pause menu, MP3 songs, menu fonts, the screen
+reader, macOS). Two conflicts: the settings window (the Mods tab is now the eighth, after Misc; the shoulder
+buttons go round eight) and the file cache (an added character is answered in `Port_FileOpenHost`, the one place
+that now decides which file is loaded).
+
+Changed with it:
+
+- **Online play does not know the added characters.** Before, a session only left their cells out of the grid; the
+  folder was still read, and a select screen took memory of the game for the chips, so two copies of a match had
+  different states as soon as one of them had a folder (measured: the whole-state checksum differs from the
+  character select on; the fight values agreed). Now everything `plat_charas.c` answers in a session is what it
+  answers without a folder (`live()`): no character, no cell, no name or label line, no chip, no memory taken,
+  `BT3_TEST_CHARA` / `BT3_TEST_CELL` / the random-picks setting ignored. A session that starts the program again
+  does not read the folder. The added stages' own icons (`PortStageIcons_*`) take no memory in a session either.
+  The Mods tab says so. Measured with two copies over loopback, a folder on one side only (host, then joiner; a
+  session begun in the running program, and one started with the program): whole state the same on every blank.
+- **The PS2 build is what it was.** Four menu files used `PORT_CHARA_ADDED` outside `#ifdef PORT` (the PS2 build
+  would not have linked) and `ChrTbl_IsRelated` had three statements more. Checked: every file under `src/` that
+  differs from `port` gives the same assembly from the PS2 compiler as `port`'s.
+- **The screen reader** reads an added character's name and label from the lines the port puts after the disc's
+  (it read line `id`, which is another character's or nothing), and keeps it for the screens that show pictures only.
+- `BT3_CHARA_LOG` also says, once for each, which file was served for an added character (the folder's own or the
+  disc's it falls back on).
+
+Checked: Linux and Windows builds, the replay check, a recorded session through a character select with the
+cursor on the added cell (its name, portrait and chip on an offscreen picture; its model, effects, voice bank,
+member block and spoken lines served from the folder), the title's demonstration fights with `BT3_TEST_CHARA`
+twice with the same state on every blank.
+
+Known: the direct battle of `BT3_DEMO` / `BT3_REPLAY` (no menus) never mounts the second archive, where every
+file number of an added character lies: `BT3_CHARA=198` there waits for ever. Use `BT3_TEST_CHARA` with the menus.
