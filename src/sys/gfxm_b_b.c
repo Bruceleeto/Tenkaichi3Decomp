@@ -260,7 +260,7 @@ void Res_RelocateOffsets(TexFile **out, u8 *base, TexFile *hdr) {
 
 /* Queues the upload of a texture's pixels to GS block `tbp`. */
 void Tex_UploadPixels(TexEntry *e, s32 tbp) {
-    if (e->pixOfs != 0) {
+    if (e->pixOfs != 0 && !Port_TexNative(e, tbp)) {
         gTexBltPacket.bitbltbuf = ((s64)tbp << 32) | ((u64)e->pixBlt << 48);
         Dma_AddData(&gTexBltPacket, sizeof(TexBltPacket));
         Dma_AddRef(e->pix, e->pixSize);

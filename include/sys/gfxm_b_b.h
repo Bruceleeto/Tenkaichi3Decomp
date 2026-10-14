@@ -64,6 +64,11 @@ extern TexBltPacket gTexBltPacket;
 s32 Tex_Log2Size(s32 size);
 void Res_RelocateOffsets(TexFile **out, u8 *base, TexFile *hdr);
 void Tex_UploadPixels(TexEntry *e, s32 tbp);
+#ifdef PORT
+int Port_TexNative(void *e, s32 tbp); /* port/src/gs/gs_pvr.c: 1 = the entry is a PVR texture of its own, not uploaded */
+#else
+#define Port_TexNative(e, tbp) 0
+#endif
 void Tex_UploadClut(TexEntry *e, s32 cbp);
 void TexFile_UploadPacked(TexFile *file, s32 tbp, s32 cbp);
 void TexFile_UploadOne(TexFile *file, s32 index, s32 tbp, s32 cbp);

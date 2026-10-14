@@ -285,10 +285,12 @@ void ObjDraw_UploadTextures(ObjDrawObj *obj) {
         if (i >= first && i < first + count && i != obj->mdl.model->faceTex) {
             tbp = e->tbpOfs + mdl->model->tbp;
             cbp = e->cbpOfs + mdl->model->cbp;
-            pkt[8] = 0;
-            pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
-            Dma_AddData(pkt, 0x30);
-            Dma_AddRef(e->pix, e->pixSize);
+            if (!Port_TexNative(e, tbp)) {
+                pkt[8] = 0;
+                pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
+                Dma_AddData(pkt, 0x30);
+                Dma_AddRef(e->pix, e->pixSize);
+            }
             pkt[8] = 0;
             pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
             Dma_AddData(pkt, 0x30);
@@ -299,19 +301,23 @@ void ObjDraw_UploadTextures(ObjDrawObj *obj) {
             cbp = e->cbpOfs + mdl->model->cbp;
             if (face != NULL) {
                 e = face;
-                pkt[8] = 0;
-                pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
-                Dma_AddData(pkt, 0x30);
-                Dma_AddRef(e->pix, e->pixSize);
+                if (!Port_TexNative(e, tbp)) {
+                    pkt[8] = 0;
+                    pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
+                    Dma_AddData(pkt, 0x30);
+                    Dma_AddRef(e->pix, e->pixSize);
+                }
                 pkt[8] = 0;
                 pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
                 Dma_AddData(pkt, 0x30);
                 Dma_AddRef(e->clut, e->clutSize);
             } else {
-                pkt[8] = 0;
-                pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
-                Dma_AddData(pkt, 0x30);
-                Dma_AddRef(e->pix, e->pixSize);
+                if (!Port_TexNative(e, tbp)) {
+                    pkt[8] = 0;
+                    pkt[9] = (((u64)tbp << 32) | ((u64)e->pixBlt << 48)) >> 32;
+                    Dma_AddData(pkt, 0x30);
+                    Dma_AddRef(e->pix, e->pixSize);
+                }
                 pkt[8] = 0;
                 pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
                 Dma_AddData(pkt, 0x30);

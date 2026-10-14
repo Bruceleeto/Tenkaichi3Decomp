@@ -57,7 +57,7 @@ CC_EE := $(PYTHON) port/tools/cc_ee.py
 
 # ------------------------------------------------------------------------------------------------------ the rules
 
-.PHONY: all clean
+.PHONY: all clean dc-assets
 .DELETE_ON_ERROR:
 
 all: $(EXE)
@@ -100,6 +100,16 @@ $(OBJ)/dc_%_null.o: port/src/null/%_null.c | $(OBJ)
 # the link, with a stub for each symbol still missing
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 	$(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
+
+# the disc's textures as the PVR takes them (port/tools/dc_tex.c), from the data `make extract` wrote; run it
+# again to convert them again
+HOSTCC ?= cc
+ASSETS := $(BUILD)/assets
+dc-assets: $(ASSETS)/tex.pak
+$(ASSETS)/tex.pak: port/tools/dc_tex.c Makefile.dc
+	mkdir -p $(ASSETS)
+	$(HOSTCC) -O2 -o $(BUILD)/dc_tex $<
+	$(BUILD)/dc_tex $@ gamedata/pzs3us0 gamedata/pzs3us1 gamedata/pzs3us2
 
 clean:
 	rm -rf $(BUILD)

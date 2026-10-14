@@ -170,6 +170,13 @@ static void tex_sweep(unsigned keep) {
 
 /* GS memory -> an RGBA texture for the current TEX0 (alpha as stored: 0x80 is opaque). The back end makes
    the texture and takes the decoded pixels (freed after it has uploaded them). */
+#ifdef BT3_PVR
+GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey); /* gs_pvr.c */
+#else
+int Port_TexNative(void *e, int tbp) { (void)e; (void)tbp; return 0; } /* (gs_pvr.c's, without it: every upload as on the PS2) */
+void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
+#endif
+
 static GsTex texture_get(int ctx) {
     uint64_t t0 = gGs.tex0[ctx] & 0x1FFFFFFFFFFFFFFFull, texa = gGs.texa;
     uint32_t tbp = t0 & 0x3FFF, tbw = (t0 >> 14) & 0x3F, psm = (t0 >> 20) & 0x3F, tw = 1u << ((t0 >> 26) & 15), th = 1u << ((t0 >> 30) & 15);
@@ -184,6 +191,12 @@ static GsTex texture_get(int ctx) {
     if (tw > 1024) { tw = 1024; }
     if (th > 1024) { th = 1024; }
     rw = tw; rh = th;
+#ifdef BT3_PVR
+    if (bits <= 8 && sBackend == &sPvrBackend) { /* the game's texture entry, a PVR texture of its own */
+        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
+        if (nat != 0) { return nat; }
+    }
+#endif
     pages = ((tbw ? tbw : 1) * 64 * th * (bits == 24 ? 32 : bits) / 8 + 8191) / 8192;
     /* `gen` identifies the CONTENT: a hash over the pages the texture and its palette occupy */
     for (i = 0; i <= pages; i++) {

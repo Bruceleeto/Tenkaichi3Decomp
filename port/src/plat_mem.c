@@ -556,7 +556,9 @@ int Port_GameBigFree(unsigned addr) {
 #if PORT_LOW_REGION
     if (sLowArena != NULL && addr >= Port_Addr(sLowArena) && addr - Port_Addr(sLowArena) < LOW_ARENA_SIZE) {
         extern void Gs_SrcFreed(uint32_t lo, uint32_t hi);
+        extern void Port_TexFreed(uint32_t lo, uint32_t hi);
         Gs_SrcFreed(addr, addr + (uint32_t)((uint64_t *)Port_Ptr(addr))[-2]); /* (the block's total size: a bound) */
+        Port_TexFreed(addr, addr + (uint32_t)((uint64_t *)Port_Ptr(addr))[-2]);
         Port_LowFree(Port_Ptr(addr));
         return 1;
     }

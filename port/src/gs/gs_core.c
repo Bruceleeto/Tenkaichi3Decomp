@@ -257,6 +257,8 @@ static uint16_t sBlockSrc[16384]; /* record + 1 per block, 0 = no source */
 static GsSrc *sSrcCur;            /* the upload under way */
 static int sSrcRef;               /* the data now going to the GS came by a DMA REF */
 static uint8_t *sOwn[16384];      /* a block drawn into after its upload: its contents, kept here (sBlockSrc = 0xFFFF) */
+uint16_t gGsNat[16384];           /* per block: the game's texture entry held there as a PVR texture of its own (gs_pvr.c's
+                                     record + 1; 0 = none), until something else is uploaded over it */
 #define SRC_OWN 0xFFFFu
 uint32_t gGsSrcMiss;              /* reads Gs_SrcRead could not answer (for the check) */
 
@@ -300,6 +302,7 @@ static void src_begin(uint32_t dbp, uint32_t bw, uint32_t psm, uint32_t tx, uint
         uint32_t first = dbp / 32 + (ty * rowbytes) / 8192, last = dbp / 32 + ((ty + th) * rowbytes + 8191) / 8192;
         for (i = first * 32; i < (last + 1) * 32; i++) {
             src_set(i & 16383, 0);
+            gGsNat[i & 16383] = 0;
         }
         return;
     }
@@ -325,6 +328,7 @@ static void src_begin(uint32_t dbp, uint32_t bw, uint32_t psm, uint32_t tx, uint
             uint32_t x = bx << 3, y = by << 3;
             uint32_t a = ((dbp + (y >> 5) * 32 * bw) << 6) + ((x >> 6) << 11) + sIn32[y & 31][x & 63];
             src_set((a >> 6) & 16383, n + 1);
+            gGsNat[(a >> 6) & 16383] = 0;
         }
     }
     s->refs--;
@@ -1100,6 +1104,8 @@ static void reg_write(uint32_t addr, uint64_t d) {
     case 0x52: gs.trxreg = d; break;
     case 0x53: gs.trxdir = d; transfer_begin(); break;
     case 0x7F: if (sGpu) { GsGpu_Native((int)d); } break; /* not a GS register: the port's marker (gs_marker.c) */
+    case 0x7E: gGsNat[d & 0x3FFF] = (uint16_t)(d >> 32); break; /* nor this: the texture entry uploaded to block
+                    d is a PVR texture of its own (gs_pvr.c's record d >> 32), sent instead of its pixels */
     default: break;
     }
 }

@@ -290,9 +290,11 @@ void Heap_Free(void *ptr) {
     {
         extern void Port_HeapNoteFree(u32 data);
         extern void Gs_SrcFreed(u32 lo, u32 hi); /* port/src/gs/gs_core.c: textures GS memory still holds from it */
+        extern void Port_TexFreed(u32 lo, u32 hi); /* port/src/gs/gs_pvr.c: texture entries that are PVR textures */
         Port_HeapNoteFree((u32)ptr);
         if (block != NULL) {
             Gs_SrcFreed((u32)ptr, (u32)ptr + block->dataSize);
+            Port_TexFreed((u32)ptr, (u32)ptr + block->dataSize);
         }
     }
 #endif
