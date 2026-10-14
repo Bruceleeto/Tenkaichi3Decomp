@@ -139,6 +139,10 @@ float CORE::edge_function(float ax, float ay, float bx, float by, float cx, floa
 }
 
 float CORE::interpolate_bary(float v0, float v1, float v2, float w0, float w1, float w2) {
+    // Keep a constant depth exact. Independently computed barycentric weights
+    // can sum to slightly more or less than one; multiplying a flat Z by that
+    // sum makes coplanar layers intermittently fail GEQUAL (or pass GREATER).
+    if (v0 == v1 && v1 == v2) return v0;
     return v0 * w0 + v1 * w1 + v2 * w2;
 }
 
