@@ -54,6 +54,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "audio_out.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -764,9 +765,9 @@ int PortA11y_GaugesAsked(int fight) {
 #define CUE_EDGE (CUE_RATE * 5 / 1000)  /* (no cue starts at full strength: no click) */
 #define CUE_TAU 6.2831853f
 
-extern SDL_AudioDeviceID Port_AudioDevice(void); /* snd_adx.c */
+extern int Port_AudioDevice(void); /* snd_adx.c */
 
-static SDL_AudioStream *sCue;
+static AudioStream *sCue;
 static int sCueTried;
 
 /* The sound of a cue, -1..1, into out (CUE_MAX samples); returns how many. Two that cannot be taken for each other:
@@ -822,27 +823,19 @@ static int cue_pcm(int side, int kind, int16_t *out) {
    more can be taken; kind 1, the Ultimate Blast can be fired. Two at the same time sound one after the other. */
 void PortA11y_Cue(int side, int kind) {
     static int16_t buf[CUE_MAX * 2];
-    SDL_AudioDeviceID dev;
-    SDL_AudioSpec spec;
 
     if (!sOn || sCueVolume <= 0 || (unsigned)kind > 1) {
         return;
     }
     if (sCue == NULL && !sCueTried) {
-        if ((dev = Port_AudioDevice()) == 0) {
+        if (!Port_AudioDevice()) {
             return; /* (no sound device, or none yet) */
         }
         sCueTried = 1;
-        spec.format = SDL_AUDIO_S16;
-        spec.channels = 2;
-        spec.freq = CUE_RATE;
-        if ((sCue = SDL_CreateAudioStream(&spec, NULL)) != NULL && !SDL_BindAudioStream(dev, sCue)) {
-            SDL_DestroyAudioStream(sCue);
-            sCue = NULL;
-        }
+        sCue = AudioOut_StreamCreate(CUE_RATE);
     }
     if (sCue != NULL) {
-        SDL_PutAudioStreamData(sCue, buf, cue_pcm(side, kind, buf) * 4);
+        AudioOut_StreamPut(sCue, buf, cue_pcm(side, kind, buf) * 4);
     }
 }
 

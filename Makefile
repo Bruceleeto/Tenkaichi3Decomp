@@ -8,6 +8,8 @@
 #   make test       the attract fight without a window (what install.py's self-test does)
 #   make clean      the build's output               make distclean   also asm/, disc/ and .venv (not gamedata/)
 #
+#   AUDIO=sdl (default) plays through SDL (port/src/gs/audio_sdl.c); AUDIO=none builds without sound
+#   (port/src/null/audio_null.c, as iortcw's code/null: no device, the players stay silent).
 #   PVR=1 (default) builds in the PowerVR renderer (BT3_GPU_API=pvr; port/src/gs/gs_pvr.c on gpu_pvr, a software
 #   PowerVR). gpu_pvr's kos_pvr.cpp is GPL-2.0-only: a program built with it is not for release. PVR=0 leaves it out.
 #
@@ -15,6 +17,7 @@
 
 ISO ?=
 PVR ?= 1
+AUDIO ?= sdl
 BUILD  := port/build
 OBJ    := $(BUILD)/obj
 DATA   := $(BUILD)/obj_data
@@ -33,7 +36,7 @@ CXX := g++
 REPLACED  := src/sys/vu0_a_c.c src/sys/vu0_a_c_b.c src/sys/vu0_a_c_c.c src/sys/vu0_b_c.c
 GAME_SRC  := src/main.c $(filter-out $(REPLACED),$(sort $(wildcard src/sys/*.c src/battle/*.c src/menu/*.c)))
 NL_SRC    := $(sort $(wildcard port/third_party/newlib_libm/*.c))
-GS_SRC    := $(sort $(wildcard port/src/gs/*.c))
+GS_SRC    := $(filter-out $(if $(filter none,$(AUDIO)),port/src/gs/audio_sdl.c),$(sort $(wildcard port/src/gs/*.c)))
 CXX_SRC   := $(sort $(wildcard port/third_party/imgui/*.cpp port/src/gs/*.cpp))
 VU0_SRC   := src/port/vu0_a.c src/port/vu0_b.c
 PC_SRC    := $(sort $(wildcard port/src/*.c))
@@ -54,7 +57,10 @@ PVR_CXX_OBJ := $(foreach f,$(PVR_CXX_SRC),$(OBJ)/cxx_pvrlib_$(basename $(notdir 
 PVR_C_OBJ   := $(foreach f,$(PVR_C_SRC),$(OBJ)/gs_pvrlib_$(basename $(notdir $(f))).o)
 PVR_OBJ     := $(if $(filter 1,$(PVR)),$(PVR_CXX_OBJ) $(PVR_C_OBJ))
 
-OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ)
+# AUDIO=none: the sound output that has none (port/src/null)
+NULL_OBJ  := $(if $(filter none,$(AUDIO)),$(OBJ)/pc_audio_null.o)
+
+OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ) $(NULL_OBJ)
 
 # ------------------------------------------------------------------------------------------------------ the flags
 
@@ -88,6 +94,10 @@ endif
 PVR_FLAG := $(OBJ)/pvr.flag
 $(shell mkdir -p $(OBJ); if [ "$$(cat $(PVR_FLAG) 2>/dev/null)" != "$(PVR)" ]; then echo $(PVR) > $(PVR_FLAG); \
         [ "$(PVR)" = 1 ] || rm -f $(OBJ)/cxx_pvrlib_* $(OBJ)/gs_pvrlib_*; fi)
+# which sound output the objects were built with: link.py links every object there, so the other one's goes
+AUDIO_FLAG := $(OBJ)/audio.flag
+$(shell mkdir -p $(OBJ); if [ "$$(cat $(AUDIO_FLAG) 2>/dev/null)" != "$(AUDIO)" ]; then echo $(AUDIO) > $(AUDIO_FLAG); \
+        rm -f $(OBJ)/gs_audio_sdl.o $(OBJ)/pc_audio_null.o; fi)
 
 # ------------------------------------------------------------------------------------------------------ the rules
 
@@ -157,6 +167,8 @@ $(OBJ)/cxx_%.o: port/src/gs/%.cpp | $(OBJ) $(GEN_GS)/.stamp
 # the vector-library references under the game's names: host-written, compiled as they are
 $(OBJ)/pc_vu0_%.o: src/port/vu0_%.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
+$(OBJ)/pc_audio_null.o: port/src/null/audio_null.c | $(OBJ)
+	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
 $(OBJ)/pc_%.o: port/src/%.c | $(OBJ) $(PYTHON)
 	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))
 

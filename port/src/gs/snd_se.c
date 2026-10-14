@@ -12,7 +12,7 @@
  * again after two seconds), every note uses the timbre with its own number, every timbre uses the sample with
  * its own number, and all timbres have the same settings (volume 100, pan centre, base note 60, envelope
  * 0x80FF / 0x5FC0: full level at once, held). So an effect is "play sample N of the bank", and this file is a
- * sampler: it decodes the PS2 sound chip's ADPCM, changes the pitch, and mixes the voices into one SDL stream.
+ * sampler: it decodes the PS2 sound chip's ADPCM, changes the pitch, and mixes the voices into one stream of the sound output.
  * The tables are still read (sequence -> timbre -> sample), so a bank that breaks the pattern is honoured.
  *
  * Bank tables (Sony's formats, little-endian, chunk names stored reversed, e.g. "IECSigaV" = SCEI Vagi):
@@ -28,7 +28,7 @@
  * interpolation and its reverb (none is set up by these banks). The overall loudness against the music is by
  * ear (SE_GAIN) until it is compared with the console.
  */
-#include <SDL3/SDL.h>
+#include "audio_out.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -84,10 +84,10 @@ static uint8_t sSpu[SPU_TOTAL];
 static uint8_t *sOwnTables[8]; /* the two tables of such a bank (one allocation) */
 static Bank sBanks[8];
 static Voice sVoices[VOICES];
-static SDL_AudioStream *sStream;
+static AudioStream *sStream;
 static int sMono, sTried;
 
-extern SDL_AudioDeviceID Port_AudioDevice(void); /* snd_adx.c */
+extern int Port_AudioDevice(void); /* snd_adx.c */
 
 static uint32_t le32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint32_t le16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
@@ -174,13 +174,13 @@ static void decode_block(Voice *v) {
     }
 }
 
-/* SDL's audio thread wants more (the stream is locked while this runs). */
-static void SDLCALL mix(void *user, SDL_AudioStream *stream, int additional, int total) {
+/* The sound output's thread wants more (the stream is locked while this runs). */
+static void mix(void *user, AudioStream *stream, int additional) {
     int16_t out[512 * 2];
     float acc[512 * 2];
     int frames = additional / 4, n, i, k;
 
-    (void)user; (void)total;
+    (void)user;
     while (frames > 0) {
         n = frames > 512 ? 512 : frames;
         memset(acc, 0, sizeof(float) * (size_t)n * 2);
@@ -223,31 +223,22 @@ static void SDLCALL mix(void *user, SDL_AudioStream *stream, int additional, int
             float s = acc[i];
             out[i] = (int16_t)(s > 32767.0f ? 32767.0f : s < -32768.0f ? -32768.0f : s);
         }
-        SDL_PutAudioStreamData(stream, out, n * 4);
+        AudioOut_StreamPut(stream, out, n * 4);
         frames -= n;
     }
 }
 
 static int stream_ready(void) {
     if (sStream == NULL && !sTried) {
-        SDL_AudioDeviceID dev = Port_AudioDevice();
-        SDL_AudioSpec spec;
-
-        if (dev == 0) {
+        if (!Port_AudioDevice()) {
             if (GsGpu_Enabled() || gGsFrame > 2) {
                 sTried = 1; /* decided: no device */
             }
             return 0;
         }
         sTried = 1;
-        spec.format = SDL_AUDIO_S16;
-        spec.channels = 2;
-        spec.freq = OUT_RATE;
-        sStream = SDL_CreateAudioStream(&spec, NULL);
-        if (sStream != NULL) {
-            SDL_SetAudioStreamGetCallback(sStream, mix, NULL);
-            SDL_BindAudioStream(dev, sStream);
-        }
+        sStream = AudioOut_StreamCreate(OUT_RATE);
+        AudioOut_StreamFeed(sStream, mix, NULL);
     }
     return sStream != NULL;
 }
@@ -472,9 +463,9 @@ int func_002967C0(int block, int cmd, int core, int mode, void *iopAddr, uint32_
     (void)block; (void)core; (void)mode;
     if (cmd == 0x80D0) {
         if (iopAddr != NULL && spuAddr < SPU_SIZE && size <= SPU_SIZE - spuAddr) {
-            if (sStream != NULL) { SDL_LockAudioStream(sStream); }
+            AudioOut_StreamLock(sStream);
             memcpy(&sSpu[spuAddr], iopAddr, size);
-            if (sStream != NULL) { SDL_UnlockAudioStream(sStream); }
+            AudioOut_StreamUnlock(sStream);
         }
         return 0;
     }
@@ -490,7 +481,7 @@ int sceSifCallRpc(void *client, int fno, int mode, void *send, int sendSize, voi
     if (recv != NULL && recvSize >= 4) {
         memset(recv, 0, 4); /* the result word */
     }
-    if (sStream != NULL) { SDL_LockAudioStream(sStream); }
+    AudioOut_StreamLock(sStream);
     switch (fno) {
     case 0x0: /* INIT */
     case 0x2: /* RESET */
@@ -548,6 +539,6 @@ int sceSifCallRpc(void *client, int fno, int mode, void *send, int sendSize, voi
     }
     default: break; /* TICK, FIGHTERS and the commands the game never sends */
     }
-    if (sStream != NULL) { SDL_UnlockAudioStream(sStream); }
+    AudioOut_StreamUnlock(sStream);
     return 0;
 }

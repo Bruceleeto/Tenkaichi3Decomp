@@ -1,6 +1,6 @@
 /*
  * CRI ADX streams (music, voices, the movies' sound) on PC: the part of CRI's ADXT library the game calls, with the
- * decoding done here and the output through SDL.
+ * decoding done here and the output through audio_out.h (SDL on the PC).
  *
  * The game owns a few "players" (ADXT_Create), starts a file on one (ADXT_StartAfs: a file of an archive;
  * ADXT_StartFname: a loose file next to the movies), and controls it with pause, volume and pan. Every ADX file of
@@ -13,12 +13,12 @@
  * alternate. sample = nibble * (scale + 1) + ((c1 * previous + c2 * the one before) >> 12), clamped to 16 bits,
  * with c1, c2 from the high-pass frequency (the usual ADX formula, in adx_coefs).
  *
- * Each player has its own SDL audio stream (SDL converts the rate and mixes the streams); a stream asks for data
- * through a callback on SDL's audio thread, so the player's state is only touched under the stream's lock.
+ * Each player has its own stream of the sound output (which converts the rate and mixes the streams); a stream asks
+ * for data through a callback on the output's thread, so the player's state is only touched under the stream's lock.
  * Without a window there is no sound and every player reports "stopped", as before this file existed: headless
  * runs (replay validation) must not depend on a sound device.
  */
-#include <SDL3/SDL.h>
+#include "audio_out.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,7 +34,7 @@ enum { ADXT_STAT_STOP = 0, ADXT_STAT_PLAYING = 3, ADXT_STAT_PLAYEND = 5 };
 #define ST_OV_MAX 512  /* the longest overlap (8 ms at 48 kHz is 384) */
 
 typedef struct Player {
-    SDL_AudioStream *stream;
+    AudioStream *stream;
     char path[512];         /* the file it plays */
     uint8_t *file;          /* the whole ADX file */
     uint32_t size, data;    /* file size; offset of the first frame */
@@ -150,9 +150,9 @@ static void view_start(Player *p, const char *path, int found) {
         fprintf(stderr, "adx: player %d: %s counts as %d blanks (this copy's file: %d)\n", (int)(p - sPlayers), path, blanks, own);
     }
 }
-static SDL_AudioDeviceID sDevice;
+static int sDevice;
 static int sMono, sTried;
-static unsigned sFeedCalls; /* callbacks from SDL so far (BT3_SND_VERBOSE prints it at a stop) */
+static unsigned sFeedCalls; /* feeds asked for so far (BT3_SND_VERBOSE prints it at a stop) */
 
 extern int Port_FilePath(int ptid, int flid, const char *fname, char *out, int size); /* plat_file.c */
 
@@ -164,23 +164,21 @@ static int device(void) {
     if (!sTried && (GsGpu_Enabled() || getenv("BT3_SOUND") != NULL || gGsFrame > 2)) {
         sTried = 1;
         /* BT3_SOUND=1: sound without a window too (tests, with SDL_AUDIO_DRIVER=dummy for silence) */
-        if ((GsGpu_Enabled() || getenv("BT3_SOUND") != NULL) && getenv("BT3_NOSOUND") == NULL && SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-            sDevice = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
-            if (sDevice == 0) {
-                fprintf(stderr, "bt3: no sound device: %s\n", SDL_GetError());
-            }
-            else {
-                SDL_ResumeAudioDevice(sDevice);
-                fprintf(stderr, "bt3: sound: %s\n", SDL_GetCurrentAudioDriver());
+        if ((GsGpu_Enabled() || getenv("BT3_SOUND") != NULL) && getenv("BT3_NOSOUND") == NULL) {
+            sDevice = AudioOut_Open();
+            if (!sDevice) {
+                fprintf(stderr, "bt3: no sound device: %s\n", AudioOut_Error());
+            } else {
+                fprintf(stderr, "bt3: sound: %s\n", AudioOut_Driver());
             }
         }
     }
     return sDevice != 0;
 }
 
-/* What the port's other sound code mixes into: the opened device, or 0. */
-SDL_AudioDeviceID Port_AudioDevice(void) {
-    return device() ? sDevice : 0;
+/* Whether the port's other sound code has a device to play on (the first frames: not decided yet, 0). */
+int Port_AudioDevice(void) {
+    return device();
 }
 
 static void adx_coefs(uint32_t highpass, uint32_t rate, int *c1, int *c2) {
@@ -260,7 +258,7 @@ static int decode(Player *p, int16_t *out, int frames) {
 
 /* What a player hands to the sound device. BT3_SND_DUMP=<file> (testing): the music player's, as it is handed
    over (16 bits, stereo, the file's rate), to look at without listening. */
-static void put_pcm(Player *p, SDL_AudioStream *stream, const int16_t *data, int bytes) {
+static void put_pcm(Player *p, AudioStream *stream, const int16_t *data, int bytes) {
     static FILE *dump;
     static int tried;
     if (!tried) {
@@ -271,7 +269,7 @@ static void put_pcm(Player *p, SDL_AudioStream *stream, const int16_t *data, int
         fwrite(data, 1, (size_t)bytes, dump);
         fflush(dump);
     }
-    SDL_PutAudioStreamData(stream, data, bytes);
+    AudioOut_StreamPut(stream, data, bytes);
 }
 
 /* The game at another speed than its own (an online match at 120%, the Cheats tab's speed): a stream has to end
@@ -281,7 +279,7 @@ static void put_pcm(Player *p, SDL_AudioStream *stream, const int16_t *data, int
    8 ms faded into the previous one, each taken (40 - 8) * speed ms after the last, and within 15 ms of that the
    place where it fits what was heard last (the largest correlation with the previous piece's end), which is what
    keeps a tone from stuttering. Returns the bytes handed to the stream; 0 = the file has ended. */
-static int stretch_feed(Player *p, SDL_AudioStream *stream, int speedMilli) {
+static int stretch_feed(Player *p, AudioStream *stream, int speedMilli) {
     int seq = (int)p->rate * 40 / 1000, ov = (int)p->rate * 8 / 1000, seek = (int)p->rate * 15 / 1000;
     int16_t out[4096 * 2];
     int best = 0, k, i, body, need, skip, ended = 0;
@@ -337,15 +335,14 @@ static int stretch_feed(Player *p, SDL_AudioStream *stream, int speedMilli) {
     return body * 4;
 }
 
-/* SDL's audio thread wants `additional` more bytes from this player (the stream is locked while this runs). */
-static void SDLCALL feed(void *user, SDL_AudioStream *stream, int additional, int total) {
+/* The sound output's thread wants `additional` more bytes from this player (the stream is locked while this runs). */
+static void feed(void *user, AudioStream *stream, int additional) {
     extern int Port_SpeedMilli(void); /* plat_stub.c: the match's speed online, else the player's own; 1000 = the game's */
     Player *p = user;
     int16_t buf[32 * 2 * 16];
 
     sFeedCalls++;
 
-    (void)total;
     while (additional > 0 && p->stat == ADXT_STAT_PLAYING && !p->paused) {
         int speed = Port_SpeedMilli();
         if (p->loop && p - sPlayers <= 1 && gPortMusicFollows <= 0) {
@@ -396,7 +393,7 @@ static void apply_volume(Player *p) {
     if (p->stream != NULL) {
         int ch = (int)(p - sPlayers); /* (the game makes its six players in the order of include/sys/adx.h) */
         int percent = ch == 0 ? gPortMusicPercent : ch == 1 ? gPortStagePercent : ch == 4 || ch == 5 ? gPortVoicePercent : gPortSePercent;
-        SDL_SetAudioStreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f * PortA11y_StreamGain(p));
+        AudioOut_StreamGain(p->stream, p->vol <= -960 ? 0.0f : (float)pow(10.0, (double)p->vol / 200.0) * (float)percent / 100.0f * PortA11y_StreamGain(p));
     }
 }
 
@@ -405,7 +402,7 @@ static void stop(Player *p) {
         fprintf(stderr, "adx: stop player %d at %.1f s, status %d, volume %d; %u callbacks so far\n", (int)(p - sPlayers), (double)p->pos / (double)p->rate, p->stat, p->vol, sFeedCalls);
     }
     if (p->stream != NULL) {
-        SDL_DestroyAudioStream(p->stream); /* waits for a running callback */
+        AudioOut_StreamDestroy(p->stream); /* waits for a running callback */
         p->stream = NULL;
     }
     free(p->file);
@@ -458,7 +455,6 @@ static const char *voice_own_path(const char *path, char *buf, size_t size) {
 }
 
 static void start(Player *p, const char *path) {
-    SDL_AudioSpec spec;
     FILE *fp;
     long size;
     uint32_t header, highpass;
@@ -518,12 +514,9 @@ static void start(Player *p, const char *path) {
     adx_coefs(highpass, p->rate, &p->c1, &p->c2);
     memset(p->hist, 0, sizeof(p->hist));
     p->pos = 0;
-    spec.format = SDL_AUDIO_S16;
-    spec.channels = 2;
-    spec.freq = (int)p->rate;
-    p->stream = SDL_CreateAudioStream(&spec, NULL);
+    p->stream = AudioOut_StreamCreate((int)p->rate);
     if (p->stream == NULL) {
-        fprintf(stderr, "bt3: sound stream: %s\n", SDL_GetError());
+        fprintf(stderr, "bt3: sound stream: %s\n", AudioOut_Error());
         return;
     }
     p->stN = 0;
@@ -539,10 +532,7 @@ static void start(Player *p, const char *path) {
     }
     p->stat = ADXT_STAT_PLAYING;
     apply_volume(p);
-    SDL_SetAudioStreamGetCallback(p->stream, feed, p);
-    if (!SDL_BindAudioStream(sDevice, p->stream)) {
-        fprintf(stderr, "bt3: sound stream: %s\n", SDL_GetError());
-    }
+    AudioOut_StreamFeed(p->stream, feed, p);
 }
 
 /* ------------------------------------------------------------------------------- the library's functions */
@@ -612,12 +602,12 @@ void ADXT_Pause(void *adxt, int sw) {
         fprintf(stderr, "adx: player %d pause %d\n", (int)(p - sPlayers), sw);
     }
     if (p->stream != NULL) {
-        SDL_LockAudioStream(p->stream);
+        AudioOut_StreamLock(p->stream);
         p->paused = sw != 0;
         if (p->paused) {
-            SDL_ClearAudioStream(p->stream); /* what is queued would still be heard */
+            AudioOut_StreamClear(p->stream); /* what is queued would still be heard */
         }
-        SDL_UnlockAudioStream(p->stream);
+        AudioOut_StreamUnlock(p->stream);
     } else {
         p->paused = sw != 0;
     }
@@ -646,10 +636,10 @@ void ADXT_SetOutPan(void *adxt, int chan, int pan) {
     Player *p = adxt;
 
     if (p != NULL && chan >= 0 && chan < 2) {
-        if (p->stream != NULL) { SDL_LockAudioStream(p->stream); }
+        if (p->stream != NULL) { AudioOut_StreamLock(p->stream); }
         p->pan[chan] = pan;
         gPortAdxView[p - sPlayers].pan[chan] = pan;
-        if (p->stream != NULL) { SDL_UnlockAudioStream(p->stream); }
+        if (p->stream != NULL) { AudioOut_StreamUnlock(p->stream); }
     }
 }
 
