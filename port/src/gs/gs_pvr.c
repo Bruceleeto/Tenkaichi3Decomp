@@ -571,7 +571,7 @@ static void vu_draw(int vu, const Vu0Uniform *U, const uint32_t *idx, uint32_t c
 
 /* The 2D primitives drawn into the shown frame buffer, as triangles in the translucent list. Of the GS's tests:
    the alpha test as blending (a cut-out's transparent texels have alpha 0) or not drawn (never passes); the
-   scissor by clipping the triangles here; the destination alpha test not yet (those draws are left out). */
+   scissor by clipping the triangles here; the destination alpha test left out (see below). */
 static void draw_list(int shown) {
     uint32_t n, k;
     const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
@@ -625,7 +625,12 @@ static void draw_list(int shown) {
         if ((key >> 16 & 7) == 0) { continue; }    /* writes no colour (alpha or depth only) */
         if (d->mode[0] == 2) { continue; }          /* samples a frame buffer */
         if (d->mode[3] == 1) { continue; }          /* alpha test NEVER (with KEEP: nothing is written) */
-        if (d->misc[1] != 0.0f) { continue; }       /* destination alpha test: TODO (the grass on the stage ground) */
+        /* The destination alpha test (bit 7 of the alpha already there; the PVR cannot test it). The stage's
+           layers drawn by vertex programs (the grass on a fight's ground) are drawn without it: the alpha is set
+           to 0 before them, and each layer sets bit 7 where it draws (FBA), so the test only keeps a second layer
+           from blending over a pixel a first one has; without it overlapping grass is a little thicker. The 2D
+           ones (a HUD bar's fill cut to length by a mask) are left out: the whole fill would show. */
+        if (d->misc[1] != 0.0f && !d->vu) { continue; }
         t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
         if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
         if (t != NULL && t->mem != NULL) {
