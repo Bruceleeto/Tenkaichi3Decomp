@@ -35,7 +35,7 @@ static SDL_Window *sWindow;
 /* What a scene may send: the vertex buffer pvr_init was given, less a margin (the background polygon, and the
    TA's own layout of a polygon being a little larger than what is sent). kos_pvr does not stop at its end: what
    goes past it lands on the frame buffers and the textures. So a frame with more than this loses triangles. */
-#define VERTEX_BUF_BYTES (2048 * 1024)
+#define VERTEX_BUF_BYTES (1536 * 1024)
 #define SCENE_BUDGET (VERTEX_BUF_BYTES - 128 * 1024)
 static uint32_t sSent, sTris, sDropped; /* this scene: bytes sent, triangles sent, triangles left out */
 
@@ -149,7 +149,7 @@ static void scale_changed(void) {} /* the chip draws 640 x 480 whatever the scal
 static int pvr_be_init(void) {
     pvr_init_params_t params = {
         {PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16}, /* opaque, translucent, punch-through */
-        VERTEX_BUF_BYTES, /* vertex buffer: about 20,000 triangles as they are sent now (three vertices each) */
+        VERTEX_BUF_BYTES, /* vertex buffer: a demo fight frame sends at most about 1.1 MB (as strips); each byte here costs two of the texture heap */
         0,           /* no vertex DMA */
         0,           /* no horizontal FSAA */
         1,           /* no autosort: translucent polygons in the order the GS drew them */
@@ -636,10 +636,15 @@ static void frame_end(void) {
     gsVuIdxCount = 0;
     gsVuUniCount = 0;
     gsDrawCount = 0;
-    if (sDropped != 0 || (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0)) {
-        static unsigned told;
-        if (getenv("BT3_GS_VERBOSE") != NULL || told++ < 10) {
-            fprintf(stderr, "pvr: frame %u: %u triangles sent (%u KB), %u left out: the vertex buffer is full\n", gGsFrame, sTris, sSent >> 10, sDropped);
+    {
+        static uint32_t peak;
+        if (sSent > peak) { peak = sSent; }
+        if (sDropped != 0 || (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0)) {
+            static unsigned told;
+            if (getenv("BT3_GS_VERBOSE") != NULL || told++ < 10) {
+                fprintf(stderr, "pvr: frame %u: %u triangles sent (%u KB, the most so far %u KB of %u)%s\n", gGsFrame, sTris, sSent >> 10, peak >> 10,
+                        (unsigned)(SCENE_BUDGET >> 10), sDropped ? ", some left out: the vertex buffer is full" : "");
+            }
         }
     }
     gsAnchor = 0;
