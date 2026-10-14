@@ -165,7 +165,8 @@ def requirements(want32):
         ("python venv", works([sys.executable, "-c", "import venv, ensurepip"]), "holds the tool that splits the executable", "python3-venv"),
     ]
     if want32:
-        rows.append(("gcc -m32", works(["gcc", "-m32", "-x", "c", "-", "-o", os.devnull], hello), "the 32-bit build", "gcc-multilib and the 32-bit SDL3 (lib32-sdl3)"))
+        rows.append(("gcc -m32", works(["gcc", "-m32", "-x", "c", "-", "-o", os.devnull], hello), "the 32-bit build", "gcc-multilib"))
+        rows.append(("SDL3 (32-bit)", works(["gcc", "-m32", "-x", "c", "-", "-o", os.devnull, "-lSDL3"], hello), "window, input and sound of the 32-bit build", "the 32-bit SDL3 (libsdl3-dev:i386, lib32-sdl3)"))
     else:
         rows += [
             ("clang", have("clang"), "compiles the game code (64-bit)", "clang"),
