@@ -303,6 +303,7 @@ static GsTex texture_get(int ctx) {
         unsigned keep[2] = {gGsFrame > 120 ? gGsFrame - 120 : 0, gGsFrame};
         int pass;
         for (pass = 0; pass < 2 && t->tex == 0; pass++) {
+            if (getenv("BT3_TEX_SWEEPLOG") != NULL) { fprintf(stderr, "tex: frame %u: memory full, sweep %d (%d textures)\n", gGsFrame, pass, gsTexCount); }
             tex_sweep(keep[pass]);
             t = &sTex[gsTexCount];
             t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(rw, rh, GS_TEXFMT_RGBA8, 1);
