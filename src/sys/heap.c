@@ -74,11 +74,24 @@ void Heap_Create(void) {
     HeapBlock *start;
 
     size += Mem_Align4Pad(size);
+#ifdef PORT
+    {
+        /* PC build: BT3_HEAP_MB gives the heap another size (port/src/plat_heapstat.c) */
+        extern s32 Port_HeapCap(s32 size);
+        size = Port_HeapCap(size);
+    }
+#endif
     start = malloc(size);
     gHeapSize[0] = size;
     gHeapEnd[0] = (HeapBlock *)((u8 *)start + size);
     gHeapStart[0] = start;
     Heap_InitFreeBlock(start, size);
+#ifdef PORT
+    {
+        extern void Port_HeapCreated(u32 start, s32 size);
+        Port_HeapCreated((u32)start, size);
+    }
+#endif
 }
 
 HeapBlock *Heap_FindBlock(u32 data) {
@@ -246,6 +259,13 @@ void *Heap_Alloc(s32 size, u32 align, s32 fromTail, s32 heap) {
     if (block != NULL) {
         data = (void *)block->data;
     }
+#ifdef PORT
+    {
+        /* PC build: the heap's use, and allocations it could not serve (port/src/plat_heapstat.c) */
+        extern void Port_HeapNoteAlloc(u32 data, s32 size, u32 align, s32 fromTail, u32 block, s32 blockSize, void *caller);
+        Port_HeapNoteAlloc((u32)data, size, align, fromTail, (u32)block, block != NULL ? block->size : 0, __builtin_return_address(0));
+    }
+#endif
     return data;
 }
 
@@ -266,6 +286,12 @@ void Heap_Free(void *ptr) {
     if (block == NULL) {
         Heap_ReportBadFree();
     }
+#ifdef PORT
+    {
+        extern void Port_HeapNoteFree(u32 data);
+        Port_HeapNoteFree((u32)ptr);
+    }
+#endif
     Heap_FreeBlock(block);
 }
 
