@@ -294,6 +294,11 @@ void CORE::start_render() {
         i = j;
     }
 
+    if (render_gl(merged)) {
+        render_complete = true;
+        return;
+    }
+
     // --- 2. Resize the thread pool (no-op if unchanged) and allocate
     //        one TileContext per worker slot.
     pool_.resize(configured_thread_count_);

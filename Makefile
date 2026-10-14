@@ -46,7 +46,8 @@ CXX_OBJ   := $(foreach f,$(CXX_SRC),$(OBJ)/cxx_$(basename $(notdir $(f))).o)
 PC_OBJ    := $(patsubst src/port/%.c,$(OBJ)/pc_%.o,$(VU0_SRC)) $(patsubst port/src/%.c,$(OBJ)/pc_%.o,$(PC_SRC))
 # gpu_pvr (port/third_party/gpu_pvr): named gs_ / cxx_ so that make_state.py counts them as the port's, not the game's
 PVR_DIR     := port/third_party/gpu_pvr
-PVR_CXX_SRC := $(PVR_DIR)/libpvr/pvr.cpp $(PVR_DIR)/libpvr/ta.cpp $(PVR_DIR)/libpvr/core.cpp $(PVR_DIR)/libpvr/texture.cpp \
+PVR_CXX_SRC := $(PVR_DIR)/libpvr/pvr.cpp $(PVR_DIR)/libpvr/ta.cpp $(PVR_DIR)/libpvr/core.cpp $(PVR_DIR)/libpvr/core_gl.cpp \
+               $(PVR_DIR)/libpvr/texture.cpp \
                $(PVR_DIR)/kos_pvr.cpp
 PVR_C_SRC   := $(PVR_DIR)/kos_prim.c $(PVR_DIR)/pvr_host.c
 PVR_CXX_OBJ := $(foreach f,$(PVR_CXX_SRC),$(OBJ)/cxx_pvrlib_$(basename $(notdir $(f))).o)

@@ -203,6 +203,9 @@ private:
     // render_snap_ has been populated.
     void take_param_snapshot();
 
+    // The whole render on the GPU (core_gl.cpp); false: the tiles do it
+    bool render_gl(const std::vector<RegionArrayEntry>& tiles);
+
     // Process a single region array entry (render one tile) using |ctx|.
     void render_tile(TileContext& ctx, const RegionArrayEntry& region);
 
