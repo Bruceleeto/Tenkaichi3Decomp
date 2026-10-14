@@ -1453,8 +1453,8 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     }
     displays = SDL_GetDisplays(&count);
     props = SDL_CreateProperties();
-    /* The window has the picture's shape: 896 lines high, 4:3 or 16:9 wide (1195 x 896 or 1593 x 896), and
-       keeps that shape when it is resized. BT3_WINDOW=WxH gives another start size. */
+    /* The window has the picture's shape: 480 lines high, 4:3 or 16:9 wide (640 x 480 or 853 x 480), and keeps
+       that shape when it is resized. BT3_WINDOW=WxH gives another start size. */
     if (getenv("BT3_WINDOW") != NULL) {
         sscanf(getenv("BT3_WINDOW"), "%dx%d", &w, &h);
     }
@@ -1488,9 +1488,13 @@ SDL_Window *GsDraw_WindowCreate(int opengl) {
     SDL_DestroyProperties(props);
     SDL_free(displays);
     if (sWindow != NULL && !sFullscreen) {
-        SDL_SetWindowSize(sWindow, (int)((float)896 * want + 0.5f), 896);
+        SDL_SetWindowSize(sWindow, w, h);
     }
-    fprintf(stderr, "bt3: internal resolution %dx (%d x %d)\n", gsScale, 512 * gsScale, 448 * gsScale);
+    {
+        int ww = 0, wh = 0;
+        if (sWindow != NULL) { SDL_GetWindowSize(sWindow, &ww, &wh); }
+        fprintf(stderr, "bt3: internal resolution %dx (%d x %d), window %d x %d\n", gsScale, 512 * gsScale, 448 * gsScale, ww, wh);
+    }
     return sWindow;
 }
 
