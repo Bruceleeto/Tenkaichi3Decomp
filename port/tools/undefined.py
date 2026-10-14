@@ -181,52 +181,8 @@ def main():
             if getattr(r, "pending", None):
                 pending.append(r.pending)
     # renderer: ordinary host code, hardware float. Its shaders are compiled to SPIR-V and embedded.
-    gen = ROOT / "port/build/gen/gs"
-    gen.mkdir(parents=True, exist_ok=True)
-    arrays = []
-    # gsnz.frag: gs.frag without its depth output (NO_FRAG_DEPTH), for the draws that do not need it
-    nz = gen / "gsnz.frag"
-    nz_text = (ROOT / "port/src/gs/shaders/gs.frag").read_text().replace("\n", "\n#define NO_FRAG_DEPTH\n", 1)
-    if not nz.exists() or nz.read_text() != nz_text:
-        nz.write_text(nz_text)
-    shader_sources = sorted((ROOT / "port/src/gs/shaders").glob("*.*")) + [nz]
-    for src in shader_sources:  # gs.vert -> kGsVertSpv, outline.frag -> kOutlineFragSpv
-        stage = src.suffix[1:]
-        name = "k" + src.stem.capitalize() + stage.capitalize() + "Spv"
-        spv = gen / (src.name + ".spv")
-        if shutil.which("glslc") is None and spv.exists() and spv.stat().st_mtime >= src.stat().st_mtime:
-            pass  # no shader compiler here (the release container): the compiled shader that was put in place is current
-        else:
-            if shutil.which("glslc") is not None:
-                r = subprocess.run(["glslc", f"-fshader-stage={stage}", str(src), "-o", str(spv)], capture_output=True, text=True)
-            else:  # the reference compiler of the same language (package glslang-tools)
-                r = subprocess.run(["glslangValidator", "-V", "-S", stage, str(src), "-o", str(spv)], capture_output=True, text=True)
-            if r.returncode:
-                print("FAILED shader", src.name, r.stderr[:300])
-                continue
-        arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in spv.read_bytes()) + "};\n")
-        if MAC:  # SDL_GPU's Metal back end takes MSL: the same shader translated (bindings as numbered: SDL's Metal slots)
-            msl = gen / (src.name + ".msl")
-            r = subprocess.run(["spirv-cross", "--msl", "--msl-version", "20100", "--msl-decoration-binding", str(spv), "--output", str(msl)],
-                               capture_output=True, text=True)
-            if r.returncode:
-                print("FAILED shader (MSL)", src.name, r.stderr[:300])
-                continue
-            arrays.append(f"static const unsigned char {name[:-3]}Msl[] = {{" + ",".join(str(b) for b in msl.read_bytes() + b"\0") + "};\n")
-    # The GL back end (gs_gl.c) compiles the GLSL at run time (it translates Vulkan GLSL to GL 3.3 the way
-    # port/tools/glprobe.c proved), so the sources are embedded here too, NUL-terminated.
-    for src in shader_sources:
-        if src.suffix not in (".vert", ".frag"):
-            continue
-        stage = src.suffix[1:]
-        name = "k" + src.stem.capitalize() + stage.capitalize() + "Glsl"
-        data = src.read_bytes() + b"\0"
-        arrays.append(f"static const unsigned char {name}[] = {{" + ",".join(str(b) for b in data) + "};\n")
-    # the side bars' two pictures (port/assets/bars), as bytes in the program: nothing to ship beside it
-    bars = "".join(f"static const unsigned char kBars{n.capitalize()}Png[] = {{" + ",".join(str(b) for b in (ROOT / "port/assets/bars" / (n + ".png")).read_bytes()) + "};\n"
-                   for n in ("trim", "fill"))
-    (gen / "bars_png.h").write_text("/* generated from port/assets/bars by port/tools/undefined.py */\n" + bars)
-    (gen / "shaders.h").write_text("/* generated from port/src/gs/shaders by port/tools/undefined.py */\n" + "".join(arrays))
+    import gen_shaders
+    gen, _ = gen_shaders.generate()
     for f in sorted((ROOT / "port/src/gs").glob("*.c")):
         o = OBJ / ("gs_" + f.stem + ".o")
         r = run(["gcc", "-m32", "-std=gnu99", "-c", "-O2", "-g", "-fno-pic", "-msse2", "-mfpmath=sse", "-fno-strict-aliasing",

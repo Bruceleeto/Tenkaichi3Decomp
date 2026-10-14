@@ -88,7 +88,17 @@ python3 install.py --iso <your disc image>
 ```
 
 does everything on Linux: checks the tools, reads the disc, builds the 64-bit program and runs the game's demo
-fight as a test. `python3 install.py --check` lists what is missing. `port/setup/build.sh && ./Tenkaichi3Decomp-setup` is
+fight as a test.
+
+The 32-bit gcc build also has a Makefile (one rule per file: only what changed is rebuilt). Put your disc image
+(`.iso`) in this folder, then:
+
+```
+make setup        # checks the tools, makes .venv
+make extract      # reads the disc (ISO=<file> if it is somewhere else)
+make -j8          # port/build/bt3
+make run          # or: make test (the demo fight without a window), make demo, make clean
+``` `python3 install.py --check` lists what is missing. `port/setup/build.sh && ./Tenkaichi3Decomp-setup` is
 the same with a window.
 
 ### macOS (experimental)
