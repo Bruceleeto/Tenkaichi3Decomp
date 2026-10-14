@@ -5,6 +5,8 @@
 static SDL_AudioDeviceID sDevice;
 static int sTried;
 
+int AudioOut_Possible(void) { return 1; }
+
 int AudioOut_Open(void) {
     if (!sTried) {
         sTried = 1;

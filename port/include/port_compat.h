@@ -28,6 +28,11 @@ typedef float f32;
 #define LIT4_WORD(NAME, HEX)
 #define ASM_STUB_BEGIN() extern int asm_stub_begin_
 #define ASM_STUB_END() extern int asm_stub_end_
+/* A declaration under another symbol's name (an asm label), as the object file spells it: with the prefix the
+   platform puts in front of C names (none on the PC, '_' on the SH-4's ELF). */
+#define PORT_STR_(x) #x
+#define PORT_STR(x) PORT_STR_(x)
+#define ASM_NAME(name) __asm__(PORT_STR(__USER_LABEL_PREFIX__) name)
 
 /* C library calls of the game that must not go to the host's versions (see port/src/plat_mem.c). */
 #define malloc Port_Malloc

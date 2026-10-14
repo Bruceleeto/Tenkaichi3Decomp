@@ -23,7 +23,7 @@ extern f32 Port_WideFactor(void); /* widescreen on PC: 1, or 4/3 for a 16:9 pict
 
 extern void *memset(void *dst, s32 c, u32 n);
 /* memset reached as a plain call (the compiler would expand a small constant size in place). */
-extern void *EftW_MemsetCall(void *dst, s32 c, u32 n) __asm__("memset");
+extern void *EftW_MemsetCall(void *dst, s32 c, u32 n) ASM_NAME("memset");
 extern void Vec4_Copy(Vec4 *dst, Vec4 *src);
 extern EftWTask *BtlTaskList_AddTail(void *list, void *cls, void *arg);
 extern void EftLink_Update(EftWTask *task);

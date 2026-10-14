@@ -80,7 +80,7 @@ typedef struct Voice {
 /* Beside the sound chip's memory: room for the clip banks this copy plays in the place of the game's (voice_own_bank). */
 #define OWN_SLOT 0x100000 /* a megabyte each; the largest voice bank file of the disc has 591,104 bytes */
 #define SPU_TOTAL (SPU_SIZE + 8 * OWN_SLOT)
-static uint8_t sSpu[SPU_TOTAL];
+static uint8_t *sSpu; /* (spu_mem: only where there is, or may yet be, a device to play it on) */
 static uint8_t *sOwnTables[8]; /* the two tables of such a bank (one allocation) */
 static Bank sBanks[8];
 static Voice sVoices[VOICES];
@@ -88,6 +88,16 @@ static AudioStream *sStream;
 static int sMono, sTried;
 
 extern int Port_AudioDevice(void); /* snd_adx.c */
+
+/* The sound chip's memory (10 MB): taken when the first bank arrives, which can be before it is decided whether
+   there is a device (the renderer's first frame); given back if there is none. A build without an output never
+   takes it. NULL: the bank is not kept (nothing would play it). */
+static uint8_t *spu_mem(void) {
+    if (sSpu == NULL && !(sTried && sStream == NULL) && AudioOut_Possible()) {
+        sSpu = calloc(1, SPU_TOTAL);
+    }
+    return sSpu;
+}
 
 static uint32_t le32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint32_t le16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
@@ -233,7 +243,13 @@ static int stream_ready(void) {
         if (!Port_AudioDevice()) {
             if (GsGpu_Enabled() || gGsFrame > 2) {
                 sTried = 1; /* decided: no device */
+                free(sSpu);
+                sSpu = NULL;
             }
+            return 0;
+        }
+        if (spu_mem() == NULL) { /* (before it is decided: then it is taken) */
+            sTried = 1;
             return 0;
         }
         sTried = 1;
@@ -401,7 +417,7 @@ static void voice_own_bank(int slot) {
     if (found < 0 || (b = bank_file(VOICE_BANK_OTHER + found, &size)) == NULL) {
         return; /* not a fighter's voice bank (the common effects, a stage's), or the other set has none */
     }
-    if (bank_parts(b, size, &hd, &hdSize, &sq, &sqSize, &smp, &smpSize) && smpSize <= OWN_SLOT &&
+    if (bank_parts(b, size, &hd, &hdSize, &sq, &sqSize, &smp, &smpSize) && smpSize <= OWN_SLOT && spu_mem() != NULL &&
         (sOwnTables[slot] = malloc(hdSize + sqSize)) != NULL) {
         memcpy(sOwnTables[slot], b + hd, hdSize);
         memcpy(sOwnTables[slot] + hdSize, b + sq, sqSize);
@@ -462,7 +478,7 @@ int func_002967C0(int block, int cmd, int core, int mode, void *iopAddr, uint32_
 #endif
     (void)block; (void)core; (void)mode;
     if (cmd == 0x80D0) {
-        if (iopAddr != NULL && spuAddr < SPU_SIZE && size <= SPU_SIZE - spuAddr) {
+        if (iopAddr != NULL && spuAddr < SPU_SIZE && size <= SPU_SIZE - spuAddr && spu_mem() != NULL) {
             AudioOut_StreamLock(sStream);
             memcpy(&sSpu[spuAddr], iopAddr, size);
             AudioOut_StreamUnlock(sStream);

@@ -23,7 +23,7 @@ extern EftSView *gBtlCamView;
 /* gOtCur read as a volatile object (same symbol). The original never moves the load `pkt = gOtCur` into the delay
    slot of the branch in front of it, while the store `gOtCur = pkt + 1` does go into one: a volatile read
    reproduces exactly that (see EftChain_DrawStrand). */
-extern u32 *volatile gOtCurRead __asm__("gOtCur");
+extern u32 *volatile gOtCurRead ASM_NAME("gOtCur");
 extern EftArcPool *gEftChain;
 extern void *D_002C3E18[6]; /* task class of the prop ki blast */
 

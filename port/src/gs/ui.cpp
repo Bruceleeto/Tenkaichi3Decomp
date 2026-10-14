@@ -10,6 +10,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_opengl3.h"
+#include <SDL3/SDL.h>
 #include "ui.h"
 #include "namefont.h"
 #include "../port_release.h"

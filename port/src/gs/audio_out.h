@@ -11,6 +11,7 @@ typedef struct AudioStream AudioStream;
 /* Called on the back end's thread with the stream locked: put `additional` more bytes (AudioOut_StreamPut). */
 typedef void (*AudioFeed)(void *user, AudioStream *stream, int additional);
 
+int AudioOut_Possible(void);        /* 0: built without an output (audio_null.c): nothing to prepare for */
 int AudioOut_Open(void);            /* the device; 1 = there is one (called again: what the first call found) */
 const char *AudioOut_Driver(void);  /* for the log */
 const char *AudioOut_Error(void);

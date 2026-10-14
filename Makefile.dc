@@ -1,0 +1,107 @@
+# The Dreamcast build, with KallistiOS: make -f Makefile.dc  ->  port/build/dc/bt3.elf
+# (source /opt/toolchains/dc/kos/environ.sh first; the game's data tables come from the PC build's `make`).
+#
+# The same game sources as the PC build (Makefile), through the same cc_ee.py, compiled by kos-cc. The port's own
+# code is the PC build's minus what the Dreamcast has no use for (the Vulkan and OpenGL renderers, the settings
+# window on imgui, SDL's sound and input), plus port/src/dc (KOS: the start, the pad, what SDL did). Sound is the
+# null output (port/src/null, as the PC's AUDIO=none) until the AICA one is written. Everything is hardware float
+# (the PC build's software float for the game cannot be mixed with hardware-float code in the SH-4's calling
+# convention). Not run yet: it links, with stubs for what is still missing (link_dc.py).
+
+ifndef KOS_BASE
+$(error the Dreamcast build needs the KOS environment: source /opt/toolchains/dc/kos/environ.sh)
+endif
+
+BUILD  := port/build/dc
+OBJ    := $(BUILD)/obj
+DATA   := $(BUILD)/obj_data
+GEN_GS := port/build/gen/gs
+EXE    := $(BUILD)/bt3.elf
+PYTHON := .venv/bin/python
+
+CC  := kos-cc
+CXX := kos-c++
+
+# ------------------------------------------------------------------------------------------------- the sources
+
+REPLACED := src/sys/vu0_a_c.c src/sys/vu0_a_c_b.c src/sys/vu0_a_c_c.c src/sys/vu0_b_c.c
+GAME_SRC := src/main.c $(filter-out $(REPLACED),$(sort $(wildcard src/sys/*.c src/battle/*.c src/menu/*.c)))
+NL_SRC   := $(sort $(wildcard port/third_party/newlib_libm/*.c))
+VU0_SRC  := src/port/vu0_a.c src/port/vu0_b.c
+# the PC's only: its renderers, SDL's window, sound, input and screen reader; texture packs; online play
+GS_PC    := gs_gpu.c gs_gl.c gs_window.c audio_sdl.c gs_input.c a11y.c gs_texpack.c net.c net_chat.c net_match.c net_relay.c net_sign.c state.c
+GS_SRC   := $(filter-out $(addprefix port/src/gs/,$(GS_PC)),$(sort $(wildcard port/src/gs/*.c)))
+PC_SRC   := $(filter-out port/src/softfloat_ps2.c port/src/plat_crash.c,$(sort $(wildcard port/src/*.c)))
+DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c)
+
+GAME_OBJ := $(foreach f,$(GAME_SRC),$(OBJ)/$(subst /,_,$(patsubst src/%.c,%,$(f))).o)
+NL_OBJ   := $(patsubst port/third_party/newlib_libm/%.c,$(OBJ)/nl_%.o,$(NL_SRC))
+GS_OBJ   := $(patsubst port/src/gs/%.c,$(OBJ)/gs_%.o,$(GS_SRC))
+PC_OBJ   := $(patsubst src/port/%.c,$(OBJ)/pc_%.o,$(VU0_SRC)) $(patsubst port/src/%.c,$(OBJ)/pc_%.o,$(PC_SRC))
+DC_OBJ   := $(foreach f,$(DC_SRC),$(OBJ)/dc_$(basename $(notdir $(f))).o)
+OBJS     := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(PC_OBJ) $(DC_OBJ)
+
+# ------------------------------------------------------------------------------------------------------ the flags
+
+# kos-cc adds KOS's own (-m4-single -ml ...); LTO off (as iortcw's), and C's float rules rather than KOS's
+# -ffast-math, so the game's maths is the PC build's in what it means
+DC_FLAGS    := -fno-lto -O2 -g -fno-fast-math -ffp-contract=off -fno-strict-aliasing -w -DPORT_GAME_HARD_FLOAT
+GAME_CFLAGS := $(DC_FLAGS) -std=gnu89 -c -fcommon -fno-builtin -include port_libm.h -iquote include -Iport/include -include port_compat.h
+NL_CFLAGS   := $(DC_FLAGS) -std=gnu89 -c -fno-builtin -Iport/include -Iport/third_party/newlib_libm -include newlib_shim.h
+GS_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
+PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/include -Iport/src -Iport/src/dc
+PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
+PC_HARD     := plat_libm plat_fastvec
+
+CC_EE := $(PYTHON) port/tools/cc_ee.py
+
+# ------------------------------------------------------------------------------------------------------ the rules
+
+.PHONY: all clean
+.DELETE_ON_ERROR:
+
+all: $(EXE)
+
+$(OBJ):
+	mkdir -p $@
+
+# the data tables: the PC build's assembly (gen_data.py), assembled for the SH-4
+$(DATA)/.stamp: port/build/gen/data port/tools/dc_data.py
+	$(PYTHON) port/tools/dc_data.py $(DATA)
+	touch $@
+
+$(OBJ)/main.o: src/main.c | $(OBJ)
+	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+$(OBJ)/sys_%.o: src/sys/%.c | $(OBJ)
+	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+$(OBJ)/battle_%.o: src/battle/%.c | $(OBJ)
+	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+$(OBJ)/menu_%.o: src/menu/%.c | $(OBJ)
+	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+
+$(OBJ)/nl_%.o: port/third_party/newlib_libm/%.c | $(OBJ)
+	$(CC_EE) $@ $< -- $(CC) $(NL_CFLAGS)
+
+$(OBJ)/gs_%.o: port/src/gs/%.c | $(OBJ)
+	$(CC) $(GS_CFLAGS) $< -o $@
+$(OBJ)/gs_gs_pvr.o: GS_CFLAGS += -DBT3_PVR
+$(OBJ)/gs_gs_draw.o: GS_CFLAGS += -DBT3_PVR
+
+$(OBJ)/pc_vu0_%.o: src/port/vu0_%.c | $(OBJ)
+	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
+$(OBJ)/pc_%.o: port/src/%.c | $(OBJ)
+	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))
+
+$(OBJ)/dc_%.o: port/src/dc/%.c | $(OBJ)
+	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
+$(OBJ)/dc_%_null.o: port/src/null/%_null.c | $(OBJ)
+	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
+
+# the link, with a stub for each symbol still missing
+$(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
+	$(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
+
+clean:
+	rm -rf $(BUILD)
+
+-include $(OBJS:.o=.d)

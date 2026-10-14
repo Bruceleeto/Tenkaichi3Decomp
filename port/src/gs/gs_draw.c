@@ -19,7 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <SDL3/SDL.h>   /* the one window both back ends share */
 #include "gs_internal.h"
 #include "gs_draw.h"
 #include "ui.h"         /* PortVideo and the window helpers */
@@ -52,22 +51,7 @@ static GsBackend *sBackend;
 static int sSmooth2d = 1; /* the setting "2D filtering" (smooth_2d; BT3_2D_SMOOTH=0/1 wins): 1 smooth */
 static int sWholeFrame; /* the draw being set up shows a frame the game read back (the cross-fade) */
 
-/* The one window both back ends share: shape (aspect), full screen and display are the renderer's, not a
-   back end's, so the settings window and F11 work the same whichever back end is running. */
-static SDL_Window *sWindow;
-/* Called once a frame by the back ends: when the check of the game data (plat_verify.c) has found it modified, the
-   window's title says so from then on, so that a screenshot of the window carries it. */
-void GsGpu_TitlePoll(void) {
-    extern int Port_DataState(void);
-    static int done;
-    if (!done && sWindow != NULL && Port_DataState() == 2) {
-        SDL_SetWindowTitle(sWindow, "Tenkaichi3Decomp [modified game data]");
-        done = 1;
-    }
-}
-static int sFullscreen;
-static float sWantAspect;
-static int sDisplaySetting;
+static int sDisplaySetting = -1; /* the setting "display" (used at the next start; -1 not read yet) */
 
 int gsScale = 1;
 int gsPendingScale;
@@ -1472,94 +1456,6 @@ static void menu_labels_apply(void) {
     }
 }
 
-/* ------------------------------------------------------------------------------------------- the one window */
-/* Created (with SDL's video subsystem) before the device / the GL context: everything the user can choose
-   about it (BT3_WINDOW, BT3_DISPLAY, BT3_FULLSCREEN, the saved settings, the aspect ratio) is decided here,
-   so both back ends show the same window. `opengl` requests a window a GL context can be made current on. */
-SDL_Window *GsDraw_WindowCreate(int opengl) {
-    extern int Port_AspectMilli(void);
-    float want = (float)Port_AspectMilli() / 1000.0f;
-    int h = 480, w = (int)((float)h * want + 0.5f), count = 0, pick = 0;
-    SDL_DisplayID *displays;
-    SDL_PropertiesID props;
-
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        fprintf(stderr, "bt3: SDL_Init: %s\n", SDL_GetError());
-        return NULL;
-    }
-    displays = SDL_GetDisplays(&count);
-    props = SDL_CreateProperties();
-    /* The window has the picture's shape: 480 lines high, 4:3 or 16:9 wide (640 x 480 or 853 x 480), and keeps
-       that shape when it is resized. BT3_WINDOW=WxH gives another start size. */
-    if (getenv("BT3_WINDOW") != NULL) {
-        sscanf(getenv("BT3_WINDOW"), "%dx%d", &w, &h);
-    }
-    /* BT3_DISPLAY=n: the n-th display (1 = first) for the window or the full screen; without it the desktop
-       places the window. Some desktops (Wayland) ignore a window's position but honour the display of a
-       full-screen window. BT3_FULLSCREEN=1 starts in borderless full screen; F11 switches. */
-    for (pick = 0; pick < count; pick++) {
-        SDL_Rect r;
-        SDL_GetDisplayBounds(displays[pick], &r);
-        fprintf(stderr, "bt3: display %d: %s, %d x %d\n", pick + 1, SDL_GetDisplayName(displays[pick]), r.w, r.h);
-    }
-    sDisplaySetting = Port_Setting("display", 0);
-    pick = getenv("BT3_DISPLAY") != NULL ? atoi(getenv("BT3_DISPLAY")) : sDisplaySetting;
-    sFullscreen = (getenv("BT3_FULLSCREEN") != NULL ? atoi(getenv("BT3_FULLSCREEN")) : Port_Setting("fullscreen", 0)) != 0;
-    sWantAspect = want;
-    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Tenkaichi3Decomp");
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, w);
-    SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, h);
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
-    if (opengl) {
-        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN, true);
-    }
-    if (pick >= 1 && pick <= count) {
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(displays[pick - 1]));
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(displays[pick - 1]));
-    } else if (pick != 0) {
-        fprintf(stderr, "bt3: BT3_DISPLAY=%d: there are %d displays\n", pick, count);
-    }
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, sFullscreen);
-    sWindow = SDL_CreateWindowWithProperties(props);
-    SDL_DestroyProperties(props);
-    SDL_free(displays);
-    if (sWindow != NULL && !sFullscreen) {
-        SDL_SetWindowSize(sWindow, w, h);
-    }
-    {
-        int ww = 0, wh = 0;
-        if (sWindow != NULL) { SDL_GetWindowSize(sWindow, &ww, &wh); }
-        fprintf(stderr, "bt3: internal resolution %dx (%d x %d), window %d x %d\n", gsScale, 512 * gsScale, 448 * gsScale, ww, wh);
-    }
-    return sWindow;
-}
-
-SDL_Window *GsDraw_Window(void) { return sWindow; }
-
-void GsDraw_WindowShape(void) {
-    float want = (float)Port_AspectMilli() / 1000.0f;
-    int w, h;
-    sWantAspect = want;
-    if (!sFullscreen && sWindow != NULL) {
-        SDL_GetWindowSize(sWindow, &w, &h);
-        SDL_SetWindowSize(sWindow, (int)((float)h * want + 0.5f), h);
-    }
-}
-
-void GsDraw_FullscreenSet(int on) {
-    if (sWindow == NULL) {
-        return;
-    }
-    sFullscreen = on;
-    SDL_SetWindowFullscreen(sWindow, on);
-}
-
-void GsDraw_FullscreenToggle(void) {
-    GsDraw_FullscreenSet(!sFullscreen);
-    Port_SettingSave("fullscreen", sFullscreen);
-    Port_SettingsWrite();
-}
-
 /* ------------------------------------------------------------------------------------------- the settings window
    F1 opens it (ui.cpp, Dear ImGui). What the user changes there reaches the renderer through these two: the
    scale, the effects switched off and the glow are shared state; the shape, the full screen and the display
@@ -1574,13 +1470,16 @@ int Port_FxOff(int bit) {
 void GsGpu_GetSettings(PortVideo *v) {
     v->scale = gsPendingScale ? gsPendingScale : gsScale;
     v->aspectMilli = Port_AspectMilli();
-    v->fullscreen = sFullscreen;
+    v->fullscreen = GsDraw_Fullscreen();
     v->fxOff = (int)gsFxOff;
     v->glow = gsGlowPercent;
     v->music = gPortMusicPercent;
     v->effects = gPortSePercent;
     v->voices = gPortVoicePercent;
     v->stage = gPortStagePercent;
+    if (sDisplaySetting < 0) {
+        sDisplaySetting = Port_Setting("display", 0);
+    }
     v->display = sDisplaySetting;
     v->texPack = sTexPackOn;
     v->texPackCount = TexPack_Count();
@@ -1637,7 +1536,7 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingSave("texture_pack", sTexPackOn);
     Port_SettingSave("scale", gsPendingScale ? gsPendingScale : gsScale);
     Port_SettingSave("aspect_milli", Port_AspectMilli());
-    Port_SettingSave("fullscreen", sFullscreen);
+    Port_SettingSave("fullscreen", GsDraw_Fullscreen());
     Port_SettingSave("fx_off", (int)gsFxOff);
     Port_SettingSave("glow", gsGlowPercent);
     Port_SettingSave("music", gPortMusicPercent);
@@ -4042,7 +3941,7 @@ void GsGpu_InterpPump(int ahead_ms, int all) {
                 return; /* not yet: at the next blank */
             }
             if (now < due) {
-                SDL_DelayPrecise(due - now);
+                GsDraw_Wait(due - now);
             }
         }
         if (sInterpNext == sInterpSteps && getenv("BT3_INTERP_ONLY") != NULL) {

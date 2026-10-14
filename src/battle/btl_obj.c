@@ -105,7 +105,7 @@ extern f32 gBtlObjFarDist[];
 
 /* BtlObj_UpdateVisibility only matches when the compiler has not seen the body of BtlObjVis_GetList (it changes
    a branch-likely choice): the original had a file boundary somewhere between the two. */
-extern BtlObjDrawList *BtlObjVis_GetListExt(s32 view) __asm__("BtlObjVis_GetList");
+extern BtlObjDrawList *BtlObjVis_GetListExt(s32 view) ASM_NAME("BtlObjVis_GetList");
 
 /* The flag word as bitfields: tests of two or three of these bits compile to one 64-bit load in the original,
    which is what ee-gcc does when it merges adjacent bitfield tests. */

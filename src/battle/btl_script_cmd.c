@@ -35,7 +35,7 @@ extern void Vec4_Copy(Vec4 *dst, Vec4 *src);
 extern void BtlFacade_PlayCharMotion(s32 side, s32 type, s32 mode, f32 value);
 #define BtlFacade_StartCharMoveF(side, type, value, mode) BtlFacade_PlayCharMotion(side, type, mode, value)
 #else
-extern void BtlFacade_StartCharMoveF(s32 side, s32 type, f32 value, s32 mode) __asm__("BtlFacade_PlayCharMotion");
+extern void BtlFacade_StartCharMoveF(s32 side, s32 type, f32 value, s32 mode) ASM_NAME("BtlFacade_PlayCharMotion");
 #endif
 
 /* the text module's default window (0x23AC50, not decompiled) */
@@ -43,7 +43,7 @@ extern BtlScriptCmdWindow *Font_GetStyle(void);
 /* start position and direction of a side (0x2427A0, stage code, not decompiled) */
 extern void BtlStage_GetStartPlace(s32 side, Vec4 *pos, Vec4 *rot, s32 arg);
 /* called with a second argument (0) that BtlFacade_SetCpuParam8 does not take */
-extern void BtlFacade_SetCpuParam8Ex(s32 value, s32 unused) __asm__("BtlFacade_SetCpuParam8");
+extern void BtlFacade_SetCpuParam8Ex(s32 value, s32 unused) ASM_NAME("BtlFacade_SetCpuParam8");
 
 extern BtlScriptCmdProgress *gProgress;
 extern BtlScriptWork gBtlScript;

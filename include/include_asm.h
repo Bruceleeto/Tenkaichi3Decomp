@@ -1,6 +1,9 @@
 #ifndef INCLUDE_ASM_H
 #define INCLUDE_ASM_H
 
+/* A declaration under another symbol's name (port/include/port_compat.h adds the platform's prefix) */
+#define ASM_NAME(name) __asm__(name)
+
 #if !defined(M2CTX) && !defined(PERMUTER)
 
 #ifndef INCLUDE_ASM

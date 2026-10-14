@@ -12,6 +12,7 @@
 #   (port/src/null/audio_null.c, as iortcw's code/null: no device, the players stay silent).
 #   NET=1 (default) builds in online play (port/src/gs/net*.c, state.c); NET=0 leaves it out
 #   (port/src/null/net_null.c: never in a session, the online screen says it is not in the build).
+#   TEXPACK=1 (default) builds in texture packs (port/src/gs/gs_texpack.c); TEXPACK=0 leaves them out (texpack_null.c).
 #   PVR=1 (default) builds in the PowerVR renderer (BT3_GPU_API=pvr; port/src/gs/gs_pvr.c on gpu_pvr, a software
 #   PowerVR). gpu_pvr's kos_pvr.cpp is GPL-2.0-only: a program built with it is not for release. PVR=0 leaves it out.
 #
@@ -21,6 +22,7 @@ ISO ?=
 PVR ?= 1
 AUDIO ?= sdl
 NET ?= 1
+TEXPACK ?= 1
 BUILD  := port/build
 OBJ    := $(BUILD)/obj
 DATA   := $(BUILD)/obj_data
@@ -40,7 +42,8 @@ REPLACED  := src/sys/vu0_a_c.c src/sys/vu0_a_c_b.c src/sys/vu0_a_c_c.c src/sys/v
 GAME_SRC  := src/main.c $(filter-out $(REPLACED),$(sort $(wildcard src/sys/*.c src/battle/*.c src/menu/*.c)))
 NL_SRC    := $(sort $(wildcard port/third_party/newlib_libm/*.c))
 NET_SRC   := $(addprefix port/src/gs/,net.c net_chat.c net_match.c net_relay.c net_sign.c state.c)
-GS_SRC    := $(filter-out $(if $(filter none,$(AUDIO)),port/src/gs/audio_sdl.c) $(if $(filter 0,$(NET)),$(NET_SRC)),\
+GS_SRC    := $(filter-out $(if $(filter none,$(AUDIO)),port/src/gs/audio_sdl.c) $(if $(filter 0,$(NET)),$(NET_SRC)) \
+               $(if $(filter 0,$(TEXPACK)),port/src/gs/gs_texpack.c),\
                $(sort $(wildcard port/src/gs/*.c)))
 CXX_SRC   := $(sort $(wildcard port/third_party/imgui/*.cpp port/src/gs/*.cpp))
 VU0_SRC   := src/port/vu0_a.c src/port/vu0_b.c
@@ -63,7 +66,8 @@ PVR_C_OBJ   := $(foreach f,$(PVR_C_SRC),$(OBJ)/gs_pvrlib_$(basename $(notdir $(f
 PVR_OBJ     := $(if $(filter 1,$(PVR)),$(PVR_CXX_OBJ) $(PVR_C_OBJ))
 
 # AUDIO=none: the sound output that has none (port/src/null)
-NULL_OBJ  := $(if $(filter none,$(AUDIO)),$(OBJ)/pc_audio_null.o) $(if $(filter 0,$(NET)),$(OBJ)/pc_net_null.o)
+NULL_OBJ  := $(if $(filter none,$(AUDIO)),$(OBJ)/pc_audio_null.o) $(if $(filter 0,$(NET)),$(OBJ)/pc_net_null.o) \
+             $(if $(filter 0,$(TEXPACK)),$(OBJ)/pc_texpack_null.o)
 
 OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ) $(NULL_OBJ)
 
@@ -106,6 +110,9 @@ $(shell mkdir -p $(OBJ); if [ "$$(cat $(AUDIO_FLAG) 2>/dev/null)" != "$(AUDIO)" 
 NET_FLAG := $(OBJ)/net.flag
 $(shell mkdir -p $(OBJ); if [ "$$(cat $(NET_FLAG) 2>/dev/null)" != "$(NET)" ]; then echo $(NET) > $(NET_FLAG); \
         rm -f $(OBJ)/pc_net_null.o $(patsubst port/src/gs/%.c,$(OBJ)/gs_%.o,$(NET_SRC)); fi)
+TEXPACK_FLAG := $(OBJ)/texpack.flag
+$(shell mkdir -p $(OBJ); if [ "$$(cat $(TEXPACK_FLAG) 2>/dev/null)" != "$(TEXPACK)" ]; then echo $(TEXPACK) > $(TEXPACK_FLAG); \
+        rm -f $(OBJ)/pc_texpack_null.o $(OBJ)/gs_gs_texpack.o; fi)
 
 # ------------------------------------------------------------------------------------------------------ the rules
 
@@ -178,6 +185,8 @@ $(OBJ)/pc_vu0_%.o: src/port/vu0_%.c | $(OBJ)
 $(OBJ)/pc_audio_null.o: port/src/null/audio_null.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
 $(OBJ)/pc_net_null.o: port/src/null/net_null.c | $(OBJ)
+	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
+$(OBJ)/pc_texpack_null.o: port/src/null/texpack_null.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
 $(OBJ)/pc_%.o: port/src/%.c | $(OBJ) $(PYTHON)
 	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))

@@ -70,15 +70,15 @@ extern void ColBounds_OfObb(BobjAabb *out, BobjObb *box);
 extern void ColSphere_Set(BobjSphere *out, Vec4 *center, f32 radius);
 /* The second part of this file (formerly bobj_b.c): aliased declarations with this part's types, because the
    second part defines these functions with its own (a cast macro would rewrite the definitions). */
-extern BobjBone *BtlObj_FindBound_a(BobjObj *obj, s32 node) __asm__("BtlObj_FindBound");
+extern BobjBone *BtlObj_FindBound_a(BobjObj *obj, s32 node) ASM_NAME("BtlObj_FindBound");
 #define BtlObj_FindBound BtlObj_FindBound_a
-extern BobjPart *BtlObj_GetNode_a(BobjObj *obj, s32 node) __asm__("BtlObj_GetNode");
+extern BobjPart *BtlObj_GetNode_a(BobjObj *obj, s32 node) ASM_NAME("BtlObj_GetNode");
 #define BtlObj_GetNode BtlObj_GetNode_a
-extern BobjPart *BtlObj_GetNodeByCode_a(BobjObj *obj, s32 code) __asm__("BtlObj_GetNodeByCode");
+extern BobjPart *BtlObj_GetNodeByCode_a(BobjObj *obj, s32 code) ASM_NAME("BtlObj_GetNodeByCode");
 #define BtlObj_GetNodeByCode BtlObj_GetNodeByCode_a
-extern s32 BtlObj_IsJawActive_a(BobjObj *obj) __asm__("BtlObj_IsJawActive");
+extern s32 BtlObj_IsJawActive_a(BobjObj *obj) ASM_NAME("BtlObj_IsJawActive");
 #define BtlObj_IsJawActive BtlObj_IsJawActive_a
-extern void BtlObj_GetJawRot_a(BobjObj *obj, Quat *out) __asm__("BtlObj_GetJawRot");
+extern void BtlObj_GetJawRot_a(BobjObj *obj, Quat *out) ASM_NAME("BtlObj_GetJawRot");
 #define BtlObj_GetJawRot BtlObj_GetJawRot_a
 
 /* 0, 0, 0, 1: the zero translation and the identity rotation. */

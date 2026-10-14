@@ -912,7 +912,7 @@ void EftPtcl_DrawSprites(EftPtclWork *w, EftPtclWork *w2) {
    at the top of the loop is consistent with that (its slot instruction sets v0, which the loop end sets first).
    No natural source form that makes the last jump pass replace that label was found (tried: `continue` forms,
    the link assignment in every arm, the chain tail in every arm, unsigned compares of the result). */
-extern u32 *volatile gOtCurRead __asm__("gOtCur");
+extern u32 *volatile gOtCurRead ASM_NAME("gOtCur");
 void EftPtcl_DrawAxisQuads(EftPtclWork *w, EftPtclWork *w2) {
     EftVVec quad[4];
     EftVVec cam;

@@ -271,8 +271,9 @@ int __wrap_main(int argc, char **argv) {
 
 #else
 /* -------------------------------------------------------------------------------------------------------- Linux */
-#include <sys/mman.h>
 #include <unistd.h>
+#if __has_include(<sys/mman.h>)
+#include <sys/mman.h>
 
 static void map(uint32_t addr, uint32_t size, const char *what) {
     void *p = mmap((void *)(uintptr_t)addr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
@@ -287,6 +288,19 @@ static void map(uint32_t addr, uint32_t size, const char *what) {
 static void map_heap(void) {
     map(HEAP_BASE, HEAP_END - HEAP_BASE, "the game heap");
 }
+#else
+/* No mmap (KallistiOS): the heap where the C library puts it, as Windows when the PS2's address is taken. */
+static void map_heap(void) {
+    uint8_t *p = malloc(HEAP_END - HEAP_BASE);
+
+    if (p == NULL) {
+        fprintf(stderr, "bt3: no room for the game heap (%u MB)\n", (HEAP_END - HEAP_BASE) >> 20);
+        exit(2);
+    }
+    sHeapNext = (uint32_t)(uintptr_t)p + (HEAP_FIRST - HEAP_BASE);
+    sHeapEnd = (uint32_t)(uintptr_t)p + (HEAP_END - HEAP_BASE);
+}
+#endif
 
 #ifdef __x86_64__
 /* The 64-bit build: the game's pointers are still 4 bytes wide (port/tools/ptr32.py), so everything the game can

@@ -476,7 +476,7 @@ void StgCol_FighterBreakObj(StgColFighter *obj, s32 idx, StgColVec *hitPos) {
 
 /* StgCol_FirstBit as a function not yet seen by the compiler: StgCol_TraceZone and StgCol_CollectZone only match
    that way (branch-likely choice), so in the original it was not defined earlier in their source file. */
-extern s32 StgCol_FirstBit_(u64 mask) __asm__("StgCol_FirstBit");
+extern s32 StgCol_FirstBit_(u64 mask) ASM_NAME("StgCol_FirstBit");
 
 /* Mesh callback of the segment trace: keeps the nearest solid triangle the segment crosses. */
 s32 StgCol_SegCb(StgColNode *node, StgColCtx *ctx) {

@@ -9,6 +9,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef PORT_GAME_HARD_FLOAT
+/* The game in hardware float (Makefile.dc): no bridge, the same functions on floats. */
+float Port_ceilf(float a) { return ceilf(a); }
+float Port_expf(float a) { return expf(a); }
+float Port_logf(float a) { return logf(a); }
+float Port_fmodf(float a, float b) { return fmodf(a, b); }
+double Port_pow(double a, double b) { return pow(a, b); }
+#else
 static float f(uint32_t u) { float x; __builtin_memcpy(&x, &u, 4); return x; }
 static uint32_t u(float x) { uint32_t v; __builtin_memcpy(&v, &x, 4); return v; }
 static double d(uint64_t v) { double x; __builtin_memcpy(&x, &v, 8); return x; }
@@ -45,3 +53,4 @@ int __ledf2(uint64_t a, uint64_t b) { return dcmp(a, b); }
 int __gtdf2(uint64_t a, uint64_t b) { return dcmp(a, b); }
 int __gedf2(uint64_t a, uint64_t b) { return dcmp(a, b); }
 int __unorddf2(uint64_t a, uint64_t b) { return d(a) != d(a) || d(b) != d(b); } /* clang asks for it; gcc does not */
+#endif

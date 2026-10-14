@@ -1,7 +1,13 @@
 /* The settings window (ui.cpp, Dear ImGui) and what it reaches of the renderer and the input code. C and C++. */
 #ifndef PORT_UI_H
 #define PORT_UI_H
-#include <SDL3/SDL.h>
+#include <stdint.h>
+/* SDL's types, named only (ui.cpp and the PC's files have SDL's header): so that this one does not need it */
+struct SDL_Window;
+union SDL_Event;
+struct SDL_GPUDevice;
+struct SDL_GPUCommandBuffer;
+struct SDL_GPUTexture;
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,12 +33,16 @@ typedef struct PortVideo {
 /* gs_draw.c */
 void GsGpu_GetSettings(PortVideo *v);
 void GsGpu_SetSettings(const PortVideo *v); /* applies what changed and saves it */
-/* gs_draw.c: the one window both back ends share (created before the device / the GL context). */
-SDL_Window *GsDraw_WindowCreate(int opengl);
-SDL_Window *GsDraw_Window(void);
+/* gs_window.c: the one window both back ends share (created before the device / the GL context); NULL without
+   one (port/src/null/window_null.c) */
+struct SDL_Window *GsDraw_WindowCreate(int opengl);
+struct SDL_Window *GsDraw_Window(void);
 void GsDraw_WindowShape(void);
 void GsDraw_FullscreenSet(int on);
 void GsDraw_FullscreenToggle(void); /* F11: switch, save it, write the settings */
+int GsDraw_Fullscreen(void);
+void GsDraw_Wait(uint64_t ns); /* ns from now, to within a fraction of a millisecond */
+void GsDraw_Events(void);      /* the window's events, once a frame */
 
 /* gs_input.c: bindings of both players. Actions 0..15 are the pad's buttons, 16..23 the two sticks' directions. */
 #define PORT_ACTIONS 24
@@ -45,7 +55,7 @@ int *PortInput_PadButtons(int player); /* [PORT_PAD_BUTTONS] controller source, 
 int *PortInput_PadSlot(int player);    /* which connected controller: -1 none, 0 = first, ... */
 int *PortInput_OverlayKey(void);       /* the key that opens and closes the settings window (scancode, 0 = none) */
 int *PortInput_OverlayPad(void);       /* the controller button that does (-1 = none; START + SELECT always do) */
-int PortInput_Hotkey(const SDL_Event *ev); /* 1 = the event opens or closes the settings window */
+int PortInput_Hotkey(const union SDL_Event *ev); /* 1 = the event opens or closes the settings window */
 void PortInput_Swallow(void);           /* the controller buttons held now are not the game's until they are let go */
 void PortInput_SwallowKeys(void);       /* the same for the bound keys held now */
 int *PortInput_ChatKey(void);           /* the key that opens the online chat's line (scancode, 0 = none) */
@@ -71,9 +81,9 @@ extern int gPortInputCapture;  /* it is waiting for a key or button to bind: not
 extern int gPortChatTyping;    /* a line of the online chat is being typed: the keyboard does not reach the game */
 
 /* ui.cpp */
-int Ui_Init(SDL_Window *window, SDL_GPUDevice *device, void *gl_context); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
+int Ui_Init(struct SDL_Window *window, struct SDL_GPUDevice *device, void *gl_context); /* device: the SDL GPU back end; NULL and a GL context: the OpenGL one */
 void Ui_DrawGL(void); /* the OpenGL back end: draws this frame's window with the context current */
-int Ui_Event(const SDL_Event *ev); /* 1 = the window used the event */
+int Ui_Event(const union SDL_Event *ev); /* 1 = the window used the event */
 int GsDraw_FrameSkip(void);       /* gs_draw.c */
 void GsDraw_FrameSkipSet(int on);
 void GsGpu_Vsync(int on); /* gs_gpu.c */
@@ -81,8 +91,8 @@ void GsGl_Vsync(int on);  /* gs_gl.c */
 int Port_Setting(const char *name, int def); /* plat_settings.c */
 void Ui_Toggle(void);
 int Ui_QuitAsk(void); /* Esc outside the window: asks before the game closes. 0 = there is no window to ask in */
-void Ui_Draw(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target);      /* builds and draws this frame's window */
-void Ui_DrawAgain(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target); /* the same picture onto another texture */
+void Ui_Draw(struct SDL_GPUCommandBuffer *cmd, struct SDL_GPUTexture *target);      /* builds and draws this frame's window */
+void Ui_DrawAgain(struct SDL_GPUCommandBuffer *cmd, struct SDL_GPUTexture *target); /* the same picture onto another texture */
 
 /* Stage-name overlay: the names of stages added from outside the disc are drawn by the port (its font has no
    stylized glyphs), over the picture, in the game's own coordinates. gs_gpu.c fills the present rectangle (the

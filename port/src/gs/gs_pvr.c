@@ -5,7 +5,7 @@
  * file as the sPvrBackend. It talks to the chip through the KOS PVR API (<dc/pvr.h>: pvr_scene_begin, the
  * polygon lists, pvr_mem_malloc), so the same code is meant to build for the Dreamcast against KOS itself. On PC
  * the API is port/third_party/gpu_pvr: KOS's PVR calls on libpvr, a software PowerVR, whose finished 640 x 480
- * picture is shown in the game's own window (pvr_host_attach).
+ * picture is shown in the game's own window (pvr_host_attach). On the Dreamcast (__DREAMCAST__) it is KOS.
  *
  * Built only with the Makefile's PVR=1 (the default there): -DBT3_PVR and gpu_pvr's include paths. Without it
  * this file is empty, so install.py's build is what it was. gpu_pvr's kos_pvr.cpp is GPL-2.0-only: a program
@@ -22,18 +22,29 @@
  * there from the depth, which the PVR cannot read (frame_render). It could be made per vertex from the depth.
  */
 #ifdef BT3_PVR
-#include <SDL3/SDL.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dc/pvr.h>
-#include "pvr_host.h"
 #include "gs_internal.h"
 #include "gs_draw.h"
 #include "ui.h"
+#ifndef __DREAMCAST__
+#include "pvr_host.h" /* gpu_pvr: the window the picture is shown in */
+#else
+static uint32_t sFbCfg2; /* the pixel format the PVR writes, as vid_set_mode left it (the screen's RGB565) */
+#endif
 
-static SDL_Window *sWindow;
+/* The next render (pvr_scene_begin_rtt) writes ARGB4444 instead of RGB565. KOS has no call for it: the PVR's
+   register, which a render to the screen puts back. */
+static void rtt_argb4444(void) {
+#ifdef __DREAMCAST__
+    PVR_SET(PVR_FB_CFG_2, (sFbCfg2 & ~7u) | 2u);
+#else
+    kos_pvr_rtt_argb4444();
+#endif
+}
 
 /* What a scene may send: the vertex buffer pvr_init was given, less a margin (the background polygon, and the
    TA's own layout of a polygon being a little larger than what is sent). kos_pvr does not stop at its end: what
@@ -281,13 +292,19 @@ static int pvr_be_init(void) {
         0,
     };
 
-    sWindow = GsDraw_WindowCreate(0);
-    if (sWindow == NULL) { return 0; }
-    if (pvr_host_attach(sWindow) != 0) { return 0; }
+#ifndef __DREAMCAST__
+    {
+        struct SDL_Window *window = GsDraw_WindowCreate(0);
+        if (window == NULL || pvr_host_attach(window) != 0) { return 0; }
+    }
+#endif
     if (pvr_init(&params) != 0) {
         fprintf(stderr, "bt3: pvr: pvr_init failed\n");
         return 0;
     }
+#ifdef __DREAMCAST__
+    sFbCfg2 = PVR_GET(PVR_FB_CFG_2);
+#endif
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
     fprintf(stderr, "bt3: PVR renderer: libpvr (software PowerVR), %u KB of PVR memory free\n", (unsigned)(pvr_mem_available() / 1024));
     return 1;
@@ -814,12 +831,15 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
     sSent = 0;
     sSecAlpha = 0;
     if (dst != NULL) {
-        kos_pvr_rtt_argb4444();
+        rtt_argb4444();
         pvr_scene_begin_rtt(dst->t.mem, dst->t.w, dst->t.h, dst->t.w);
         sSx = sSy = 1.0f;
         sRw = (float)dst->t.w;
         sRh = (float)dst->t.h;
     } else {
+#ifdef __DREAMCAST__
+        PVR_SET(PVR_FB_CFG_2, sFbCfg2);
+#endif
         pvr_scene_begin();
         sSx = 640.0f / 512.0f;
         sSy = 480.0f / 448.0f;
@@ -1098,17 +1118,10 @@ static void draw_log(int shown) {
 }
 
 static void frame_end(void) {
-    SDL_Event ev;
     int i, shown;
 
     GsGpu_TitlePoll();
-    while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_EVENT_QUIT) { exit(0); }
-        { extern void PortA11y_Event(const SDL_Event *ev); PortA11y_Event(&ev); } /* a11y.c: the repeat key and button */
-        if (PortInput_Hotkey(&ev)) { continue; } /* (no settings window on this back end yet) */
-        if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE && !ev.key.repeat) { exit(0); }
-        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat && ev.key.key == SDLK_F11) { GsDraw_FullscreenToggle(); }
-    }
+    GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
         fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures (%u KB in PVR memory, at most %u KB), %d pipelines\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sTexBytes >> 10, sTexPeak >> 10, sPipeCount);
@@ -1127,6 +1140,7 @@ static void frame_end(void) {
         if (every > 0 && gGsFrame % (unsigned)every == 0 &&
             (getenv("BT3_SHOT_FROM") == NULL || (int)gGsFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
             (getenv("BT3_SHOT_TO") == NULL || (int)gGsFrame <= atoi(getenv("BT3_SHOT_TO")))) {
+#ifndef __DREAMCAST__ /* (gpu_pvr's picture; on the Dreamcast it is in video memory) */
             extern int kos_pvr_read_front(uint8_t *rgb, int stride, int w, int h);
             static uint8_t rgb[640 * 480 * 3];
             char name[64];
@@ -1137,6 +1151,7 @@ static void frame_end(void) {
                 fwrite(rgb, 1, sizeof(rgb), fp);
                 fclose(fp);
             }
+#endif
         }
     }
 

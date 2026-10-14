@@ -1241,7 +1241,7 @@ void BtlSeq_JudgeByHealth(BattleResult *result) {
  *   (the branch before it is `bnezl` only then). In the original this function was therefore compiled without
  *   BtlSeq_TickClocks() defined above it, i.e. the clock code was most likely a separate source file. Until the
  *   file is split, the call goes through a second declaration of the same symbol. */
-extern s32 BtlSeq_TickClocksExt(void) __asm__("BtlSeq_TickClocks");
+extern s32 BtlSeq_TickClocksExt(void) ASM_NAME("BtlSeq_TickClocks");
 
 s32 BtlSeq_CheckBattleEnd(void) {
     BattleResult *result = Battle_GetResult();

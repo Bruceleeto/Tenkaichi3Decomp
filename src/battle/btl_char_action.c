@@ -676,16 +676,16 @@ void BtlAct_ApplyFlag94(BtlActChr *chr) {
  * file). That is evidence of a source file boundary somewhere between BtlAct_GetQueued and
  * BtlAct_CheckForced; until the files are split, the calls go through aliased declarations.
  */
-extern s32 BtlAct_GetCurrent_(BtlActChr *chr) __asm__("BtlAct_GetCurrent");
-extern s32 BtlAct_GetRequested_(BtlActChr *chr) __asm__("BtlAct_GetRequested");
-extern s32 BtlAct_GetPrev_(BtlActChr *chr) __asm__("BtlAct_GetPrev");
-extern s32 BtlAct_GetQueued_(BtlActChr *chr) __asm__("BtlAct_GetQueued");
-extern void BtlAct_PopQueue_(BtlActChr *chr) __asm__("BtlAct_PopQueue");
-extern s32 BtlAct_IsTechniqueId_(s32 id) __asm__("BtlAct_IsTechniqueId");
-extern s32 BtlAct_GetCurrentClass_(BtlActChr *chr) __asm__("BtlAct_GetCurrentClass");
-extern f32 BtlAct_GetHeight_(BtlActChr *chr) __asm__("BtlAct_GetHeight");
+extern s32 BtlAct_GetCurrent_(BtlActChr *chr) ASM_NAME("BtlAct_GetCurrent");
+extern s32 BtlAct_GetRequested_(BtlActChr *chr) ASM_NAME("BtlAct_GetRequested");
+extern s32 BtlAct_GetPrev_(BtlActChr *chr) ASM_NAME("BtlAct_GetPrev");
+extern s32 BtlAct_GetQueued_(BtlActChr *chr) ASM_NAME("BtlAct_GetQueued");
+extern void BtlAct_PopQueue_(BtlActChr *chr) ASM_NAME("BtlAct_PopQueue");
+extern s32 BtlAct_IsTechniqueId_(s32 id) ASM_NAME("BtlAct_IsTechniqueId");
+extern s32 BtlAct_GetCurrentClass_(BtlActChr *chr) ASM_NAME("BtlAct_GetCurrentClass");
+extern f32 BtlAct_GetHeight_(BtlActChr *chr) ASM_NAME("BtlAct_GetHeight");
 /* BtlAct_Action04 ends on a tail call to BtlChar_SetFlag, which an int function only gets from `return f();`. */
-extern s32 BtlChar_SetFlagRet(BtlActChr *chr, s32 bit) __asm__("BtlChar_SetFlag");
+extern s32 BtlChar_SetFlagRet(BtlActChr *chr, s32 bit) ASM_NAME("BtlChar_SetFlag");
 
 /*
  * Forced actions: turns fighter flags raised elsewhere (hits, grabs, scripted events) into action

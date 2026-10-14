@@ -124,7 +124,7 @@ extern s32 BtlObjAnim_MaskToNode(s32 bits);
 extern s32 BtlObjAnim_QueryEvent(void *obj, u64 a, s32 b, s32 c);
 extern f32 BtlMoveParam_GetSpeed(Chr *chr, s32 n);
 extern f32 BtlMoveParam_GetTurnRate(Chr *chr, s32 n);
-extern s32 BtlChar_ClearFlagRet(Chr *chr, s32 n) __asm__("BtlChar_ClearFlag");
+extern s32 BtlChar_ClearFlagRet(Chr *chr, s32 n) ASM_NAME("BtlChar_ClearFlag");
 extern void BtlCharApi_GetNodePos(s32 objId, s32 node, Vec4 *out);
 extern void BtlCharApi_CalcAimDir(s32 objId, s32 node, Vec4 *pos, Vec4 *out, f32 min, f32 max);
 extern s32 BtlKiBlast_GetKiCost(Chr *chr);
@@ -151,7 +151,7 @@ extern s32 BtlAct_GetEvasionAttack(Chr *chr);
 extern s32 BtlAct_GetIdleFollowUp(Chr *chr);
 
 /* BtlChar_SetFlag as the tail call of an int function (`return f();`). */
-extern s32 BtlChar_SetFlagRet(Chr *chr, s32 n) __asm__("BtlChar_SetFlag");
+extern s32 BtlChar_SetFlagRet(Chr *chr, s32 n) ASM_NAME("BtlChar_SetFlag");
 
 /*
  * Actions 0xDA..0xDE: lying / hitting the ground after a knock-down (name from BtlAct_GetDownAction and the

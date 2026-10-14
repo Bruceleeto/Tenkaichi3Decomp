@@ -497,7 +497,7 @@ void DiscFusion_UpdateTalk(void) {
  * pointer for the store that follows a call is put in v0, the original has it in v1. Only this function of the
  * file shows the difference.
  */
-extern s32 Snd_PlaySe_ret(u32 mask, s32 id) __asm__("Snd_PlaySe");
+extern s32 Snd_PlaySe_ret(u32 mask, s32 id) ASM_NAME("Snd_PlaySe");
 
 /* Pad 0: up / down move between the two plates, confirm picks one, cancel leaves. */
 void DiscFusion_Input(s32 *result) {

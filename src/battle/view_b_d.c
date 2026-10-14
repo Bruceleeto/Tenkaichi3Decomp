@@ -100,7 +100,7 @@ extern u8 gBattleProf[];
 extern void *gBtlCamView;
 
 /* sys/file.h declares two parameters; the call passes a third (0), which File_Request ignores */
-extern void *File_Request3(s32 id, void *buf, s32 unused) __asm__("File_Request");
+extern void *File_Request3(s32 id, void *buf, s32 unused) ASM_NAME("File_Request");
 
 /* Defined here: this object's .sdata (0x2FF118). */
 ShenScene *gShenScene = NULL;

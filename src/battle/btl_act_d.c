@@ -468,7 +468,7 @@ s32 BtlAct_IdleOnceHandler(BtlActDChr *chr, s32 phase) {
 }
 
 extern f32 BtlMoveParam_GetSpeed(BtlActDChr *chr, s32 kind); /* speed of the character table (obj +0x928)[kind], scaled; kinds 4, 5 also by pose +0xAC */
-extern s32 BtlMove_TurnYawRet(BtlActDChr *chr, s32 mode, f32 maxStep) __asm__("BtlMove_TurnYaw");
+extern s32 BtlMove_TurnYawRet(BtlActDChr *chr, s32 mode, f32 maxStep) ASM_NAME("BtlMove_TurnYaw");
 
 /*
  * Action 0xD: free movement (motions 2 -> 3 with side layers 4..7 weighted by the sine of the heading relative to

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "../gs/audio_out.h"
 
+int AudioOut_Possible(void) { return 0; }
 int AudioOut_Open(void) { return 0; }
 const char *AudioOut_Driver(void) { return "none"; }
 const char *AudioOut_Error(void) { return "built without sound (AUDIO=none)"; }

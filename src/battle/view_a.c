@@ -30,7 +30,7 @@ extern void Font_FlushAll(void);
 extern s32 Font_CountLines(u16 *str);
 
 extern void Num_Draw_(Flash *flash, char *fmt, s32 first, s32 count, s32 value, s32 w, s32 h, s32 mode)
-    __asm__("Num_Draw");
+    ASM_NAME("Num_Draw");
 /* text box module, after 0x2600B0 (not decompiled) */
 extern void TextBox_SetLineOffsets(TextBox *box, s32 a, s32 b, s32 c, s32 d, s32 e);
 extern void TextBox_AttachLine(Flash *flash, FlashRef *ref, s32 a, s32 b, s32 line, TextBox *box); /* draws a line in a clip */

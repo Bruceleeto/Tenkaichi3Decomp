@@ -14,7 +14,7 @@
 extern EftGndDustPart *EftGndDust_SpawnPieceX(EftGndDustEmit *w, Vec4 *pos, Vec4 *dir, u8 *colA, u8 *colB, f32 sizeX,
                                              f32 sizeY, f32 growX, f32 growY, f32 speed, f32 drag, f32 rot, f32 spin,
                                              s16 life, s16 fade, s16 tex, f32 unkB8, f32 gravity, s32 flags)
-    __asm__("EftGndDust_SpawnPieceEx");
+    ASM_NAME("EftGndDust_SpawnPieceEx");
 
 /* Kind 5 init: two particles thrown outwards from the point.
    Matching notes: the callback's argument is copied into a typed local declared BEHIND `w` (declared first, or

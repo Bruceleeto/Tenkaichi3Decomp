@@ -100,53 +100,53 @@ extern void EftTexSet_Load32(u8 *tex, s32 *data);
 extern void EftWater_UpdateTextures(s32 a0, s32 a1);
 /* The pool functions below are defined in the second part of this file (formerly eft_f.c) with that part's own
  * types; this part calls them through aliased declarations with its view types (same symbol, same code). */
-extern void EftWaterSplash_UpdateList_e(EftWaterSplash **head, EftWaterSplash **tail) __asm__("EftWaterSplash_UpdateList");
+extern void EftWaterSplash_UpdateList_e(EftWaterSplash **head, EftWaterSplash **tail) ASM_NAME("EftWaterSplash_UpdateList");
 #define EftWaterSplash_UpdateList EftWaterSplash_UpdateList_e
-extern void EftWaterSplash_DrawList_e(void *head) __asm__("EftWaterSplash_DrawList");
+extern void EftWaterSplash_DrawList_e(void *head) ASM_NAME("EftWaterSplash_DrawList");
 #define EftWaterSplash_DrawList EftWaterSplash_DrawList_e
-extern void EftWaterTrail_Spawn_e(void **head, void **tail, s32 objId, EftWaterBlast *rec) __asm__("EftWaterTrail_Spawn");
+extern void EftWaterTrail_Spawn_e(void **head, void **tail, s32 objId, EftWaterBlast *rec) ASM_NAME("EftWaterTrail_Spawn");
 #define EftWaterTrail_Spawn EftWaterTrail_Spawn_e
-extern void EftWaterTrail_UpdateList_e(void **head, void **tail) __asm__("EftWaterTrail_UpdateList");
+extern void EftWaterTrail_UpdateList_e(void **head, void **tail) ASM_NAME("EftWaterTrail_UpdateList");
 #define EftWaterTrail_UpdateList EftWaterTrail_UpdateList_e
-extern void EftWaterTrail_DrawList_e(void *head) __asm__("EftWaterTrail_DrawList");
+extern void EftWaterTrail_DrawList_e(void *head) ASM_NAME("EftWaterTrail_DrawList");
 #define EftWaterTrail_DrawList EftWaterTrail_DrawList_e
-extern void EftWaterDrop_UpdateList_e(void **head, void **tail) __asm__("EftWaterDrop_UpdateList");
+extern void EftWaterDrop_UpdateList_e(void **head, void **tail) ASM_NAME("EftWaterDrop_UpdateList");
 #define EftWaterDrop_UpdateList EftWaterDrop_UpdateList_e
-extern void EftWaterDrop_DrawList_e(void *head, EftEVec origin) __asm__("EftWaterDrop_DrawList");
+extern void EftWaterDrop_DrawList_e(void *head, EftEVec origin) ASM_NAME("EftWaterDrop_DrawList");
 #define EftWaterDrop_DrawList EftWaterDrop_DrawList_e
-extern void EftWaterRing_UpdateList_e(void **head, void **tail) __asm__("EftWaterRing_UpdateList");
+extern void EftWaterRing_UpdateList_e(void **head, void **tail) ASM_NAME("EftWaterRing_UpdateList");
 #define EftWaterRing_UpdateList EftWaterRing_UpdateList_e
-extern void EftWaterRing_DrawList_e(void *head) __asm__("EftWaterRing_DrawList");
+extern void EftWaterRing_DrawList_e(void *head) ASM_NAME("EftWaterRing_DrawList");
 #define EftWaterRing_DrawList EftWaterRing_DrawList_e
-extern void EftWaterSpray_UpdateList_e(void **head, void **tail) __asm__("EftWaterSpray_UpdateList");
+extern void EftWaterSpray_UpdateList_e(void **head, void **tail) ASM_NAME("EftWaterSpray_UpdateList");
 #define EftWaterSpray_UpdateList EftWaterSpray_UpdateList_e
-extern void EftWaterSpray_DrawList_e(void *head, EftEVec origin) __asm__("EftWaterSpray_DrawList");
+extern void EftWaterSpray_DrawList_e(void *head, EftEVec origin) ASM_NAME("EftWaterSpray_DrawList");
 #define EftWaterSpray_DrawList EftWaterSpray_DrawList_e
-extern void EftWaterMist_UpdateList_e(void **head, void **tail) __asm__("EftWaterMist_UpdateList");
+extern void EftWaterMist_UpdateList_e(void **head, void **tail) ASM_NAME("EftWaterMist_UpdateList");
 #define EftWaterMist_UpdateList EftWaterMist_UpdateList_e
-extern void EftWaterMist_DrawList_e(void *head) __asm__("EftWaterMist_DrawList");
+extern void EftWaterMist_DrawList_e(void *head) ASM_NAME("EftWaterMist_DrawList");
 #define EftWaterMist_DrawList EftWaterMist_DrawList_e
 
 /* Billboard: yaw / pitch / speed of its flight, rot, size and its growth, gravity, life, start delay. */
 extern void EftWaterDrop_Spawn_e(void **head, void **tail, EftEVec pos, f32 yaw, f32 pitch, f32 speed, f32 rot, f32 rotVel,
                           f32 size, f32 sizeVel, f32 sizeDamp, f32 gravity, f32 life, f32 delay, u8 r, u8 g, u8 b,
-                          u8 tex, u8 layer, s32 flags) __asm__("EftWaterDrop_Spawn");
+                          u8 tex, u8 layer, s32 flags) ASM_NAME("EftWaterDrop_Spawn");
 #define EftWaterDrop_Spawn EftWaterDrop_Spawn_e
 /* Ring lying on the surface. */
 extern void EftWaterRing_Spawn_e(void **head, void **tail, EftEVec pos, f32 rot, f32 size, f32 sizeVel, f32 sizeDamp,
-                          f32 alphaMax, f32 time, f32 delay, u8 r, u8 g, u8 b, u8 tex, u8 layer, s32 flags) __asm__("EftWaterRing_Spawn");
+                          f32 alphaMax, f32 time, f32 delay, u8 r, u8 g, u8 b, u8 tex, u8 layer, s32 flags) ASM_NAME("EftWaterRing_Spawn");
 #define EftWaterRing_Spawn EftWaterRing_Spawn_e
 /* Streak thrown out along a direction. */
 extern void EftWaterSpray_Spawn_e(void **head, void **tail, EftEVec pos, f32 dist, f32 height, f32 yaw, f32 pitch, f32 roll,
                           f32 tilt, f32 tiltEnd, f32 speed, f32 size, f32 sizeVel, f32 sizeDamp, f32 gravity,
                           f32 nearScale, f32 widthScale, f32 life, f32 delay, u8 r, u8 g, u8 b, u8 tex, u8 layer,
-                          s32 flags) __asm__("EftWaterSpray_Spawn");
+                          s32 flags) ASM_NAME("EftWaterSpray_Spawn");
 #define EftWaterSpray_Spawn EftWaterSpray_Spawn_e
 /* Streak that orbits. */
 extern void EftWaterMist_Spawn_e(void **head, void **tail, EftEVec pos, f32 radius, f32 height, f32 yaw, f32 yawVel,
                           f32 yawDamp, f32 pitch, f32 roll, f32 tilt, f32 tiltEnd, f32 speed, f32 size, f32 sizeVel,
                           f32 sizeDamp, f32 gravity, f32 nearScale, f32 widthScale, f32 life, f32 delay, u8 r, u8 g,
-                          u8 b, u8 tex, u8 layer) __asm__("EftWaterMist_Spawn");
+                          u8 b, u8 tex, u8 layer) ASM_NAME("EftWaterMist_Spawn");
 #define EftWaterMist_Spawn EftWaterMist_Spawn_e
 
 #define EFT_RANDF() ((f32)rand() / 2147483647.0f)
