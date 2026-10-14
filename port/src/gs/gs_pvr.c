@@ -234,7 +234,7 @@ static void put_vertex(const ClipV *c, int last) {
 
 /* A triangle (or what is left of it) in screen pixels, clipped against the scissor rectangle and sent as a fan. */
 static void emit_poly(ClipV *a, int m, float x0, float y0, float x1, float y1) {
-    ClipV b[12];
+    ClipV b[16];
     int j, k, inside = 1;
 
     for (j = 0; j < m; j++) {
@@ -358,9 +358,12 @@ static int clip_plane(const ClipH *in, int n, ClipH *out, const float *plane) {
     return m;
 }
 
-/* A vertex-program triangle: clipped in clip space against the eye (w > 0) only, then projected to screen pixels,
-   then the scissor. Depth is clamped, not clipped: the PC back ends turn the GPU's depth clipping off for the same
-   reason (the sky and far scenery lie beyond the GS's depth range and are drawn all the same). */
+/* A vertex-program triangle: clipped in clip space against the eye (w > 0) and a guard band of GUARD pixels around
+   the screen (as a GPU does: a vertex just in front of the eye would otherwise land millions of pixels away, past
+   what the PVR's edge arithmetic holds), then projected to screen pixels, then the scissor. Depth is clamped, not
+   clipped: the PC back ends turn the GPU's depth clipping off for the same reason (the sky and far scenery lie
+   beyond the GS's depth range and are drawn all the same). */
+#define GUARD 1024.0f
 /* A clip-space vertex in screen pixels, the PVR's depth and colour. */
 static void vu_project(const ClipH *a, const Vu0Uniform *U, ClipV *o) {
     const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
@@ -375,13 +378,23 @@ static void vu_project(const ClipH *a, const Vu0Uniform *U, ClipV *o) {
 }
 
 static void vu_triangle(int vu, const Vu0Uniform *U, const uint32_t *idx, float x0, float y0, float x1, float y1) {
-    ClipH a[12], b[12];
-    ClipV out[12];
+    const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
+    ClipH a[16], b[16];
+    ClipV out[16];
     int j, m = 3;
     const float eye[5] = {0.0f, 0.0f, 0.0f, 1.0f, -1e-3f};
+    /* screen x = (s.x / w - misc.x) * sx within [-GUARD, 640 + GUARD], y alike */
+    const float left[5] = {1.0f, 0.0f, 0.0f, -(U->misc[0] - GUARD / sx), 0.0f};
+    const float right[5] = {-1.0f, 0.0f, 0.0f, U->misc[0] + (640.0f + GUARD) / sx, 0.0f};
+    const float top[5] = {0.0f, 1.0f, 0.0f, -(U->misc[1] - GUARD / sy), 0.0f};
+    const float bottom[5] = {0.0f, -1.0f, 0.0f, U->misc[1] + (480.0f + GUARD) / sy, 0.0f};
 
     for (j = 0; j < 3; j++) { vu_vertex(vu, U, &gsVuVerts[(size_t)idx[j] * 12], &a[j]); }
     m = clip_plane(a, m, b, eye);
+    m = clip_plane(b, m, a, left);
+    m = clip_plane(a, m, b, right);
+    m = clip_plane(b, m, a, top);
+    m = clip_plane(a, m, b, bottom);
     if (m < 3) { return; }
     for (j = 0; j < m; j++) { vu_project(&b[j], U, &out[j]); }
     emit_poly(out, m, x0, y0, x1, y1);
@@ -480,6 +493,9 @@ static void draw_list(int shown) {
                             w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11]);
                 }
             }
+            if (d->vu) {
+                fprintf(stderr, "pvr:   blendc %.2f misc %.0f %.0f %.0f %.0f sampler %d\n", d->blendc, d->misc[0], d->misc[1], d->misc[2], d->misc[3], d->sampler);
+            }
             if (!d->vu && d->count > 0) {
                 const Vtx *v = &gsVerts[d->first];
                 fprintf(stderr, "pvr:   first vertex %.1f %.1f z %.6f rgba %u %u %u %u st %.3f %.3f %.3f; blendc %.2f misc %.0f %.0f %.0f %.0f\n", v->x, v->y, v->z,
@@ -497,7 +513,7 @@ static void draw_list(int shown) {
         if ((key >> 16 & 7) == 0) { continue; }    /* writes no colour (alpha or depth only) */
         if (d->mode[0] == 2) { continue; }          /* samples a frame buffer */
         if (d->mode[3] == 1) { continue; }          /* alpha test NEVER (with KEEP: nothing is written) */
-        if (d->misc[1] != 0.0f) { continue; }       /* destination alpha test: TODO */
+        if (d->misc[1] != 0.0f) { continue; }       /* destination alpha test: TODO (the grass on the stage ground) */
         t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
         if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
         if (t != NULL && t->mem != NULL) {
@@ -515,7 +531,7 @@ static void draw_list(int shown) {
         {   /* the GS's depth test (bigger is nearer, as the PVR's) and depth write, 2D and 3D alike */
             int ztst = (int)((key >> 10) & 3);
             cxt.depth.comparison = ztst == 1 ? PVR_DEPTHCMP_ALWAYS : ztst == 2 ? PVR_DEPTHCMP_GEQUAL : PVR_DEPTHCMP_GREATER;
-            cxt.depth.write = ((key >> 12) & 1) != 0;
+            cxt.depth.write = ((key >> 12) & 1) ? PVR_DEPTHWRITE_ENABLE : PVR_DEPTHWRITE_DISABLE; /* (KOS's: 0 = write) */
         }
         if (bkey & 1) {
             int c = (int)((bkey >> 7) & 3);
