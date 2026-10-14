@@ -8,9 +8,13 @@
 #   make test       the attract fight without a window (what install.py's self-test does)
 #   make clean      the build's output               make distclean   also asm/, disc/ and .venv (not gamedata/)
 #
+#   PVR=1 (default) builds in the PowerVR renderer (BT3_GPU_API=pvr; port/src/gs/gs_pvr.c on gpu_pvr, a software
+#   PowerVR). gpu_pvr's kos_pvr.cpp is GPL-2.0-only: a program built with it is not for release. PVR=0 leaves it out.
+#
 # The same commands as install.py --32 and port/tools/undefined.py (BT3_CC=gcc), as one rule per file.
 
 ISO ?=
+PVR ?= 1
 BUILD  := port/build
 OBJ    := $(BUILD)/obj
 DATA   := $(BUILD)/obj_data
@@ -40,7 +44,16 @@ NL_OBJ    := $(patsubst port/third_party/newlib_libm/%.c,$(OBJ)/nl_%.o,$(NL_SRC)
 GS_OBJ    := $(patsubst port/src/gs/%.c,$(OBJ)/gs_%.o,$(GS_SRC))
 CXX_OBJ   := $(foreach f,$(CXX_SRC),$(OBJ)/cxx_$(basename $(notdir $(f))).o)
 PC_OBJ    := $(patsubst src/port/%.c,$(OBJ)/pc_%.o,$(VU0_SRC)) $(patsubst port/src/%.c,$(OBJ)/pc_%.o,$(PC_SRC))
-OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ)
+# gpu_pvr (port/third_party/gpu_pvr): named gs_ / cxx_ so that make_state.py counts them as the port's, not the game's
+PVR_DIR     := port/third_party/gpu_pvr
+PVR_CXX_SRC := $(PVR_DIR)/libpvr/pvr.cpp $(PVR_DIR)/libpvr/ta.cpp $(PVR_DIR)/libpvr/core.cpp $(PVR_DIR)/libpvr/texture.cpp \
+               $(PVR_DIR)/kos_pvr.cpp
+PVR_C_SRC   := $(PVR_DIR)/kos_prim.c $(PVR_DIR)/pvr_host.c
+PVR_CXX_OBJ := $(foreach f,$(PVR_CXX_SRC),$(OBJ)/cxx_pvrlib_$(basename $(notdir $(f))).o)
+PVR_C_OBJ   := $(foreach f,$(PVR_C_SRC),$(OBJ)/gs_pvrlib_$(basename $(notdir $(f))).o)
+PVR_OBJ     := $(if $(filter 1,$(PVR)),$(PVR_CXX_OBJ) $(PVR_C_OBJ))
+
+OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ)
 
 # ------------------------------------------------------------------------------------------------------ the flags
 
@@ -64,9 +77,20 @@ PC_HARD     := plat_libm plat_fastvec
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 
+PVR_INC   := -I$(PVR_DIR) -I$(PVR_DIR)/kos
+PVR_FLAGS := -m32 -O2 -g -msse2 -mfpmath=sse -w -MMD -MP
+ifeq ($(PVR),1)
+GS_CFLAGS += -DBT3_PVR
+endif
+# which PVR the objects were built with: a change rebuilds the two files that look at it (gs_draw.c, gs_pvr.c), and drops gpu_pvr's
+# objects when it is off (link.py links every object in obj/)
+PVR_FLAG := $(OBJ)/pvr.flag
+$(shell mkdir -p $(OBJ); if [ "$$(cat $(PVR_FLAG) 2>/dev/null)" != "$(PVR)" ]; then echo $(PVR) > $(PVR_FLAG); \
+        [ "$(PVR)" = 1 ] || rm -f $(OBJ)/cxx_pvrlib_* $(OBJ)/gs_pvrlib_*; fi)
+
 # ------------------------------------------------------------------------------------------------------ the rules
 
-.PHONY: all setup extract run demo test clean distclean
+.PHONY: all setup extract run demo test pvr clean distclean
 .DELETE_ON_ERROR:
 
 all: $(EXE)
@@ -113,6 +137,17 @@ $(OBJ)/gs_%.o: port/src/gs/%.c | $(OBJ) $(GEN_GS)/.stamp
 # the build key of a release (port/tools/buildkey.py): only this file sees it; none without BT3_BUILD_KEY
 $(OBJ)/gs_net_sign.o: GS_CFLAGS += $(shell $(PYTHON) -c "import sys; sys.path.insert(0, 'port/tools'); import buildkey; print(' '.join(buildkey.flags()))")
 
+$(OBJ)/gs_gs_draw.o $(OBJ)/gs_gs_pvr.o: $(PVR_FLAG)
+$(OBJ)/gs_gs_pvr.o: GS_CFLAGS += $(PVR_INC)
+
+# gpu_pvr itself: libpvr is the hot path of the PC build of this renderer, optimised as gpu_pvr.mk has it
+$(filter-out %/cxx_pvrlib_kos_pvr.o,$(PVR_CXX_OBJ)): $(OBJ)/cxx_pvrlib_%.o: $(PVR_DIR)/libpvr/%.cpp | $(OBJ)
+	$(CXX) $(PVR_FLAGS) -std=c++17 -I$(PVR_DIR) -c $< -o $@
+$(OBJ)/cxx_pvrlib_kos_pvr.o: $(PVR_DIR)/kos_pvr.cpp | $(OBJ)
+	$(CXX) $(PVR_FLAGS) -std=c++17 -I$(PVR_DIR) -c $< -o $@
+$(PVR_C_OBJ): $(OBJ)/gs_pvrlib_%.o: $(PVR_DIR)/%.c | $(OBJ)
+	$(CC) $(PVR_FLAGS) $(PVR_INC) -c $< -o $@
+
 $(OBJ)/cxx_%.o: port/third_party/imgui/%.cpp | $(OBJ) $(GEN_GS)/.stamp
 	$(CXX) $(CXXFLAGS) $< -o $@
 $(OBJ)/cxx_%.o: port/src/gs/%.cpp | $(OBJ) $(GEN_GS)/.stamp
@@ -133,6 +168,10 @@ run: $(EXE)
 
 demo: $(EXE)
 	port/run.sh demo
+
+# the attract fight on the PowerVR renderer
+pvr: $(EXE)
+	BT3_GPU_API=pvr port/run.sh demo
 
 test: $(EXE)
 	@BT3_DEMO=1 BT3_SETTINGS= BT3_SAVES=$(BUILD)/selftest_saves BT3_GS=none timeout 300 ./$(EXE) > $(BUILD)/selftest.log 2>&1; \

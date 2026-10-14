@@ -1612,6 +1612,10 @@ int GsGpu_Init(void) {
         sb = &sVulkanBackend;
     } else if (strcmp(api, "gl") == 0 || strcmp(api, "opengl") == 0) {
         sb = &sGlBackend;
+#ifdef BT3_PVR
+    } else if (strcmp(api, "pvr") == 0) {
+        sb = &sPvrBackend; /* (asked for by name only, so never the fallback below) */
+#endif
     } else {
         fprintf(stderr, "bt3: unknown BT3_GPU_API=%s (try vulkan, gl or auto)\n", api);
         return 0;

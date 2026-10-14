@@ -155,6 +155,9 @@ typedef struct GsBackend {
 
 extern GsBackend sVulkanBackend; /* gs_gpu.c */
 extern GsBackend sGlBackend;     /* gs_gl.c */
+#ifdef BT3_PVR
+extern GsBackend sPvrBackend;    /* gs_pvr.c: the Dreamcast's PowerVR (the Makefile's PVR=1) */
+#endif
 
 /* gs_draw.c: the shared target table's entry for a frame-buffer address (create: one is made if absent,
    with the back end's attachments through GsBackend.targetEnsure). */
