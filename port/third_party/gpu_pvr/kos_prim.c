@@ -29,7 +29,10 @@ void pvr_poly_compile(pvr_poly_hdr_t *dst, const pvr_poly_cxt_t *src)
 		| FIELD_PREP(PVR_TA_CMD_USERCLIP, src->gen.clip_mode)
 		| FIELD_PREP(PVR_TA_CMD_MODIFIER, src->fmt.modifier)
 		| FIELD_PREP(PVR_TA_CMD_MODIFIERMODE, src->gen.modifier_mode)
-		| FIELD_PREP(PVR_TA_CMD_SPECULAR, src->gen.specular);
+		| FIELD_PREP(PVR_TA_CMD_SPECULAR, src->gen.specular)
+		| (1u << 23) | (3u << 18); /* group_en, strip length 6: the TA keeps up to 6 triangles
+		                                  * of a strip under one header (at 1 it writes each triangle
+		                                  * with its own header and vertices, ~3x the vertex buffer) */
 
 	dcache_alloc_line_with_value(dst, cmd);
 
