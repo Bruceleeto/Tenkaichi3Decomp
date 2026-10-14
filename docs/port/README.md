@@ -819,7 +819,7 @@ with a third of the interpreter's work gone.
   same picture side by side; the pixel diff is not exact because the two runs' screenshots land a frame apart.
   On that stage no call is interpreted any more (4416 served by shaders); work per frame 32 ms -> 19 ms in the
   debris-heavy second. Program 1 (fighter fade) is the only one still interpreted; no recording shows it yet.
-- **Display settings**: `BT3_SCALE=1..8` internal resolution multiplier (default 2; render targets are 1024 x 1024
+- **Display settings**: `BT3_SCALE=1..8` internal resolution multiplier (default 1; render targets are 1024 x 1024
   GS pixels times it, 9 / 36 / 144 MB each at 1x / 2x / 4x), `BT3_DISPLAY=n` (n-th display, listed at start-up),
   `BT3_FULLSCREEN=1` and F11 (borderless full screen, picture centred with its own shape). The window's start size
   no longer depends on the multiplier (896 lines). Checked with the user's recording at 1x and 4x (screenshots

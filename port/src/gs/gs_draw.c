@@ -69,7 +69,7 @@ static int sFullscreen;
 static float sWantAspect;
 static int sDisplaySetting;
 
-int gsScale = 2;
+int gsScale = 1;
 int gsPendingScale;
 GsTex gsWhite;
 GsDraw *gsDraws;
@@ -160,6 +160,30 @@ static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     return h;
 }
 
+/* Drops the cached textures not used since frame `keep` (the back end's copies with them) and rebuilds the lookup. */
+static void tex_sweep(unsigned keep) {
+    uint32_t i;
+    int n;
+
+    for (n = 0, i = 0; i < (uint32_t)gsTexCount; i++) {
+        if (sTex[i].last >= keep) {
+            sTex[n++] = sTex[i];
+        } else {
+            sBackend->texDestroy(sTex[i].tex);
+        }
+    }
+    gsTexCount = n;
+    sLast = NULL;
+    memset(sTexBucket, 0, sizeof(sTexBucket));
+    for (i = 0; i < (uint32_t)gsTexCount; i++) {
+        uint32_t h = tex_bucket(sTex[i].tex0, sTex[i].texa, sTex[i].gen);
+        while (sTexBucket[h] != 0) {
+            h = (h + 1) & (TEX_BUCKETS - 1);
+        }
+        sTexBucket[h] = (uint16_t)(i + 1);
+    }
+}
+
 /* GS memory -> an RGBA texture for the current TEX0 (alpha as stored: 0x80 is opaque). The back end makes
    the texture and takes the decoded pixels (freed after it has uploaded them). */
 static GsTex texture_get(int ctx) {
@@ -210,27 +234,10 @@ static GsTex texture_get(int ctx) {
         return gsWhite;
     }
     if (gsTexCount == MAX_TEX) {
-        /* full: drop everything not used for two seconds (or, failing that, not used this frame) in one sweep */
-        unsigned keep = gGsFrame > 120 ? gGsFrame - 120 : 0;
-        int pass, n;
-        for (pass = 0; pass < 2 && gsTexCount == MAX_TEX; pass++, keep = gGsFrame) {
-            for (n = 0, i = 0; i < (uint32_t)gsTexCount; i++) {
-                if (sTex[i].last >= keep) {
-                    sTex[n++] = sTex[i];
-                } else {
-                    sBackend->texDestroy(sTex[i].tex);
-                }
-            }
-            gsTexCount = n;
-        }
-        sLast = NULL;
-        memset(sTexBucket, 0, sizeof(sTexBucket));
-        for (i = 0; i < (uint32_t)gsTexCount; i++) {
-            uint32_t h = tex_bucket(sTex[i].tex0, sTex[i].texa, sTex[i].gen);
-            while (sTexBucket[h] != 0) {
-                h = (h + 1) & (TEX_BUCKETS - 1);
-            }
-            sTexBucket[h] = (uint16_t)(i + 1);
+        /* full: drop everything not used for two seconds (or, failing that, not used this frame) */
+        tex_sweep(gGsFrame > 120 ? gGsFrame - 120 : 0);
+        if (gsTexCount == MAX_TEX) {
+            tex_sweep(gGsFrame);
         }
         if (gsTexCount == MAX_TEX) {
             return gsWhite; /* this one frame uses more textures than the cache holds */
@@ -290,6 +297,17 @@ static GsTex texture_get(int ctx) {
     gGpuTexNs += gpu_now() - tex_t0;
     t = &sTex[gsTexCount];
     t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(rw, rh, GS_TEXFMT_RGBA8, 1);
+    /* The back end's memory is full (the Dreamcast's: the PS2 itself never holds more than a frame's textures, it
+       copies them into its 4 MB again and again): the same sweeps as for a full cache, then once more. */
+    if (t->tex == 0) {
+        unsigned keep[2] = {gGsFrame > 120 ? gGsFrame - 120 : 0, gGsFrame};
+        int pass;
+        for (pass = 0; pass < 2 && t->tex == 0; pass++) {
+            tex_sweep(keep[pass]);
+            t = &sTex[gsTexCount];
+            t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(rw, rh, GS_TEXFMT_RGBA8, 1);
+        }
+    }
     if (t->tex == 0) {
         free(px);
         if (replaced) {
@@ -1424,7 +1442,7 @@ static void menu_labels_apply(void) {
 SDL_Window *GsDraw_WindowCreate(int opengl) {
     extern int Port_AspectMilli(void);
     float want = (float)Port_AspectMilli() / 1000.0f;
-    int h = 896, w = (int)((float)h * want + 0.5f), count = 0, pick = 0;
+    int h = 480, w = (int)((float)h * want + 0.5f), count = 0, pick = 0;
     SDL_DisplayID *displays;
     SDL_PropertiesID props;
 
@@ -1594,7 +1612,7 @@ int GsGpu_Init(void) {
     const char *api = getenv("BT3_GPU_API");
     GsBackend *sb;
 
-    gsScale = getenv("BT3_SCALE") != NULL ? atoi(getenv("BT3_SCALE")) : Port_Setting("scale", 2);
+    gsScale = getenv("BT3_SCALE") != NULL ? atoi(getenv("BT3_SCALE")) : Port_Setting("scale", 1);
     gsScale = gsScale < 1 ? 1 : gsScale > 8 ? 8 : gsScale;
     gsPendingScale = 0;
     gsVerts = malloc(MAX_VERTS * sizeof(Vtx));

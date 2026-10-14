@@ -7,7 +7,7 @@
 #define GS_DRAW_H
 #include <stdint.h>
 
-/* The internal resolution multiplier: BT3_SCALE=1..8 (default 2). Every render target is GS_W x GS_H GS
+/* The internal resolution multiplier: BT3_SCALE=1..8 (default 1: the PS2's own 640 x 480 picture, as on the Dreamcast). Every render target is GS_W x GS_H GS
    pixels at SCALE times the PS2's resolution, about 9 MB of video memory each at 1x, 36 MB at 2x, 144 MB at
    4x; a fight uses 7 to 16 of them. Shared: the capture scales coordinates with it, the back ends size
    their attachments with it. */
