@@ -54,14 +54,9 @@ extern char gMovieTagIdle[];
 extern char gMovieTagNoData[];
 extern char gMovieTagFull[];
 
-#ifdef PORT
-extern volatile u32 *Port_DmaChcr(s32 channel);
 #define D4_CHCR Port_DmaChcr(4)
-#else
-#define D4_CHCR ((volatile u32 *)0x1000B400)
-#endif
-#define D4_MADR ((volatile u32 *)0x1000B410)
-#define D4_QWC ((volatile u32 *)0x1000B420)
+#define D4_MADR HW_EE(0x1000B410)
+#define D4_QWC HW_EE(0x1000B420)
 
 #ifdef PORT
 #define UNCACHED(p) ((void *)(p)) /* no uncached mirror of memory on PC */

@@ -7,9 +7,7 @@
  *                           0x1EFB000 minus the end of the menu overlay); Port_Malloc returns the address the
  *                           PS2's malloc returns (0x3BE730, read from a save state), so heap pointers have the
  *                           same values as on the console and memory can be compared with an emulator dump.
- *   0x10000000, 0x12000000  hardware registers (timers, DMA, GS): plain memory here, so reads give what was last
- *                           written (0 at start: "transfer finished").
- *   0x70000000              the 16 KB scratchpad.
+ * The hardware registers are not mapped at their PS2 addresses: they are arrays (include/sys/hwreg.h).
  */
 #include "port_host.h"
 #include "port_addr.h"
@@ -46,8 +44,6 @@ static uint8_t *sGameStackTop;
 /* ------------------------------------------------------------------------------------------------------ Windows
    The same needs, with Windows' means (the 64-bit build only; its pointers are 4 bytes wide, see ptr32.py):
      - the program is linked at 0x20000000 and not relocated (port/tools/link.py);
-     - the hardware-register areas and the scratchpad are reserved at their PS2 addresses, which a 64-bit Windows
-       process leaves free;
      - the game heap: at its PS2 address if that is free, else anywhere below 2 GB. A Windows process has its first
        stack and heap in that low area, so the PS2 address is often taken; nothing in the game depends on it (only
        comparing memory with a console dump does), and Port_Malloc just starts from wherever the region is;
@@ -499,7 +495,7 @@ static void Port_LoadGameData(void) {
 }
 
 #if PORT_LOW_REGION
-/* (between the GS registers at 0x12000000 and the program at 0x20000000: see the note at STACK_BASE) */
+/* (below the program at 0x20000000: see the note at STACK_BASE) */
 #define LOW_ARENA_BASE 0x13000000u
 #define LOW_ARENA_SIZE 0x0C000000u /* address space only: pages are taken as they are first used */
 enum { LOW_SIZES = 256 };
@@ -624,9 +620,6 @@ __attribute__((constructor)) static void Port_MapMemory(void) {
     low_region_take();
 #endif
     map_heap();
-    map(0x10000000u, 0x10000, "the hardware registers");
-    map(0x12000000u, 0x2000, "the GS registers");
-    map(0x70000000u, 0x4000, "the scratchpad");
     gPortStage = "memory ready, before the program's main";
 }
 

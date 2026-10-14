@@ -8,9 +8,12 @@
  * Headless build: the data is dropped. A renderer takes over in Port_DmaTransfer.
  */
 #include <stdint.h>
-#include "port_addr.h"
 
-#define REG(a) ((volatile uint32_t *)Port_Ptr(a))
+/* The registers (include/sys/hwreg.h): plain memory, at the PS2 offsets. */
+volatile uint32_t gHwEe[0x10000 / 4];
+volatile uint64_t gHwGs[0x2000 / 8];
+
+#define REG(a) (&gHwEe[((a) - 0x10000000u) / 4])
 
 extern void Port_GsVif1Chain(uint32_t tadr, int tte);
 extern void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain);

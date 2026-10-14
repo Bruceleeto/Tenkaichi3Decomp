@@ -4,7 +4,7 @@
  * machine.
  *
  * What it covers: the game's global variables (the address ranges port/tools/make_state.py took from the linker's
- * map, in <program>.mem next to the program), the game's heap and the scratchpad. Not covered: the port's own
+ * map, in <program>.mem next to the program), the game's heap. Not covered: the port's own
  * memory (renderer, sound, input), and the game thread's stack and registers.
  *
  *   BT3_HASH=<file>       one line per vertical blank: its number, the checksum of everything, and during a fight
@@ -105,10 +105,6 @@ static void regions_init(void) {
     sRegion[sRegions].p = heap;
     sRegion[sRegions].n = heapSize;
     sRegion[sRegions].what = "heap";
-    sRegions++;
-    sRegion[sRegions].p = (const uint8_t *)Port_Ptr(0x70000000u);
-    sRegion[sRegions].n = 0x4000;
-    sRegion[sRegions].what = "scratchpad";
     sRegions++;
 }
 
