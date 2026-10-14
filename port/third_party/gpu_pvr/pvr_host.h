@@ -24,6 +24,10 @@ struct SDL_Window *pvr_host_window( void );
  * Returns 0 if nothing has been rendered yet. */
 int  pvr_host_read_front( uint8_t *rgb, int stride );
 
+/* The next pvr_scene_begin_rtt() writes ARGB4444 instead of RGB565. (On the
+ * Dreamcast: PVR_SET(PVR_FB_CFG_2, 2 | dither) after pvr_scene_begin_rtt().) */
+void kos_pvr_rtt_argb4444( void );
+
 __END_DECLS
 
 #endif

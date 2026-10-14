@@ -87,6 +87,7 @@ static unsigned lists_closed;
 static const unsigned lists_enabled = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4);
 static bool to_texture, next_to_texture;
 static uint32_t rtt_addr, rtt_w, rtt_h, rtt_rp;
+static uint32_t rtt_pack = 1, next_rtt_pack = 1; /* FB_W_CTRL's pack mode for a render to texture: 1 RGB565, 2 ARGB4444 */
 static int  view_target;             /* frame32[] index of the front buffer */
 static bool frame_rendered;
 static bool dither = true;
@@ -321,14 +322,26 @@ extern "C" void copy32(void *dst, const void *src)
 
 /* --- scene ---------------------------------------------------------------- */
 
+static void write_region_array(int tiles_x, int tiles_y);
+static int ra_tiles_x = -1, ra_tiles_y = -1; /* what the region array is written for */
+
 static void ta_init(void)
 {
+	/* A render to a texture covers only its tiles (as KOS's pvr_scene_begin_rtt
+	 * does), not the screen's 20 x 15. */
+	int tx = to_texture ? (int)((rtt_w + 31) / 32) : TILES_X;
+	int ty = to_texture ? (int)((rtt_h + 31) / 32) : TILES_Y;
+	if (tx > TILES_X) tx = TILES_X;
+	if (ty > TILES_Y) ty = TILES_Y;
+	if (tx != ra_tiles_x || ty != ra_tiles_y)
+		write_region_array(tx, ty);
+
 	reg(R::TA_OL_BASE, OL_BASE);
 	reg(R::TA_OL_LIMIT, ol_limit);
 	reg(R::TA_ISP_BASE, ISP_BASE);
 	reg(R::TA_ISP_LIMIT, ISP_LIMIT);
 	reg(R::TA_NEXT_OPB_INIT, next_opb_init);
-	reg(R::TA_GLOB_TILE_CLIP, ((TILES_Y - 1) << 16) | (TILES_X - 1));
+	reg(R::TA_GLOB_TILE_CLIP, ((uint32_t)(ty - 1) << 16) | (uint32_t)(tx - 1));
 	reg(R::TA_ALLOC_CTRL, opb_codes[0] | (opb_codes[1] << 4) | (opb_codes[2] << 8)
 			      | (opb_codes[3] << 12) | (opb_codes[4] << 16));
 	reg(R::TA_LIST_INIT, 0x80000000u);
@@ -350,20 +363,22 @@ static void write_bg(uint32_t w, uint32_t h)
 	w32(a + 0x34, f2u(1e-7f));      w32(a + 0x38, bg_color);
 }
 
-static void write_region_array(void)
+static void write_region_array(int tiles_x, int tiles_y)
 {
 	uint32_t a = L_REGION_BASE;
 	uint32_t list_base[5], acc = OL_BASE;
 
+	ra_tiles_x = tiles_x;
+	ra_tiles_y = tiles_y;
 	for (int l = 0; l < 5; l++) {
 		list_base[l] = acc;
-		acc += opb_words[l] * 4 * NTILES;
+		acc += opb_words[l] * 4 * tiles_x * tiles_y;
 	}
 
-	for (int ty = 0; ty < TILES_Y; ty++) {
-		for (int tx = 0; tx < TILES_X; tx++) {
-			int t = ty * TILES_X + tx;
-			bool last = ty == TILES_Y - 1 && tx == TILES_X - 1;
+	for (int ty = 0; ty < tiles_y; ty++) {
+		for (int tx = 0; tx < tiles_x; tx++) {
+			int t = ty * tiles_x + tx;
+			bool last = ty == tiles_y - 1 && tx == tiles_x - 1;
 			/* z_clear (bit30) 0 = clear, presort (bit29) 0 = autosort,
 			 * flush (bit28) 0 = write to the frame buffer. */
 			w32(a, ((uint32_t)last << 31) | ((uint32_t)presort << 29)
@@ -384,6 +399,8 @@ extern "C" void pvr_scene_begin(void)
 	list_open = -1;
 	to_texture = next_to_texture;
 	next_to_texture = false;
+	rtt_pack = next_rtt_pack;
+	next_rtt_pack = 1;
 	ta_init();
 }
 
@@ -399,6 +416,14 @@ extern "C" int pvr_scene_begin_rtt(void *txr, uint32_t render_w,
 	next_to_texture = true;
 	pvr_scene_begin();
 	return 0;
+}
+
+/* Not KOS: the next pvr_scene_begin_rtt() writes ARGB4444 instead of RGB565
+ * (KOS writes the frame buffer's format; on the Dreamcast this is
+ * PVR_SET(PVR_FB_CFG_2, 2 | dither) after pvr_scene_begin_rtt()). */
+extern "C" void kos_pvr_rtt_argb4444(void)
+{
+	next_rtt_pack = 2;
 }
 
 extern "C" int pvr_list_finish(void);
@@ -443,7 +468,7 @@ static void render_now(void)
 	reg(R::REGION_BASE, L_REGION_BASE);
 	reg(R::ISP_BACKGND_T, 0x01000000u | ((BG_OFFSET >> 2) << 3));
 	reg(R::ISP_BACKGND_D, f2u(zclip));
-	reg(R::FB_W_CTRL, 1 | (dither ? 8 : 0));            /* RGB565 */
+	reg(R::FB_W_CTRL, (to_texture ? rtt_pack : 1) | (dither ? 8 : 0)); /* RGB565, or a texture's ARGB4444 */
 
 	if (to_texture) {
 		reg(R::FB_W_SOF1, rtt_addr | (1u << 24));
@@ -498,7 +523,8 @@ extern "C" int pvr_scene_finish(void)
 	}
 
 	render_now();
-	kos_pvr_present();
+	if (!to_texture)
+		kos_pvr_present();
 	return 0;
 }
 
@@ -609,7 +635,7 @@ extern "C" int kos_pvr_init(void)
 	reg(R::FB_R_SOF1, frame32[0]);
 	reg(R::FB_R_SOF2, frame32[0]);
 
-	write_region_array();
+	write_region_array(TILES_X, TILES_Y);
 	bg_color = 0;
 
 	pvr_dr_addr = (uint32_t)(uintptr_t)dr_buf;

@@ -15,8 +15,11 @@
  * which keeps submission order with autosort off): the 2D primitives (menus, HUD, text: the GS-pixel vertices of
  * gsVerts) and the vertex programs' draws (3D), whose arithmetic (shaders/vu0, vu4, vu6.vert) is done here on the
  * CPU, clipped against the eye and the depth range, depth as 1 / w. Textures arrive decoded to RGBA8 and are kept
- * as ARGB4444 in PVR memory, resampled to a power of two from 8 to 1024. Not drawn yet: lines and points, draws
- * into other frame buffers, draws that sample a frame buffer, the native effects, the destination alpha test.
+ * as ARGB4444 in PVR memory, resampled to a power of two from 8 to 1024. The other frame buffers are textures
+ * rendered into (render to texture, ARGB4444), so the effects built from them draw (the fighters' shadow). Not
+ * drawn yet: lines and points, the native effects, the table passes, the 2D destination alpha test.
+ * TODO: the glare and the blur of distant things are left out: they are made from an alpha a table pass puts
+ * there from the depth, which the PVR cannot read (frame_render). It could be made per vertex from the depth.
  */
 #ifdef BT3_PVR
 #include <SDL3/SDL.h>
@@ -38,6 +41,15 @@ static SDL_Window *sWindow;
 #define VERTEX_BUF_BYTES (1536 * 1024)
 #define SCENE_BUDGET (VERTEX_BUF_BYTES - 128 * 1024)
 static uint32_t sSent, sTris, sDropped; /* this scene: bytes sent, triangles sent, triangles left out */
+
+/* What one render draws in: GS pixels to its pixels (the screen: 640 x 480 for the GS's 512 x 448; a frame buffer
+   rendered to a texture: 1:1), its size, and the texture coordinate's scale for the draw being sent (a frame
+   buffer as a texture: the shared layer's coordinates are in GS_W x GS_H texels of the buffer, the PVR's in its
+   texture's own size). */
+static float sSx = 640.0f / 512.0f, sSy = 480.0f / 448.0f, sRw = 640.0f, sRh = 480.0f, sUs = 1.0f, sVs = 1.0f;
+/* The GS's constant blend factor (ALPHA.FIX) of the draw being sent, as its vertices' alpha (below); < 0: none. */
+static float sFixA = -1.0f;
+
 
 /* ---- textures: a record per texture, its pixels in PVR memory once converted -------------------------- */
 typedef struct PvrTex {
@@ -233,7 +245,7 @@ static GsTex white_tex(void) { return (GsTex)&sWhiteRec; }
 static PvrTex sTgCol[MAX_TARGETS], sTgAux[MAX_TARGETS], sTgDep[MAX_TARGETS];
 
 static void target_ensure(int i) { (void)i; }
-static void target_drop(int i) { (void)i; }
+static void target_drop(int i);
 static GsTex target_color(int i) { return (GsTex)&sTgCol[i]; }
 static GsTex target_aux(int i) { return (GsTex)&sTgAux[i]; }
 static GsTex target_depth(int i) { return (GsTex)&sTgDep[i]; }
@@ -478,28 +490,29 @@ static int clip_plane(const ClipH *in, int n, ClipH *out, const float *plane) {
 #define GUARD 1024.0f
 /* A clip-space vertex in screen pixels, the PVR's depth and colour. */
 static void vu_project(const ClipH *a, const Vu0Uniform *U, ClipV *o) {
-    const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
+    const float sx = sSx, sy = sSy;
     float zmax = U->misc[2] > 0.0f ? U->misc[2] : -U->misc[2], rw = 1.0f / a->s[3];
     int k;
     o->x = (a->s[0] * rw - U->misc[0]) * sx;
     o->y = (a->s[1] * rw - U->misc[1]) * sy;
     o->z = PVR_Z(zmax > 0.0f ? clampf(a->s[2] * rw / zmax, 0.0f, 1.0f) : rw);
-    o->u = a->u;
-    o->v = a->v;
+    o->u = a->u * sUs;
+    o->v = a->v * sVs;
     for (k = 0; k < 4; k++) { o->c[k] = (float)gs_unit((uint32_t)clampf(a->c[k], 0.0f, 255.0f)); }
+    if (sFixA >= 0.0f) { o->c[3] = sFixA * 255.0f; }
 }
 
 static void vu_triangle(int vu, const Vu0Uniform *U, const uint32_t *idx, float x0, float y0, float x1, float y1) {
-    const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
+    const float sx = sSx, sy = sSy;
     ClipH a[16], b[16];
     ClipV out[16];
     int j, m = 3;
     const float eye[5] = {0.0f, 0.0f, 0.0f, 1.0f, -1e-3f};
     /* screen x = (s.x / w - misc.x) * sx within [-GUARD, 640 + GUARD], y alike */
     const float left[5] = {1.0f, 0.0f, 0.0f, -(U->misc[0] - GUARD / sx), 0.0f};
-    const float right[5] = {-1.0f, 0.0f, 0.0f, U->misc[0] + (640.0f + GUARD) / sx, 0.0f};
+    const float right[5] = {-1.0f, 0.0f, 0.0f, U->misc[0] + (sRw + GUARD) / sx, 0.0f};
     const float top[5] = {0.0f, 1.0f, 0.0f, -(U->misc[1] - GUARD / sy), 0.0f};
-    const float bottom[5] = {0.0f, -1.0f, 0.0f, U->misc[1] + (480.0f + GUARD) / sy, 0.0f};
+    const float bottom[5] = {0.0f, -1.0f, 0.0f, U->misc[1] + (sRh + GUARD) / sy, 0.0f};
 
     for (j = 0; j < 3; j++) { vu_vertex(vu, U, &gsVuVerts[(size_t)idx[j] * 12], &a[j]); }
     m = clip_plane(a, m, b, eye);
@@ -572,160 +585,514 @@ static void vu_draw(int vu, const Vu0Uniform *U, const uint32_t *idx, uint32_t c
 /* The 2D primitives drawn into the shown frame buffer, as triangles in the translucent list. Of the GS's tests:
    the alpha test as blending (a cut-out's transparent texels have alpha 0) or not drawn (never passes); the
    scissor by clipping the triangles here; the destination alpha test left out (see below). */
-static int sSecAlpha; /* this frame has written the GS's alpha alone into the secondary buffer (see below) */
+static int sSecAlpha; /* this render has written the GS's alpha alone into the secondary buffer (see below) */
 
-static void draw_list(int shown) {
-    uint32_t n, k;
-    const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
+/* Whether draw d is one the PVR draws (into whichever buffer). */
+static int draw_kept(const GsDraw *d, uint32_t n) {
+    uint32_t key;
+    if (d->native || d->pipeline < 0 || d->pipeline >= sPipeCount) { return 0; }
+    if (getenv("BT3_PVR_SKIP") != NULL) { /* BT3_PVR_SKIP=<lo>-<hi>: those draws left out (finding a wrong one) */
+        unsigned lo = 0, hi = 0;
+        if (sscanf(getenv("BT3_PVR_SKIP"), "%u-%u", &lo, &hi) == 2 && n >= lo && n <= hi) { return 0; }
+    }
+    key = sPipeKey[d->pipeline];
+    if (((key >> 10) & 3) == 0 || ((key >> 22) & 1)) { return 0; } /* depth test NEVER; a table pass */
+    if (((key >> 13) & 3) != 0) { return 0; }  /* lines, points */
+    if ((key >> 16 & 0xF) == 0) { return 0; }  /* writes no colour and no alpha (depth only) */
+    if (d->mode[3] == 1) { return 0; }          /* alpha test NEVER (with KEEP: nothing is written) */
+    /* The destination alpha test (bit 7 of the alpha already there; the PVR cannot test it). The stage's
+       layers drawn by vertex programs (the grass on a fight's ground) are drawn without it: the alpha is set
+       to 0 before them, and each layer sets bit 7 where it draws (FBA), so the test only keeps a second layer
+       from blending over a pixel a first one has; without it overlapping grass is a little thicker. The 2D
+       ones (a HUD bar's fill cut to length by a mask) are left out: the whole fill would show. */
+    if (d->misc[1] != 0.0f && !d->vu) { return 0; }
+    return 1;
+}
 
+/* Draw n into the render being built; `t` its texture (a frame buffer's: the version it samples), or NULL. */
+static void draw_one(uint32_t n, const PvrTex *t) {
+    const GsDraw *d = &gsDraws[n];
+    uint32_t key = sPipeKey[d->pipeline], bkey, k;
+    pvr_poly_cxt_t cxt, pass[2];
+    pvr_poly_hdr_t hdr;
+    int np, p, tfx;
+
+    if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
+    sUs = sVs = 1.0f;
+    if (t != NULL && t->mem != NULL) {
+        pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)t->fmt, (int)t->pw, (int)t->ph, t->base,
+                         (d->sampler & 1) ? PVR_FILTER_BILINEAR : PVR_FILTER_NEAREST);
+        cxt.txr.uv_clamp = (pvr_uv_clamp_t)(((d->sampler & 2) ? PVR_UVCLAMP_U : 0) | ((d->sampler & 4) ? PVR_UVCLAMP_V : 0));
+        tfx = d->mode[1];
+        cxt.txr.env = tfx == 1 ? (d->mode[2] ? PVR_TXRENV_REPLACE : PVR_TXRENV_DECAL) : PVR_TXRENV_MODULATEALPHA;
+        if (d->mode[0] == 2) {
+            sUs = (float)GS_W / (float)t->w;
+            sVs = (float)GS_H / (float)t->h;
+        }
+    } else {
+        pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
+        t = NULL;
+    }
+    bkey = key & 0x1FF;
+    cxt.gen.culling = PVR_CULLING_NONE;
+    {   /* the GS's depth test (bigger is nearer, as the PVR's) and depth write, 2D and 3D alike */
+        int ztst = (int)((key >> 10) & 3);
+        cxt.depth.comparison = ztst == 1 ? PVR_DEPTHCMP_ALWAYS : ztst == 2 ? PVR_DEPTHCMP_GEQUAL : PVR_DEPTHCMP_GREATER;
+        cxt.depth.write = ((key >> 12) & 1) ? PVR_DEPTHWRITE_ENABLE : PVR_DEPTHWRITE_DISABLE; /* (KOS's: 0 = write) */
+    }
+    sFixA = -1.0f;
+    if (bkey & 1) {
+        int c = (int)((bkey >> 7) & 3), ks = (int)((bkey >> 1) & 7), kd = (int)((bkey >> 4) & 7);
+        cxt.blend.src = (pvr_blend_mode_t)blend_factor(ks, c, 0);
+        cxt.blend.dst = (pvr_blend_mode_t)blend_factor(kd, c, 1);
+        if (c == 2 && (ks == 2 || ks == 4 || kd == 2 || kd == 4)) {
+            /* The constant factor (the blur steps between the work buffers mix two by it, half and half) as the
+               source alpha: the vertices' alpha is the constant, the texture's alpha is not used (DECAL instead of
+               REPLACE, which would take it). The alpha written is then blended too, where the GS writes the
+               source's. */
+            sFixA = d->blendc > 1.0f ? 1.0f : d->blendc;
+            if (ks == 2 || ks == 4) { cxt.blend.src = ks == 2 ? PVR_BLEND_SRCALPHA : PVR_BLEND_INVSRCALPHA; }
+            if (kd == 2 || kd == 4) { cxt.blend.dst = kd == 2 ? PVR_BLEND_SRCALPHA : PVR_BLEND_INVSRCALPHA; }
+            if (t != NULL) {
+                cxt.txr.alpha = PVR_TXRALPHA_DISABLE;
+                if (cxt.txr.env == PVR_TXRENV_REPLACE) { cxt.txr.env = PVR_TXRENV_DECAL; }
+            }
+        }
+    } else if (d->mode[3] >= 6 && d->mode[3] <= 7) {
+        /* alpha test GEQUAL / GREATER with blending off: a cut-out. Blending by the source alpha leaves its
+           transparent texels (alpha 0) out, as the test does; partly transparent ones come out soft. */
+        cxt.blend.src = PVR_BLEND_SRCALPHA;
+        cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
+    } else {
+        cxt.blend.src = PVR_BLEND_ONE;
+        cxt.blend.dst = PVR_BLEND_ZERO;
+    }
+    /* The GS's alpha written alone (FRAME.FBMSK: the colour masked) is kept in the PVR's secondary
+       accumulation buffer, which starts each tile at 0: the PVR cannot write one channel of a pixel. A
+       blend after it by the destination's alpha takes that alpha (`sSecAlpha`), in two polygons: the source
+       times the stored alpha into the secondary buffer, then that added to the picture, which keeps one minus
+       it. (A story chapter's picture is revealed by a moving mask so: the alpha cleared, the mask's alpha
+       written, the picture blended by it. Without it the picture was blended by whatever alpha was there,
+       and showed as noise.) The second polygon takes the stored alpha times the source's, so it is exact for
+       an opaque source. */
+    pass[0] = cxt;
+    np = 1;
+    if ((key >> 16 & 7) == 0) { /* the alpha alone */
+        pass[0].blend.src = PVR_BLEND_ONE;
+        pass[0].blend.dst = PVR_BLEND_ZERO;
+        pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
+        sSecAlpha = 1;
+    } else if ((bkey & 1) && ((bkey >> 7) & 3) == 1 && sSecAlpha) {
+        pass[0].blend.dst = PVR_BLEND_ZERO;
+        pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
+        pass[1] = cxt;
+        pass[1].blend.src_enable = PVR_BLEND_ENABLE;
+        pass[1].blend.src = PVR_BLEND_ONE;
+        pass[1].blend.dst = cxt.blend.dst == PVR_BLEND_INVDESTALPHA ? PVR_BLEND_INVSRCALPHA :
+                            cxt.blend.dst == PVR_BLEND_DESTALPHA ? PVR_BLEND_SRCALPHA : cxt.blend.dst;
+        np = 2;
+    }
+    for (p = 0; p < np; p++) {
+        pvr_poly_compile(&hdr, &pass[p]);
+        if (sSent + sizeof(hdr) + 3 * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
+            sDropped += d->count / 3;
+            break;
+        }
+        sSent += sizeof(hdr);
+        pvr_prim(&hdr, sizeof(hdr));
+        /* the scissor (x, y, width, height at SCALE) in the render's pixels */
+        float x0 = (float)d->scissor[0] / (float)SCALE * sSx, y0 = (float)d->scissor[1] / (float)SCALE * sSy;
+        float x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sSx, y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sSy;
+        if (x1 > sRw) { x1 = sRw; }
+        if (y1 > sRh) { y1 = sRh; }
+        if (d->vu) {
+            vu_draw((int)((key >> 20) & 3), &gsVuUni[d->uniform], &gsVuIdx[d->first], d->count, x0, y0, x1, y1);
+            continue;
+        }
+        for (k = 0; k + 2 < d->count; k += 3) {
+            ClipV a[12];
+            int j;
+            for (j = 0; j < 3; j++) {
+                const Vtx *v = &gsVerts[d->first + k + j];
+                float q = v->q != 0.0f ? v->q : 1.0f;
+                a[j].x = v->x * sSx;
+                a[j].y = v->y * sSy;
+                a[j].z = PVR_Z(clampf(v->z, 0.0f, 1.0f));
+                a[j].u = t != NULL ? v->s / q * sUs : 0.0f;
+                a[j].v = t != NULL ? v->t / q * sVs : 0.0f;
+                a[j].c[0] = (float)gs_unit(v->r);
+                a[j].c[1] = (float)gs_unit(v->g);
+                a[j].c[2] = (float)gs_unit(v->b);
+                a[j].c[3] = sFixA >= 0.0f ? sFixA * 255.0f : (float)gs_unit(v->a);
+            }
+            emit_poly(a, 3, x0, y0, x1, y1);
+        }
+    }
+}
+
+/* ---- the other frame buffers: textures the PVR renders into -------------------------------------------
+   The game builds its screen effects by drawing one frame buffer into another: the glare and the object glow
+   (the picture shrunk into a work buffer, down to 64 x 64, blurred between two buffers, added back), the blur of
+   distant things, the fighters' shadow (drawn into a buffer, laid on the ground by a vertex program). Here every
+   buffer other than the shown one is a texture in PVR memory (ARGB4444: the glow is made from the picture's
+   alpha), and each run of draws into one is a render to that texture. A run starts by drawing what the buffer
+   held as its background (a render starts from a cleared tile buffer).
+
+   The shown buffer is drawn once, at the end, in one render: its depth (the stage that hides the fighters' feet)
+   cannot be carried from one render to the next. When a draw samples the shown buffer partway through (the
+   copies the effects start from), the shown buffer's draws so far are rendered into a texture as well, the
+   capture, which goes on from the previous capture of the same frame (without depth: the capture is the effects'
+   source, blurred or mixed back).
+
+   A buffer's texture is a version: a draw of the final render samples the one there was when the game drew it,
+   so a buffer drawn into again after that gets a new one (the work buffer of the glare is the next effect's too).
+   The superseded versions are freed when the frame is done; a buffer's last one is kept for the next frame. */
+typedef struct TgVer {
+    PvrTex t;          /* w x h (powers of two, at least 32), ARGB4444, not twiddled */
+    int final;         /* sampled by a draw of the final render: kept as it is until the frame is done */
+    int alphaBad;      /* made from an alpha the PVR could not make (below) */
+} TgVer;
+
+static TgVer *sTgVer[MAX_TARGETS];     /* each buffer's version now (NULL: never drawn) */
+static TgVer *sCap;                    /* the shown buffer's capture, 512 x 512 */
+static int sCapValid;                  /* the capture holds this frame's shown draws up to sShownCapped */
+static TgVer *sOldVer[256];            /* superseded this frame, freed at its end */
+static int sOldCount;
+static const PvrTex **sDrawSrc;        /* per draw of the frame: the version it samples */
+static uint32_t *sShownList, sShownCount, sShownCapped, sListCap;
+static uint32_t *sRun, sRunCount;      /* the run being collected (draws into sRunTarget) */
+static int sRunTarget = -1;
+static uint32_t sRunW, sRunH;          /* the run's extent in GS pixels */
+static int sRunBad;                    /* the run samples a version with alphaBad */
+static unsigned sRenders;              /* this frame */
+
+static TgVer *ver_new(uint32_t w, uint32_t h) {
+    TgVer *v = calloc(1, sizeof(TgVer));
+    if (v == NULL) { return NULL; }
+    v->t.w = w;
+    v->t.h = h;
+    v->t.bytes = w * h * 2;
+    v->t.mem = pvr_mem_malloc(v->t.bytes);
+    if (v->t.mem == NULL) {
+        free(v);
+        return NULL;
+    }
+    v->t.pw = w;
+    v->t.ph = h;
+    v->t.fmt = PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_NONTWIDDLED;
+    v->t.base = v->t.mem;
+    v->t.format = GS_TEXFMT_RGBA8;
+    return v;
+}
+
+static void ver_free(TgVer *v) {
+    if (v == NULL) { return; }
+    pvr_mem_free(v->t.mem);
+    free(v);
+}
+
+static void ver_retire(TgVer *v) {
+    if (v == NULL) { return; }
+    if (sOldCount < (int)(sizeof(sOldVer) / sizeof(sOldVer[0]))) { sOldVer[sOldCount++] = v; } else { ver_free(v); }
+}
+
+static uint32_t pow2_rt(uint32_t n) {
+    uint32_t p = 32;
+    while (p < n && p < 1024) { p <<= 1; }
+    return p;
+}
+
+/* One render of draws `idx` (n of them): into `dst` (NULL: the screen), over `bg` drawn first (NULL: cleared). */
+static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer *bg) {
+    uint32_t i;
+
+    if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) {
+        fprintf(stderr, "pvr: render %u: %u draws (%u..%u) into %s %ux%u%s\n", sRenders, n, n ? idx[0] : 0, n ? idx[n - 1] : 0,
+                dst == NULL ? "the screen" : dst == sCap ? "the capture" : "a buffer", dst ? dst->t.w : 640, dst ? dst->t.h : 480, bg ? " over what it held" : "");
+    }
+    pvr_wait_ready();
+    sSent = 0;
     sSecAlpha = 0;
+    if (dst != NULL) {
+        kos_pvr_rtt_argb4444();
+        pvr_scene_begin_rtt(dst->t.mem, dst->t.w, dst->t.h, dst->t.w);
+        sSx = sSy = 1.0f;
+        sRw = (float)dst->t.w;
+        sRh = (float)dst->t.h;
+    } else {
+        pvr_scene_begin();
+        sSx = 640.0f / 512.0f;
+        sSy = 480.0f / 448.0f;
+        sRw = 640.0f;
+        sRh = 480.0f;
+    }
+    pvr_list_begin(PVR_LIST_TR_POLY);
+    if (bg != NULL) { /* what the buffer held: its texture 1:1, every texel as it was (alpha too) */
+        pvr_poly_cxt_t cxt;
+        pvr_poly_hdr_t hdr;
+        ClipV a[4];
+        int j;
+        pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)bg->t.fmt, (int)bg->t.pw, (int)bg->t.ph, bg->t.base, PVR_FILTER_NEAREST);
+        cxt.txr.env = PVR_TXRENV_REPLACE;
+        cxt.gen.culling = PVR_CULLING_NONE;
+        cxt.depth.comparison = PVR_DEPTHCMP_ALWAYS;
+        cxt.depth.write = PVR_DEPTHWRITE_DISABLE;
+        cxt.blend.src = PVR_BLEND_ONE;
+        cxt.blend.dst = PVR_BLEND_ZERO;
+        pvr_poly_compile(&hdr, &cxt);
+        pvr_prim(&hdr, sizeof(hdr));
+        sSent += sizeof(hdr);
+        for (j = 0; j < 4; j++) {
+            a[j].x = (j == 1 || j == 2) ? (float)bg->t.w * sSx : 0.0f;
+            a[j].y = j >= 2 ? (float)bg->t.h * sSy : 0.0f;
+            a[j].z = PVR_Z(0.0f);
+            a[j].u = (j == 1 || j == 2) ? 1.0f : 0.0f;
+            a[j].v = j >= 2 ? 1.0f : 0.0f;
+            a[j].c[0] = a[j].c[1] = a[j].c[2] = a[j].c[3] = 255.0f;
+        }
+        emit_poly(a, 4, 0.0f, 0.0f, sRw, sRh);
+    }
+    for (i = 0; i < n; i++) { draw_one(idx[i], sDrawSrc[idx[i]]); }
+    sFixA = -1.0f;
+    pvr_list_finish();
+    pvr_scene_finish(); /* renders (the screen's: gpu_pvr shows the picture, kos_pvr_present) */
+    sRenders++;
+    if (dst != NULL && getenv("BT3_PVR_RTDUMP") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_RTDUMP"))) {
+        /* BT3_PVR_RTDUMP=<frame>: each render to a texture of that frame as rt_NN_<first draw>.ppm (colour, then
+           alpha beside it) in BT3_PVR_RTDIR (default .) */
+        char name[512];
+        FILE *fp;
+        const char *dir = getenv("BT3_PVR_RTDIR") != NULL ? getenv("BT3_PVR_RTDIR") : ".";
+        snprintf(name, sizeof(name), "%s/rt_%02u_%u.ppm", dir, sRenders, n ? idx[0] : 0);
+        if ((fp = fopen(name, "wb")) != NULL) {
+            const uint16_t *px = (const uint16_t *)dst->t.mem;
+            uint32_t x, y;
+            fprintf(fp, "P6\n%u %u\n255\n", dst->t.w * 2, dst->t.h);
+            for (y = 0; y < dst->t.h; y++) {
+                for (x = 0; x < dst->t.w * 2; x++) {
+                    uint16_t c = px[y * dst->t.w + (x % dst->t.w)];
+                    uint8_t rgb[3];
+                    if (x < dst->t.w) { rgb[0] = (uint8_t)(((c >> 8) & 15) * 17); rgb[1] = (uint8_t)(((c >> 4) & 15) * 17); rgb[2] = (uint8_t)((c & 15) * 17); }
+                    else { rgb[0] = rgb[1] = rgb[2] = (uint8_t)((c >> 12) * 17); }
+                    fwrite(rgb, 1, 3, fp);
+                }
+            }
+            fclose(fp);
+        }
+    }
+    {
+        static uint32_t peak;
+        if (sSent > peak) { peak = sSent; }
+        if (sDropped != 0) {
+            static unsigned told;
+            if (getenv("BT3_GS_VERBOSE") != NULL || told++ < 10) {
+                fprintf(stderr, "pvr: frame %u: a render of %u triangles left some out (%u KB, the most so far %u KB of %u): the vertex buffer is full\n",
+                        gGsFrame, sTris, sSent >> 10, peak >> 10, (unsigned)(SCENE_BUDGET >> 10));
+            }
+            sDropped = 0;
+        }
+    }
+}
 
+/* The run collected for buffer sRunTarget, rendered into its texture. */
+static void run_flush(void) {
+    int tg = sRunTarget;
+    TgVer *cur, *dst;
+    uint32_t w, h;
+
+    if (tg < 0) { return; }
+    sRunTarget = -1;
+    cur = sTgVer[tg];
+    if (sRunBad) { /* left out: what it would make is wrong (the buffer is marked so its readers are left out too) */
+        if (cur == NULL && (cur = sTgVer[tg] = ver_new(32, 32)) == NULL) { sRunCount = 0; return; }
+        cur->alphaBad = 1;
+        gsTargets[tg].cleared = 1;
+        sRunCount = 0;
+        return;
+    }
+    w = pow2_rt(sRunW);
+    h = pow2_rt(sRunH);
+    if (cur != NULL) {
+        if (cur->t.w > w) { w = cur->t.w; }
+        if (cur->t.h > h) { h = cur->t.h; }
+    }
+    if (cur != NULL && !cur->final && cur->t.w == w && cur->t.h == h) {
+        dst = cur; /* drawn on in place: each pixel's background is read before its tile is written */
+    } else {
+        dst = ver_new(w, h);
+        if (dst == NULL) {
+            static int told;
+            if (!told++) { fprintf(stderr, "pvr: no PVR memory for a %ux%u frame buffer: its effects are left out\n", w, h); }
+            sRunCount = 0;
+            return;
+        }
+        sTgVer[tg] = dst;
+    }
+    render_run(sRun, sRunCount, dst, cur);
+    dst->alphaBad = 0;
+    if (cur != NULL && cur != dst) { ver_retire(cur); }
+    gsTargets[tg].cleared = 1;
+    sRunCount = 0;
+}
+
+/* The shown buffer's draws so far into the capture (going on from the last one of this frame). */
+static void capture_update(void) {
+    if (sCapValid && sShownCapped == sShownCount) { return; }
+    if (sCap == NULL && (sCap = ver_new(512, 512)) == NULL) { return; }
+    if (sCap->final) { /* (the shown buffer's capture is only read by runs, never by the final render) */
+        return;
+    }
+    render_run(sShownList + sShownCapped, sShownCount - sShownCapped, sCap, sCapValid ? sCap : NULL);
+    sShownCapped = sShownCount;
+    sCapValid = 1;
+}
+
+static void target_drop(int i) {
+    if (sTgVer[i] != NULL && !sTgVer[i]->final) { ver_free(sTgVer[i]); } else { ver_retire(sTgVer[i]); }
+    sTgVer[i] = NULL;
+}
+
+static void frame_render(int shown) {
+    uint32_t n;
+    int i, tableAlpha = 0;
+
+    if (sListCap < gsDrawCount) {
+        sListCap = gsDrawCount + 1024;
+        sDrawSrc = realloc(sDrawSrc, sListCap * sizeof(*sDrawSrc));
+        sShownList = realloc(sShownList, sListCap * sizeof(*sShownList));
+        sRun = realloc(sRun, sListCap * sizeof(*sRun));
+        if (sDrawSrc == NULL || sShownList == NULL || sRun == NULL) { abort(); }
+    }
+    sShownCount = sShownCapped = sRunCount = 0;
+    sCapValid = 0;
+    sRunTarget = -1;
+    sRenders = 0;
+    sTris = 0;
     for (n = 0; n < gsDrawCount; n++) {
         const GsDraw *d = &gsDraws[n];
-        uint32_t key, bkey;
-        pvr_poly_cxt_t cxt, pass[2];
-        pvr_poly_hdr_t hdr;
-        int np, p;
-        const PvrTex *t;
-        int tfx;
+        const PvrTex *src = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
 
-        if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) { /* every draw of one frame */
-            const PvrTex *lt = d->mode[0] == 1 || d->mode[0] == 3 ? (const PvrTex *)d->tex : NULL;
-            fprintf(stderr, "pvr: draw %u: native %d vu %d target %d%s first %u count %u key %08x mode %d %d %d %d tex %ux%u%s\n", n,
-                    d->native, d->vu, d->target, d->target == shown ? " (shown)" : "", d->first, d->count,
-                    d->pipeline >= 0 && d->pipeline < sPipeCount ? sPipeKey[d->pipeline] : 0, d->mode[0], d->mode[1], d->mode[2], d->mode[3],
-                    lt ? lt->w : 0, lt ? lt->h : 0, lt && !lt->mem ? " (none)" : "");
-            if (!d->vu && d->count > 0 && getenv("BT3_PVR_LOGV") != NULL && n == (uint32_t)atoi(getenv("BT3_PVR_LOGV"))) {
-                uint32_t j;
-                for (j = 0; j < d->count && j < 24; j++) {
-                    const Vtx *w = &gsVerts[d->first + j];
-                    fprintf(stderr, "pvr:     v%u %.1f %.1f z %.6f rgba %u %u %u %u stq %g %g %g u %g v %g\n", j, w->x, w->y, w->z, w->r, w->g, w->b, w->a, w->s, w->t, w->q, w->s / w->q, w->t / w->q);
+        /* The table passes (native 3, gs_draw.c depth_clut) put a byte of the depth through a table into the
+           shown buffer's alpha: what glares (the far sky) and how much the blur of distant things is mixed in. The
+           PVR cannot read its depth, so from such a pass until the alpha is written anew the shown buffer's alpha
+           is not the game's, and what is made from it is left out: the copies of the picture taken by it, the
+           work buffers made from those, and their drawing back (marked alphaBad along the way). */
+        if (d->native == 3 && d->target == shown && d->pipeline >= 0 && d->pipeline < sPipeCount && (sPipeKey[d->pipeline] >> 16 & 8)) { tableAlpha = 1; }
+        if (!draw_kept(d, n)) { continue; }
+        if (d->target == shown) {
+            uint32_t key = sPipeKey[d->pipeline];
+            if ((key >> 16 & 7) == 0) { tableAlpha = 0; } /* the alpha written anew (the secondary buffer, draw_one) */
+            if (tableAlpha && (key & 1) && ((key >> 7) & 3) == 1) { continue; } /* blended by that alpha */
+        }
+        if (d->mode[0] == 2) { /* a frame buffer as its texture: the version of it there is now */
+            int s = (int)((const PvrTex *)d->tex - sTgCol);
+            TgVer *v;
+            if (s < 0 || s >= MAX_TARGETS) { continue; }
+            if (s == shown) {
+                static TgVer bad = {{0}, 0, 1};
+                if (tableAlpha) {
+                    v = &bad; /* (not rendered: whatever reads it is left out) */
+                } else {
+                    capture_update();
+                    v = sCapValid ? sCap : NULL;
                 }
+            } else {
+                if (s == sRunTarget) { run_flush(); }
+                v = sTgVer[s];
             }
-            if (d->vu && d->count > 0 && getenv("BT3_PVR_LOGV") != NULL && n == (uint32_t)atoi(getenv("BT3_PVR_LOGV"))) {
-                uint32_t j;
-                for (j = 0; j < d->count && j < 12; j++) {
-                    const float *w = &gsVuVerts[gsVuIdx[d->first + j] * 12];
-                    fprintf(stderr, "pvr:     i%u=%u pos %.2f %.2f %.2f %.2f col %.1f %.1f %.1f %.1f st %.4f %.4f %.4f %.4f\n", j, gsVuIdx[d->first + j],
-                            w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11]);
+            if (v == NULL) { continue; }
+            if (v->alphaBad) {
+                if (d->target == shown) { continue; }
+                if (d->target != sRunTarget) {
+                    run_flush();
+                    sRunTarget = d->target;
+                    sRunW = sRunH = 0;
+                    sRunBad = 0;
                 }
-            }
-            if (d->vu) {
-                fprintf(stderr, "pvr:   blendc %.2f misc %.0f %.0f %.0f %.0f sampler %d\n", d->blendc, d->misc[0], d->misc[1], d->misc[2], d->misc[3], d->sampler);
-            }
-            if (!d->vu && d->count > 0) {
-                const Vtx *v = &gsVerts[d->first];
-                fprintf(stderr, "pvr:   first vertex %.1f %.1f z %.6f rgba %u %u %u %u st %.3f %.3f %.3f; blendc %.2f misc %.0f %.0f %.0f %.0f\n", v->x, v->y, v->z,
-                        v->r, v->g, v->b, v->a, v->s, v->t, v->q, d->blendc, d->misc[0], d->misc[1], d->misc[2], d->misc[3]);
-            }
-        }
-        if (d->native || d->target != shown || d->pipeline < 0 || d->pipeline >= sPipeCount) { continue; }
-        if (getenv("BT3_PVR_SKIP") != NULL) { /* BT3_PVR_SKIP=<lo>-<hi>: those draws left out (finding a wrong one) */
-            unsigned lo = 0, hi = 0;
-            if (sscanf(getenv("BT3_PVR_SKIP"), "%u-%u", &lo, &hi) == 2 && n >= lo && n <= hi) { continue; }
-        }
-        key = sPipeKey[d->pipeline];
-        if (((key >> 10) & 3) == 0 || ((key >> 22) & 1)) { continue; } /* depth test NEVER; a table pass */
-        if (((key >> 13) & 3) != 0) { continue; }  /* lines, points */
-        if ((key >> 16 & 0xF) == 0) { continue; }  /* writes no colour and no alpha (depth only) */
-        if (d->mode[0] == 2) { continue; }          /* samples a frame buffer */
-        if (d->mode[3] == 1) { continue; }          /* alpha test NEVER (with KEEP: nothing is written) */
-        /* The destination alpha test (bit 7 of the alpha already there; the PVR cannot test it). The stage's
-           layers drawn by vertex programs (the grass on a fight's ground) are drawn without it: the alpha is set
-           to 0 before them, and each layer sets bit 7 where it draws (FBA), so the test only keeps a second layer
-           from blending over a pixel a first one has; without it overlapping grass is a little thicker. The 2D
-           ones (a HUD bar's fill cut to length by a mask) are left out: the whole fill would show. */
-        if (d->misc[1] != 0.0f && !d->vu) { continue; }
-        t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
-        if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
-        if (t != NULL && t->mem != NULL) {
-            pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)t->fmt, (int)t->pw, (int)t->ph, t->base,
-                             (d->sampler & 1) ? PVR_FILTER_BILINEAR : PVR_FILTER_NEAREST);
-            cxt.txr.uv_clamp = (pvr_uv_clamp_t)(((d->sampler & 2) ? PVR_UVCLAMP_U : 0) | ((d->sampler & 4) ? PVR_UVCLAMP_V : 0));
-            tfx = d->mode[1];
-            cxt.txr.env = tfx == 1 ? (d->mode[2] ? PVR_TXRENV_REPLACE : PVR_TXRENV_DECAL) : PVR_TXRENV_MODULATEALPHA;
-        } else {
-            pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
-            t = NULL;
-        }
-        bkey = key & 0x1FF;
-        cxt.gen.culling = PVR_CULLING_NONE;
-        {   /* the GS's depth test (bigger is nearer, as the PVR's) and depth write, 2D and 3D alike */
-            int ztst = (int)((key >> 10) & 3);
-            cxt.depth.comparison = ztst == 1 ? PVR_DEPTHCMP_ALWAYS : ztst == 2 ? PVR_DEPTHCMP_GEQUAL : PVR_DEPTHCMP_GREATER;
-            cxt.depth.write = ((key >> 12) & 1) ? PVR_DEPTHWRITE_ENABLE : PVR_DEPTHWRITE_DISABLE; /* (KOS's: 0 = write) */
-        }
-        if (bkey & 1) {
-            int c = (int)((bkey >> 7) & 3);
-            cxt.blend.src = (pvr_blend_mode_t)blend_factor((int)((bkey >> 1) & 7), c, 0);
-            cxt.blend.dst = (pvr_blend_mode_t)blend_factor((int)((bkey >> 4) & 7), c, 1);
-        } else if (d->mode[3] >= 6 && d->mode[3] <= 7) {
-            /* alpha test GEQUAL / GREATER with blending off: a cut-out. Blending by the source alpha leaves its
-               transparent texels (alpha 0) out, as the test does; partly transparent ones come out soft. */
-            cxt.blend.src = PVR_BLEND_SRCALPHA;
-            cxt.blend.dst = PVR_BLEND_INVSRCALPHA;
-        } else {
-            cxt.blend.src = PVR_BLEND_ONE;
-            cxt.blend.dst = PVR_BLEND_ZERO;
-        }
-        /* The GS's alpha written alone (FRAME.FBMSK: the colour masked) is kept in the PVR's secondary
-           accumulation buffer, which starts each tile at 0: the PVR cannot write one channel of a pixel. A
-           blend after it by the destination's alpha takes that alpha (`sSecAlpha`), in two polygons: the source
-           times the stored alpha into the secondary buffer, then that added to the picture, which keeps one minus
-           it. (A story chapter's picture is revealed by a moving mask so: the alpha cleared, the mask's alpha
-           written, the picture blended by it. Without it the picture was blended by whatever alpha was there,
-           and showed as noise.) The second polygon takes the stored alpha times the source's, so it is exact for
-           an opaque source. */
-        pass[0] = cxt;
-        np = 1;
-        if ((key >> 16 & 7) == 0) { /* the alpha alone */
-            pass[0].blend.src = PVR_BLEND_ONE;
-            pass[0].blend.dst = PVR_BLEND_ZERO;
-            pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
-            sSecAlpha = 1;
-        } else if ((bkey & 1) && ((bkey >> 7) & 3) == 1 && sSecAlpha) {
-            pass[0].blend.dst = PVR_BLEND_ZERO;
-            pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
-            pass[1] = cxt;
-            pass[1].blend.src_enable = PVR_BLEND_ENABLE;
-            pass[1].blend.src = PVR_BLEND_ONE;
-            pass[1].blend.dst = cxt.blend.dst == PVR_BLEND_INVDESTALPHA ? PVR_BLEND_INVSRCALPHA :
-                                cxt.blend.dst == PVR_BLEND_DESTALPHA ? PVR_BLEND_SRCALPHA : cxt.blend.dst;
-            np = 2;
-        }
-        for (p = 0; p < np; p++) {
-            pvr_poly_compile(&hdr, &pass[p]);
-            if (sSent + sizeof(hdr) + 3 * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
-                sDropped += d->count / 3;
-                break;
-            }
-            sSent += sizeof(hdr);
-            pvr_prim(&hdr, sizeof(hdr));
-            /* the scissor (x, y, width, height at SCALE) in screen pixels */
-            float x0 = (float)d->scissor[0] / (float)SCALE * sx, y0 = (float)d->scissor[1] / (float)SCALE * sy;
-            float x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sx, y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sy;
-            if (d->vu) {
-                vu_draw((int)((key >> 20) & 3), &gsVuUni[d->uniform], &gsVuIdx[d->first], d->count, x0, y0, x1, y1);
+                sRunBad = 1;
                 continue;
             }
-            for (k = 0; k + 2 < d->count; k += 3) {
-                ClipV a[12];
-                int j;
-                for (j = 0; j < 3; j++) {
-                    const Vtx *v = &gsVerts[d->first + k + j];
-                    float q = v->q != 0.0f ? v->q : 1.0f;
-                    a[j].x = v->x * sx;
-                    a[j].y = v->y * sy;
-                    a[j].z = PVR_Z(clampf(v->z, 0.0f, 1.0f));
-                    a[j].u = t != NULL ? v->s / q : 0.0f;
-                    a[j].v = t != NULL ? v->t / q : 0.0f;
-                    a[j].c[0] = (float)gs_unit(v->r);
-                    a[j].c[1] = (float)gs_unit(v->g);
-                    a[j].c[2] = (float)gs_unit(v->b);
-                    a[j].c[3] = (float)gs_unit(v->a);
+            if (d->target == shown) { v->final = 1; }
+            src = &v->t;
+        }
+        sDrawSrc[n] = src;
+        if (d->target == shown) {
+            sShownList[sShownCount++] = n;
+            continue;
+        }
+        if (d->target != sRunTarget) {
+            run_flush();
+            sRunTarget = d->target;
+            sRunW = sRunH = 0;
+            sRunBad = 0;
+        }
+        sRun[sRunCount++] = n;
+        {   /* the run's extent: the scissor, and for 2D the vertices inside it */
+            uint32_t sx1 = (uint32_t)((d->scissor[0] + d->scissor[2]) / SCALE), sy1 = (uint32_t)((d->scissor[1] + d->scissor[3]) / SCALE);
+            if (!d->vu && d->count > 0) {
+                float mx = 0.0f, my = 0.0f;
+                uint32_t j;
+                for (j = 0; j < d->count; j++) {
+                    const Vtx *v = &gsVerts[d->first + j];
+                    if (v->x > mx) { mx = v->x; }
+                    if (v->y > my) { my = v->y; }
                 }
-                emit_poly(a, 3, x0, y0, x1, y1);
+                if ((uint32_t)ceilf(mx) < sx1) { sx1 = (uint32_t)ceilf(mx); }
+                if ((uint32_t)ceilf(my) < sy1) { sy1 = (uint32_t)ceilf(my); }
             }
+            if (sx1 > sRunW) { sRunW = sx1; }
+            if (sy1 > sRunH) { sRunH = sy1; }
+        }
+    }
+    run_flush();
+    render_run(sShownList, sShownCount, NULL, NULL);
+    if (shown >= 0) { gsTargets[shown].cleared = 1; }
+    for (i = 0; i < sOldCount; i++) { ver_free(sOldVer[i]); }
+    sOldCount = 0;
+    for (i = 0; i < MAX_TARGETS; i++) {
+        if (sTgVer[i] != NULL) { sTgVer[i]->final = 0; }
+    }
+    if (sCap != NULL) { sCap->final = 0; }
+    if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
+        fprintf(stderr, "pvr: frame %u: %u renders\n", gGsFrame, sRenders);
+    }
+}
+
+/* every draw of one frame (BT3_PVR_LOG=<frame>; BT3_PVR_LOGV=<draw> its vertices) */
+static void draw_log(int shown) {
+    uint32_t n;
+    for (n = 0; n < gsDrawCount; n++) {
+        const GsDraw *d = &gsDraws[n];
+        const PvrTex *lt = d->mode[0] == 1 || d->mode[0] == 3 ? (const PvrTex *)d->tex : NULL;
+        fprintf(stderr, "pvr: draw %u: native %d vu %d target %d%s first %u count %u key %08x mode %d %d %d %d tex %ux%u%s\n", n,
+                d->native, d->vu, d->target, d->target == shown ? " (shown)" : "", d->first, d->count,
+                d->pipeline >= 0 && d->pipeline < sPipeCount ? sPipeKey[d->pipeline] : 0, d->mode[0], d->mode[1], d->mode[2], d->mode[3],
+                lt ? lt->w : 0, lt ? lt->h : 0, lt && !lt->mem ? " (none)" : "");
+        if (d->mode[0] == 2) {
+            fprintf(stderr, "pvr:   samples buffer %d\n", (int)((const PvrTex *)d->tex - sTgCol));
+        }
+        if (!d->vu && d->count > 0 && getenv("BT3_PVR_LOGV") != NULL && n == (uint32_t)atoi(getenv("BT3_PVR_LOGV"))) {
+            uint32_t j;
+            for (j = 0; j < d->count && j < 24; j++) {
+                const Vtx *w = &gsVerts[d->first + j];
+                fprintf(stderr, "pvr:     v%u %.1f %.1f z %.6f rgba %u %u %u %u stq %g %g %g u %g v %g\n", j, w->x, w->y, w->z, w->r, w->g, w->b, w->a, w->s, w->t, w->q, w->s / w->q, w->t / w->q);
+            }
+        }
+        if (d->vu && d->count > 0 && getenv("BT3_PVR_LOGV") != NULL && n == (uint32_t)atoi(getenv("BT3_PVR_LOGV"))) {
+            uint32_t j;
+            for (j = 0; j < d->count && j < 12; j++) {
+                const float *w = &gsVuVerts[gsVuIdx[d->first + j] * 12];
+                fprintf(stderr, "pvr:     i%u=%u pos %.2f %.2f %.2f %.2f col %.1f %.1f %.1f %.1f st %.4f %.4f %.4f %.4f\n", j, gsVuIdx[d->first + j],
+                        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11]);
+            }
+        }
+        if (d->vu) {
+            fprintf(stderr, "pvr:   blendc %.2f misc %.0f %.0f %.0f %.0f sampler %d\n", d->blendc, d->misc[0], d->misc[1], d->misc[2], d->misc[3], d->sampler);
+        }
+        if (!d->vu && d->count > 0) {
+            const Vtx *v = &gsVerts[d->first];
+            fprintf(stderr, "pvr:   first vertex %.1f %.1f z %.6f rgba %u %u %u %u st %.3f %.3f %.3f; blendc %.2f misc %.0f %.0f %.0f %.0f\n", v->x, v->y, v->z,
+                    v->r, v->g, v->b, v->a, v->s, v->t, v->q, d->blendc, d->misc[0], d->misc[1], d->misc[2], d->misc[3]);
         }
     }
 }
@@ -751,13 +1118,8 @@ static void frame_end(void) {
     shown = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
     if (shown < 0 && gsTargetCount > 0) { shown = 0; }
 
-    pvr_wait_ready();
-    sSent = sTris = sDropped = 0;
-    pvr_scene_begin();
-    pvr_list_begin(PVR_LIST_TR_POLY);
-    if (shown >= 0) { draw_list(shown); }
-    pvr_list_finish();
-    pvr_scene_finish(); /* renders, and gpu_pvr shows the picture (kos_pvr_present) */
+    if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) { draw_log(shown); }
+    frame_render(shown);
     {   /* BT3_SHOT=<n>: every n-th frame of the game to port/build/shots/pvr_NNNNN.ppm (the other back ends' gpu_*),
            BT3_SHOT_FROM / BT3_SHOT_TO limit the frames */
         static int every = -1;
@@ -786,17 +1148,6 @@ static void frame_end(void) {
     gsVuIdxCount = 0;
     gsVuUniCount = 0;
     gsDrawCount = 0;
-    {
-        static uint32_t peak;
-        if (sSent > peak) { peak = sSent; }
-        if (sDropped != 0 || (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0)) {
-            static unsigned told;
-            if (getenv("BT3_GS_VERBOSE") != NULL || told++ < 10) {
-                fprintf(stderr, "pvr: frame %u: %u triangles sent (%u KB, the most so far %u KB of %u)%s\n", gGsFrame, sTris, sSent >> 10, peak >> 10,
-                        (unsigned)(SCENE_BUDGET >> 10), sDropped ? ", some left out: the vertex buffer is full" : "");
-            }
-        }
-    }
     gsAnchor = 0;
     gsSkipped = 0;
     gsNative = 0;
