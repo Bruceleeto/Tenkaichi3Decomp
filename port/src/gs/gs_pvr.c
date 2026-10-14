@@ -41,12 +41,17 @@ static uint32_t sSent, sTris, sDropped; /* this scene: bytes sent, triangles sen
 
 /* ---- textures: a record per texture, its pixels in PVR memory once converted -------------------------- */
 typedef struct PvrTex {
-    uint32_t w, h;  /* in PVR memory: powers of two, 8..1024 */
+    uint32_t w, h;  /* the image: powers of two, 8..1024 */
     int format;     /* GS_TEXFMT_* as the shared layer gave it */
     pvr_ptr_t mem;  /* NULL: draws white (not uploaded, a texture pack's compressed one, or PVR memory full) */
+    uint32_t bytes; /* of PVR memory at mem */
+    /* As the PVR is given it: plain ARGB4444 (w x h, not twiddled), or VQ (2w x 2h, twiddled, `base` before `mem`
+       by the codebook entries it does not use; see tex_vq) */
+    uint32_t pw, ph, fmt;
+    pvr_ptr_t base;
 } PvrTex;
 
-static PvrTex sWhiteRec = {8, 8, GS_TEXFMT_RGBA8, NULL};
+static PvrTex sWhiteRec = {8, 8, GS_TEXFMT_RGBA8, NULL, 0, 8, 8, 0, NULL};
 static uint32_t sTexBytes, sTexPeak, sTexLive; /* in PVR memory now, the most so far; textures there */
 
 static uint32_t pow2_in(uint32_t n) {
@@ -65,20 +70,113 @@ static GsTex tex_create(uint32_t w, uint32_t h, int format, int levels) {
     t->h = pow2_in(h);
     t->format = format;
     if (format == GS_TEXFMT_RGBA8) {
-        t->mem = pvr_mem_malloc(t->w * t->h * 2);
+        t->bytes = t->w * t->h * 2;
+        t->mem = pvr_mem_malloc(t->bytes);
         if (t->mem == NULL) {
             free(t);
             return 0;
         }
-        sTexBytes += t->w * t->h * 2;
+        t->pw = t->w;
+        t->ph = t->h;
+        t->fmt = PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_NONTWIDDLED;
+        t->base = t->mem;
+        sTexBytes += t->bytes;
         sTexLive++;
         if (sTexBytes > sTexPeak) { sTexPeak = sTexBytes; }
     }
     return (GsTex)t;
 }
 
-/* RGBA8 (alpha as the GS has it: 0x80 opaque) to ARGB4444, nearest-resampled to the record's size. The
-   coordinates are 0..1 across the texture, so a resampled one is addressed as the original was. */
+/* The PVR's twiddled order (libpvr's TextureSampler::twiddle_address): u and v interleaved over the smaller side,
+   the rest of the larger one above. */
+static uint32_t spread_bits(uint32_t x) {
+    x &= 0x3FF;
+    x = (x | (x << 8)) & 0x00FF00FF;
+    x = (x | (x << 4)) & 0x0F0F0F0F;
+    x = (x | (x << 2)) & 0x33333333;
+    x = (x | (x << 1)) & 0x55555555;
+    return x;
+}
+
+static uint32_t twiddle_index(uint32_t u, uint32_t v, uint32_t w, uint32_t h) {
+    uint32_t m = w < h ? w : h, bits = 0, s, idx;
+    for (s = m; s > 1; s >>= 1) { bits++; }
+    idx = spread_bits(v & (m - 1)) | (spread_bits(u & (m - 1)) << 1);
+    if (w != h) { idx |= ((w > h ? u : v) >> bits) << (2 * bits); }
+    return idx;
+}
+
+/* A texture of at most 256 colours as VQ, without loss: the PVR's VQ texture of twice the size, one index per texel
+   of the image, each codebook entry four texels of one colour (the 2 x 2 block an index covers). Half the memory of
+   ARGB4444 and a codebook of 8 bytes per colour; no palette RAM (its 64 banks are shared by the whole screen). A
+   codebook of n colours is the end of a full one of 256 (as iortcw's pvrtex files): the indices start at 256 - n
+   and the PVR is pointed that much before it. The coordinates stay 0..1 across the texture. (Bilinear filtering
+   blends between texels over half the distance it does on the plain one.) Returns 0 when the texture has more
+   colours, or no memory came free for it (it stays ARGB4444). */
+static int tex_vq(PvrTex *t, const uint16_t *px) {
+    enum { SLOTS = 1024 };
+    uint16_t key[SLOTS], color[256];
+    uint8_t *out;
+    int16_t slot[SLOTS];
+    uint32_t n = 0, i, bytes, first;
+    pvr_ptr_t mem;
+
+    if (t->w > 512 || t->h > 512 || getenv("BT3_PVR_TEX") != NULL) { return 0; } /* (BT3_PVR_TEX=4444: none, for comparing) */
+    memset(slot, -1, sizeof(slot));
+    out = malloc(t->w * t->h);
+    if (out == NULL) { return 0; }
+    for (i = 0; i < t->w * t->h; i++) { /* the colours, by an open hash of the 16-bit values */
+        uint32_t h = ((uint32_t)px[i] * 40503u >> 6) & (SLOTS - 1);
+        while (slot[h] >= 0 && key[h] != px[i]) { h = (h + 1) & (SLOTS - 1); }
+        if (slot[h] < 0) {
+            if (n == 256) { free(out); return 0; }
+            key[h] = px[i];
+            slot[h] = (int16_t)n;
+            color[n++] = px[i];
+        }
+        out[i] = (uint8_t)slot[h];
+    }
+    bytes = n * 8 + t->w * t->h;
+    if (bytes >= t->bytes) { free(out); return 0; }
+    first = 256 - n;
+    {   /* the indices in twiddled order, after the codebook */
+        uint8_t *buf = malloc(bytes);
+        uint32_t x, y;
+        if (buf == NULL) { free(out); return 0; }
+        for (i = 0; i < n; i++) {
+            uint16_t *e = (uint16_t *)(buf + i * 8);
+            e[0] = e[1] = e[2] = e[3] = color[i];
+        }
+        for (y = 0; y < t->h; y++) {
+            for (x = 0; x < t->w; x++) {
+                buf[n * 8 + twiddle_index(x, y, t->w, t->h)] = (uint8_t)(first + out[y * t->w + x]);
+            }
+        }
+        free(out);
+        pvr_mem_free(t->mem); /* the smaller block instead (freed first: it fits where the larger one was) */
+        sTexBytes -= t->bytes;
+        mem = pvr_mem_malloc(bytes);
+        if (mem == NULL) { /* (cannot happen: the larger block was just freed) */
+            t->mem = NULL;
+            free(buf);
+            return 1;
+        }
+        pvr_txr_load(buf, mem, bytes);
+        free(buf);
+    }
+    t->mem = mem;
+    t->bytes = bytes;
+    sTexBytes += bytes;
+    t->pw = t->w * 2;
+    t->ph = t->h * 2;
+    t->fmt = PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_TWIDDLED | PVR_TXRFMT_VQ_ENABLE;
+    t->base = (pvr_ptr_t)((uint8_t *)mem - first * 8);
+    return 1;
+}
+
+/* RGBA8 (alpha as the GS has it: 0x80 opaque) to ARGB4444, nearest-resampled to the record's size, then VQ when it
+   has few enough colours (tex_vq). The coordinates are 0..1 across the texture, so a resampled one is addressed as
+   the original was. */
 static int tex_upload(GsTex tex, int level, uint32_t w, uint32_t h, int format, const void *px, uint32_t bytes) {
     PvrTex *t = (PvrTex *)tex;
     const uint8_t *src = px;
@@ -90,6 +188,18 @@ static int tex_upload(GsTex tex, int level, uint32_t w, uint32_t h, int format, 
         free((void *)px);
         return 1;
     }
+    if (t->bytes != t->w * t->h * 2) { /* uploaded again after it was made VQ: the full block back */
+        pvr_mem_free(t->mem);
+        sTexBytes -= t->bytes;
+        t->bytes = t->w * t->h * 2;
+        t->mem = pvr_mem_malloc(t->bytes);
+        t->pw = t->w;
+        t->ph = t->h;
+        t->fmt = PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_NONTWIDDLED;
+        t->base = t->mem;
+        if (t->mem == NULL) { free((void *)px); return 1; }
+        sTexBytes += t->bytes;
+    }
     dst = malloc(t->w * t->h * 2);
     if (dst != NULL) {
         for (y = 0; y < t->h; y++) {
@@ -100,7 +210,9 @@ static int tex_upload(GsTex tex, int level, uint32_t w, uint32_t h, int format, 
                 dst[y * t->w + x] = (uint16_t)(a << 12 | (c[0] >> 4) << 8 | (c[1] >> 4) << 4 | c[2] >> 4);
             }
         }
-        pvr_txr_load(dst, t->mem, t->w * t->h * 2);
+        if (!tex_vq(t, dst)) {
+            pvr_txr_load(dst, t->mem, t->w * t->h * 2);
+        }
         free(dst);
     }
     free((void *)px);
@@ -110,7 +222,7 @@ static int tex_upload(GsTex tex, int level, uint32_t w, uint32_t h, int format, 
 static void tex_destroy(GsTex tex) {
     PvrTex *t = (PvrTex *)tex;
     if (t == NULL || t == &sWhiteRec) { return; }
-    if (t->mem != NULL) { pvr_mem_free(t->mem); sTexBytes -= t->w * t->h * 2; sTexLive--; }
+    if (t->mem != NULL) { pvr_mem_free(t->mem); sTexBytes -= t->bytes; sTexLive--; }
     free(t);
 }
 
@@ -517,7 +629,7 @@ static void draw_list(int shown) {
         t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
         if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
         if (t != NULL && t->mem != NULL) {
-            pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_NONTWIDDLED, (int)t->w, (int)t->h, t->mem,
+            pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)t->fmt, (int)t->pw, (int)t->ph, t->base,
                              (d->sampler & 1) ? PVR_FILTER_BILINEAR : PVR_FILTER_NEAREST);
             cxt.txr.uv_clamp = (pvr_uv_clamp_t)(((d->sampler & 2) ? PVR_UVCLAMP_U : 0) | ((d->sampler & 4) ? PVR_UVCLAMP_V : 0));
             tfx = d->mode[1];
