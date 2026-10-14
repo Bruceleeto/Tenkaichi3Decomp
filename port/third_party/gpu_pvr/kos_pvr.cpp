@@ -26,7 +26,7 @@
  *   SET_END   frame buffers, as 32-bit-path addresses SET_END (bank A)
  *             and 0x400000 + SET_END (bank B); their 64-bit image is
  *             [2 * SET_END, TEX_BASE)
- *   TEX_BASE  texture heap to 0x800000 (pvr_mem_malloc)
+ *   TEX_BASE  texture heap to VRAM_SIZE (pvr_mem_malloc)
  *
  * With a 768K vertex buffer these are the numbers KOS ends up with for
  * bloom's pvr_init params (opb {16,0,16,8,16}, overflow 3), so the heap is
@@ -48,7 +48,7 @@
 
 using R = pvr::RegisterName;
 
-#define VRAM_SIZE      0x800000u
+#define VRAM_SIZE      0x1000000u /* 16 MB, twice the Dreamcast's, while the textures are not yet in their final formats (the most: the 24-bit masks) */
 #define VRAM_ALIGN     0x1000000u
 #define SCREEN_W       640
 #define SCREEN_H       480
