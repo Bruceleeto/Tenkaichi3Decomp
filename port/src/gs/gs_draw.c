@@ -276,6 +276,42 @@ static GsTex texture_get(int ctx) {
             px[y * tw + x] = c;
         }
     }
+    if (!replaced && px != NULL && getenv("BT3_SRC_CHECK") != NULL) {
+        /* the same texture read from the game's own data instead of GS memory (Gs_SrcRead): how many are whole
+           and equal, how many have parts with no source, how many differ */
+        static unsigned nSame, nPart, nDiff, nAll, lastFrame;
+        uint32_t miss = 0, diff = 0;
+        for (y = 0; y < th; y++) {
+            for (x = 0; x < tw; x++) {
+                uint32_t c, v;
+                if (!Gs_SrcRead(tbp, tbw, psm, x, y, &c)) { miss++; continue; }
+                if (bits > 8) {
+                    c = Gs_Expand(c, psm);
+                } else {
+                    if (bits == 8) {
+                        c = (c & 0xE7) | ((c & 8) << 1) | ((c & 0x10) >> 1);
+                    }
+                    if (!Gs_SrcRead(cbp, 1, cpsm, bits == 8 ? c & 15 : c & 7, bits == 8 ? c >> 4 : c >> 3, &v)) { miss++; continue; }
+                    c = Gs_Expand(v, cpsm);
+                }
+                if (c != px[y * tw + x] && diff++ == 0 && getenv("BT3_SRC_CHECK")[0] == 'v') {
+                    uint32_t ri = 0, gi = Gs_VramRead(tbp, tbw, psm, x, y);
+                    Gs_SrcRead(tbp, tbw, psm, x, y, &ri);
+                    fprintf(stderr, "src:   first at %u,%u: index %x / %x, colour %08x / %08x\n", (unsigned)x, (unsigned)y, (unsigned)ri, (unsigned)gi, (unsigned)c, (unsigned)px[y * tw + x]);
+                }
+            }
+        }
+        nAll++;
+        if (miss != 0) nPart++; else if (diff != 0) nDiff++; else nSame++;
+        if (getenv("BT3_SRC_CHECK")[0] == 'v' && (miss != 0 || diff != 0)) {
+            fprintf(stderr, "src: frame %u tbp %04x tbw %u psm %02x %ux%u cbp %04x cpsm %02x: %u no source, %u differ\n", gGsFrame, (unsigned)tbp,
+                    (unsigned)tbw, (unsigned)psm, (unsigned)tw, (unsigned)th, (unsigned)cbp, (unsigned)cpsm, (unsigned)miss, (unsigned)diff);
+        }
+        if (gGsFrame / 100 != lastFrame / 100) {
+            fprintf(stderr, "src: frame %u: %u textures decoded, %u from their sources, %u partly without one, %u differ\n", gGsFrame, nAll, nSame, nPart, nDiff);
+            lastFrame = gGsFrame;
+        }
+    }
     if (!replaced && px != NULL) {
         int mw, mh;
         uint64_t font_t0 = gpu_now();

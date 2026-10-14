@@ -289,7 +289,11 @@ void Heap_Free(void *ptr) {
 #ifdef PORT
     {
         extern void Port_HeapNoteFree(u32 data);
+        extern void Gs_SrcFreed(u32 lo, u32 hi); /* port/src/gs/gs_core.c: textures GS memory still holds from it */
         Port_HeapNoteFree((u32)ptr);
+        if (block != NULL) {
+            Gs_SrcFreed((u32)ptr, (u32)ptr + block->dataSize);
+        }
     }
 #endif
     Heap_FreeBlock(block);

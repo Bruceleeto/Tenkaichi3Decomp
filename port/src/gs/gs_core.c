@@ -84,12 +84,14 @@ static uint16_t sCol4[16][32];
 /* For the uploads: where the pixel (x, y) lies inside its page, as an index of pixels of its own size. A page is
    64 x 32 pixels of 32 bits, 64 x 64 of 16, 128 x 64 of 8, 128 x 128 of 4; the page's own number comes on top. */
 static uint16_t sIn32[32][64], sIn16[2][64][64], sIn8[64][128], sIn4[128][128];
+static uint16_t sInv32[2048]; /* the other way: a word's place in its page -> (y << 6) | x */
 
 static void tables_init(void) {
     int y, x;
     for (y = 0; y < 128; y++) {
         for (x = 0; x < 128; x++) {
             if (y < 32 && x < 64) {
+                sInv32[(kBlock32[(y >> 3) & 3][(x >> 3) & 7] << 6) + kCol32[y & 7][x & 7]] = (uint16_t)(y << 6 | x);
                 sIn32[y][x] = (uint16_t)((kBlock32[(y >> 3) & 3][(x >> 3) & 7] << 6) + kCol32[y & 7][x & 7]);
             }
             if (y < 64 && x < 64) {
@@ -223,6 +225,267 @@ void Gs_StateBack(void) {
 
 uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y) {
     return vram_rw(bp, bw, psm, x, y, 0, 0);
+}
+
+/* ------------------------------------------------------------------------------------------------ sources */
+
+/* Where the contents of GS memory came from. Every 32-bit upload is recorded, and each 256-byte block it filled
+   points at its record, so that a texture can be read from the game's data instead of GS memory (Gs_SrcRead):
+   the step to a renderer that keeps its textures (the Dreamcast's) and to dropping the 4 MB copy.
+   - Data sent by a DMA REF is a texture file's entry (every Dma_AddRef of pixels or a palette in the game's code:
+     gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c, eft_det_a.c, hud_c_c.c), in a block of the game's heap that holds the file:
+     the record keeps the game's pointer, and sees what the game later changes there (BtlObjMdl_CopyTexAlpha gives
+     a fighter's palettes their alpha in place). When the block is freed (Gs_SrcFreed, from Heap_Free), a record
+     that still fills GS memory takes a copy: the GS keeps a texture whose file is gone.
+   - Anything else (data inside the packets, which are built again every frame; a movie's pictures) is copied as
+     it comes.
+   An upload in another format, a copy inside GS memory, leaves its blocks without a source. A rectangle the game
+   draws into texture memory on the CPU (its palettes) makes the page's blocks keep their own contents (src_own).
+   Drawing into memory that is later read as a texture is the render targets' business, not seen here. */
+typedef struct GsSrc {
+    const uint8_t *p;     /* the data as the GS got it, row by row from (tx, ty): the game's, or `own` */
+    uint8_t *own;         /* a copy, when the data could not be kept by pointer */
+    uint32_t bytes;       /* how much of it has come */
+    uint32_t refs;        /* blocks pointing at this record */
+    int copied;           /* always copied (see src_begin) */
+    uint32_t dbp, bw, tx, ty, tw, th;
+} GsSrc;
+#define MAX_SRC 16384 /* as many as blocks: every record in use holds one at least */
+static GsSrc sSrc[MAX_SRC];
+static uint32_t sSrcNext;
+static uint16_t sBlockSrc[16384]; /* record + 1 per block, 0 = no source */
+static GsSrc *sSrcCur;            /* the upload under way */
+static int sSrcRef;               /* the data now going to the GS came by a DMA REF */
+static uint8_t *sOwn[16384];      /* a block drawn into after its upload: its contents, kept here (sBlockSrc = 0xFFFF) */
+#define SRC_OWN 0xFFFFu
+uint32_t gGsSrcMiss;              /* reads Gs_SrcRead could not answer (for the check) */
+
+static void src_drop(GsSrc *s) {
+    free(s->own);
+    s->own = NULL;
+    s->p = NULL;
+    s->bytes = 0;
+}
+
+/* Block b now has source n (0 = none, SRC_OWN = its own copy). */
+static void src_set(uint32_t b, uint32_t n) {
+    uint32_t old = sBlockSrc[b];
+
+    if (old == n) {
+        return;
+    }
+    if (old != 0 && old != SRC_OWN && --sSrc[old - 1].refs == 0) {
+        src_drop(&sSrc[old - 1]);
+    }
+    if (n != 0 && n != SRC_OWN) {
+        sSrc[n - 1].refs++;
+    }
+    sBlockSrc[b] = (uint16_t)n;
+}
+
+/* An upload begins: blocks it covers get its record (32-bit) or lose theirs (anything else). */
+static void src_begin(uint32_t dbp, uint32_t bw, uint32_t psm, uint32_t tx, uint32_t ty, uint32_t tw, uint32_t th) {
+    uint32_t bx, by, n, i;
+    GsSrc *s;
+
+    sSrcCur = NULL;
+    if (bw == 0) {
+        bw = 1;
+    }
+    if (tw == 0 || th == 0) {
+        return;
+    }
+    if (psm != 0x00) { /* another format: every page the rectangle can touch loses its sources */
+        uint32_t bits = (uint32_t)Gs_PsmBits(psm), rowbytes = bw * 64 * bits / 8;
+        uint32_t first = dbp / 32 + (ty * rowbytes) / 8192, last = dbp / 32 + ((ty + th) * rowbytes + 8191) / 8192;
+        for (i = first * 32; i < (last + 1) * 32; i++) {
+            src_set(i & 16383, 0);
+        }
+        return;
+    }
+    /* the next free record (one no block points at) */
+    for (i = 0; i < MAX_SRC && sSrc[sSrcNext].refs != 0; i++) {
+        sSrcNext = (sSrcNext + 1) % MAX_SRC;
+    }
+    if (i == MAX_SRC) {
+        return;
+    }
+    n = sSrcNext;
+    sSrcNext = (sSrcNext + 1) % MAX_SRC;
+    s = &sSrc[n];
+    src_drop(s);
+    s->dbp = dbp; s->bw = bw; s->tx = tx; s->ty = ty; s->tw = tw; s->th = th;
+    /* The pictures of a movie, sent into the display buffer (page 0, 512 wide) by REF tags movie.c writes itself:
+       from its decoding buffer, which the next picture overwrites. */
+    s->copied = dbp == 0 && bw == 8;
+    sSrcCur = s;
+    s->refs = 1; /* held while the upload is under way, so that its own blocks do not drop it */
+    for (by = ty >> 3; by <= (ty + th - 1) >> 3; by++) {
+        for (bx = tx >> 3; bx <= (tx + tw - 1) >> 3; bx++) {
+            uint32_t x = bx << 3, y = by << 3;
+            uint32_t a = ((dbp + (y >> 5) * 32 * bw) << 6) + ((x >> 6) << 11) + sIn32[y & 31][x & 63];
+            src_set((a >> 6) & 16383, n + 1);
+        }
+    }
+    s->refs--;
+}
+
+/* The game drew into page `page` of texture memory (its palettes, on the CPU): the page's blocks keep what they
+   now hold (until the next upload over them). */
+static void src_own(uint32_t page) {
+    uint32_t b;
+
+    for (b = page * 32; b < page * 32 + 32; b++) {
+        if (sOwn[b] == NULL) {
+            sOwn[b] = malloc(256);
+        }
+        memcpy(sOwn[b], (const uint8_t *)sVram + b * 256, 256);
+        src_set(b, SRC_OWN);
+    }
+}
+
+/* Takes a copy of what a record holds by pointer. */
+static void src_copy(GsSrc *s) {
+    uint32_t size = s->tw * s->th * 4;
+
+    if (s->own != NULL || s->p == NULL) {
+        return;
+    }
+    s->own = malloc(size);
+    memcpy(s->own, s->p, s->bytes < size ? s->bytes : size);
+    s->p = s->own;
+}
+
+/* Data of the upload under way. By REF and right after what came before: kept by pointer; otherwise copied. */
+static void src_data(const uint8_t *p, uint32_t bytes) {
+    GsSrc *s = sSrcCur;
+    uint32_t size, n;
+
+    if (s == NULL) {
+        return;
+    }
+    size = s->tw * s->th * 4;
+    if (s->bytes == 0 && sSrcRef && !s->copied) {
+        s->p = p;
+    } else if (s->own == NULL && !(sSrcRef && !s->copied && s->p + s->bytes == p)) {
+        if (s->bytes == 0) {
+            s->own = malloc(size);
+            s->p = s->own;
+        } else {
+            src_copy(s);
+        }
+    }
+    if (s->own != NULL && s->bytes < size) {
+        n = bytes < size - s->bytes ? bytes : size - s->bytes;
+        memcpy(s->own + s->bytes, p, n);
+    }
+    s->bytes += bytes;
+}
+
+/* The game's heap block [lo, hi) is freed: what GS memory still holds from it is copied. */
+void Gs_SrcFreed(uint32_t lo, uint32_t hi) {
+    uint32_t i;
+
+    for (i = 0; i < MAX_SRC; i++) {
+        GsSrc *s = &sSrc[i];
+        if (s->p != NULL && s->own == NULL && Port_Addr(s->p) >= lo && Port_Addr(s->p) < hi) {
+            if (s->refs != 0) {
+                src_copy(s);
+            } else {
+                src_drop(s);
+            }
+        }
+    }
+}
+
+/* The 32-bit word at word address `a` of GS memory, from its source; 0 = none. */
+static int src_word(uint32_t a, uint32_t *v) {
+    uint32_t n = sBlockSrc[(a >> 6) & 16383], rel, page, xy, x, y, i;
+    const GsSrc *s;
+
+    if (n == 0) {
+        return 0;
+    }
+    if (n == SRC_OWN) {
+        memcpy(v, sOwn[(a >> 6) & 16383] + (a & 63) * 4, 4);
+        return 1;
+    }
+    s = &sSrc[n - 1];
+    if (s->p == NULL) {
+        return 0;
+    }
+    rel = a - (s->dbp << 6);
+    page = rel >> 11;
+    xy = sInv32[rel & 2047];
+    x = (page % s->bw) * 64 + (xy & 63);
+    y = (page / s->bw) * 32 + (xy >> 6);
+    if (x < s->tx || x >= s->tx + s->tw || y < s->ty || y >= s->ty + s->th) {
+        return 0;
+    }
+    i = ((y - s->ty) * s->tw + (x - s->tx)) * 4;
+    if (i + 4 > s->bytes) {
+        return 0;
+    }
+    memcpy(v, s->p + i, 4);
+    return 1;
+}
+
+/* BT3_SRC_CHECK: are the sources still what GS memory holds? Every block with a source, word by word. A source
+   the game has since written over (a load buffer used again) would give a texture decoded later wrong pixels. */
+static void src_audit(void) {
+    uint32_t b, k, stale = 0, blocks = 0, own = 0;
+    static uint8_t seen[MAX_SRC];
+    memset(seen, 0, sizeof(seen));
+    for (b = 0; b < 16384; b++) {
+        uint32_t n = sBlockSrc[b], bad = 0, any = 0;
+        if (n == 0) continue;
+        if (n == SRC_OWN) { own++; continue; }
+        for (k = 0; k < 64; k++) {
+            uint32_t v;
+            if (src_word(b * 64 + k, &v)) { any = 1; bad += v != sVram[b * 64 + k]; }
+        }
+        blocks += any;
+        if (bad != 0) {
+            stale++;
+            if (!seen[n - 1] && getenv("BT3_SRC_CHECK")[0] == 'v') {
+                const GsSrc *s = &sSrc[n - 1];
+                seen[n - 1] = 1;
+                fprintf(stderr, "src: frame %u: upload %u (dbp %04x bw %u %ux%u from %p) has changed\n", sFrame, n - 1, (unsigned)s->dbp, (unsigned)s->bw,
+                        (unsigned)s->tw, (unsigned)s->th, (const void *)s->p);
+            }
+        }
+    }
+    fprintf(stderr, "src: frame %u: %u blocks from uploads, %u of them changed since; %u drawn into\n", sFrame, blocks, stale, own);
+}
+
+/* Gs_VramRead from the sources: 1 = *v is the value, 0 = some byte of it has none. */
+int Gs_SrcRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t *v) {
+    uint32_t a, w;
+
+    if (bw == 0) {
+        bw = 1;
+    }
+    switch (psm) {
+    case 0x13:
+        a = ((bp + ((y >> 1) & ~0x1Fu) * (bw >> 1) + ((x >> 2) & ~0x1Fu) + kBlock32[(y >> 4) & 3][(x >> 4) & 7]) << 8) + sCol8[y & 15][x & 15];
+        if (!src_word((a >> 2) & 0xFFFFF, &w)) break;
+        *v = (w >> ((a & 3) * 8)) & 0xFF;
+        return 1;
+    case 0x14:
+        a = ((bp + ((y >> 2) & ~0x1Fu) * (bw >> 1) + ((x >> 2) & ~0x1Fu) + kBlock16[(y >> 4) & 7][(x >> 5) & 3]) << 9) + sCol4[y & 15][x & 31];
+        if (!src_word((a >> 3) & 0xFFFFF, &w)) break;
+        *v = (w >> ((a & 7) * 4)) & 0xF;
+        return 1;
+    case 0x00: case 0x01: case 0x1B: case 0x24: case 0x2C:
+        a = ((bp + (y & ~0x1Fu) * bw + ((x >> 1) & ~0x1Fu) + kBlock32[(y >> 3) & 3][(x >> 3) & 7]) << 6) + kCol32[y & 7][x & 7];
+        if (!src_word(a & 0xFFFFF, &w)) break;
+        *v = psm == 0x00 ? w : psm == 0x01 ? w & 0xFFFFFF : psm == 0x1B ? w >> 24 : psm == 0x24 ? (w >> 24) & 15 : w >> 28;
+        return 1;
+    default:
+        break;
+    }
+    gGsSrcMiss++;
+    return 0;
 }
 
 /* A hash of one 8 KB page of GS memory, recomputed only after an upload touched the page. The GPU back end keys
@@ -669,6 +932,8 @@ static void vertex(uint32_t x, uint32_t y, uint32_t z, int kick) {
                 draw_sprite(sf, ctx, &gs.vtx[0], &gs.vtx[1]);
                 gGsPageGen[fb]++;
                 gGsPageGen[(fb + 1) & 511]++;
+                src_own(fb);
+                src_own((fb + 1) & 511);
             } else if (kick) {
                 if (sGpu) { GsGpu_Draw(6, ctx, gs.vtx); } else { draw_sprite(sf, ctx, &gs.vtx[0], &gs.vtx[1]); }
             }
@@ -696,6 +961,13 @@ static void transfer_begin(void) {
     gs.tw = gs.trxreg & 0xFFF;
     gs.th = (gs.trxreg >> 32) & 0xFFF;
     gs.tpos = 0;
+    if (gs.transfer) {
+        src_begin((gs.bitbltbuf >> 32) & 0x3FFF, (gs.bitbltbuf >> 48) & 0x3F, (gs.bitbltbuf >> 56) & 0x3F, gs.tx, gs.ty, gs.tw, gs.th);
+    } else if ((gs.trxdir & 3) == 2) { /* a copy inside GS memory: its destination has no source */
+        uint32_t dpsm = (gs.bitbltbuf >> 56) & 0x3F;
+        src_begin((gs.bitbltbuf >> 32) & 0x3FFF, (gs.bitbltbuf >> 48) & 0x3F, dpsm == 0x00 ? 0x01 : dpsm, (gs.trxpos >> 32) & 0x7FF, (gs.trxpos >> 48) & 0x7FF,
+                  gs.trxreg & 0xFFF, (gs.trxreg >> 32) & 0xFFF);
+    }
     if (sDumpFrame == (int)sFrame) {
         fprintf(stderr, "  upload dbp %04x dbw %u psm %02x at %u,%u size %ux%u\n", (unsigned)((gs.bitbltbuf >> 32) & 0x3FFF),
                 (unsigned)((gs.bitbltbuf >> 48) & 0x3F), (unsigned)((gs.bitbltbuf >> 56) & 0x3F), gs.tx, gs.ty, gs.tw, gs.th);
@@ -709,6 +981,7 @@ static void transfer_data(const uint8_t *p, uint32_t bytes) {
     if (!gs.transfer || gs.tw == 0) {
         return;
     }
+    src_data(p, bytes);
     /* A picture uploaded straight into a display buffer (the movies: page 0, 512 wide, the second buffer 448 lines
        down): the GPU back end has to copy it from GS memory into that buffer's texture at the end of the frame. */
     if (dbp == 0 && dbw == 8 && Gs_PsmBits(dpsm) == 32) {
@@ -1068,6 +1341,9 @@ static void screenshot(void) {
     }
     if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture; a skipped one is counted) */
         sFrame++;
+        if (sFrame % 100 == 0 && getenv("BT3_SRC_CHECK") != NULL) {
+            src_audit();
+        }
     }
 }
 
@@ -1285,7 +1561,9 @@ void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
         uint32_t n = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, ref = tag[1];
 
         if (id == 0 || id == 3 || id == 4) {
+            sSrcRef = 1;
             Gs_Gif((const uint8_t *)Port_Ptr(ref), n);
+            sSrcRef = 0;
             addr += 16;
         } else {
             Gs_Gif((const uint8_t *)(tag + 4), n);
@@ -1409,9 +1687,12 @@ static void run_chain(uint32_t tadr, int tte) {
         }
         sStat[0]++;
         if (tte) {
+            sSrcRef = 0;
             vif(tag + 2, 2);
         }
+        sSrcRef = id == 0 || id == 3 || id == 4;
         vif(data, qwc * 4);
+        sSrcRef = 0;
         if (end) {
             break;
         }
