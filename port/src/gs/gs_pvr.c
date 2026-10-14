@@ -572,15 +572,20 @@ static void vu_draw(int vu, const Vu0Uniform *U, const uint32_t *idx, uint32_t c
 /* The 2D primitives drawn into the shown frame buffer, as triangles in the translucent list. Of the GS's tests:
    the alpha test as blending (a cut-out's transparent texels have alpha 0) or not drawn (never passes); the
    scissor by clipping the triangles here; the destination alpha test left out (see below). */
+static int sSecAlpha; /* this frame has written the GS's alpha alone into the secondary buffer (see below) */
+
 static void draw_list(int shown) {
     uint32_t n, k;
     const float sx = 640.0f / 512.0f, sy = 480.0f / 448.0f;
 
+    sSecAlpha = 0;
+
     for (n = 0; n < gsDrawCount; n++) {
         const GsDraw *d = &gsDraws[n];
         uint32_t key, bkey;
-        pvr_poly_cxt_t cxt;
+        pvr_poly_cxt_t cxt, pass[2];
         pvr_poly_hdr_t hdr;
+        int np, p;
         const PvrTex *t;
         int tfx;
 
@@ -622,7 +627,7 @@ static void draw_list(int shown) {
         key = sPipeKey[d->pipeline];
         if (((key >> 10) & 3) == 0 || ((key >> 22) & 1)) { continue; } /* depth test NEVER; a table pass */
         if (((key >> 13) & 3) != 0) { continue; }  /* lines, points */
-        if ((key >> 16 & 7) == 0) { continue; }    /* writes no colour (alpha or depth only) */
+        if ((key >> 16 & 0xF) == 0) { continue; }  /* writes no colour and no alpha (depth only) */
         if (d->mode[0] == 2) { continue; }          /* samples a frame buffer */
         if (d->mode[3] == 1) { continue; }          /* alpha test NEVER (with KEEP: nothing is written) */
         /* The destination alpha test (bit 7 of the alpha already there; the PVR cannot test it). The stage's
@@ -663,14 +668,39 @@ static void draw_list(int shown) {
             cxt.blend.src = PVR_BLEND_ONE;
             cxt.blend.dst = PVR_BLEND_ZERO;
         }
-        pvr_poly_compile(&hdr, &cxt);
-        if (sSent + sizeof(hdr) + 3 * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
-            sDropped += d->count / 3;
-            continue;
+        /* The GS's alpha written alone (FRAME.FBMSK: the colour masked) is kept in the PVR's secondary
+           accumulation buffer, which starts each tile at 0: the PVR cannot write one channel of a pixel. A
+           blend after it by the destination's alpha takes that alpha (`sSecAlpha`), in two polygons: the source
+           times the stored alpha into the secondary buffer, then that added to the picture, which keeps one minus
+           it. (A story chapter's picture is revealed by a moving mask so: the alpha cleared, the mask's alpha
+           written, the picture blended by it. Without it the picture was blended by whatever alpha was there,
+           and showed as noise.) The second polygon takes the stored alpha times the source's, so it is exact for
+           an opaque source. */
+        pass[0] = cxt;
+        np = 1;
+        if ((key >> 16 & 7) == 0) { /* the alpha alone */
+            pass[0].blend.src = PVR_BLEND_ONE;
+            pass[0].blend.dst = PVR_BLEND_ZERO;
+            pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
+            sSecAlpha = 1;
+        } else if ((bkey & 1) && ((bkey >> 7) & 3) == 1 && sSecAlpha) {
+            pass[0].blend.dst = PVR_BLEND_ZERO;
+            pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
+            pass[1] = cxt;
+            pass[1].blend.src_enable = PVR_BLEND_ENABLE;
+            pass[1].blend.src = PVR_BLEND_ONE;
+            pass[1].blend.dst = cxt.blend.dst == PVR_BLEND_INVDESTALPHA ? PVR_BLEND_INVSRCALPHA :
+                                cxt.blend.dst == PVR_BLEND_DESTALPHA ? PVR_BLEND_SRCALPHA : cxt.blend.dst;
+            np = 2;
         }
-        sSent += sizeof(hdr);
-        pvr_prim(&hdr, sizeof(hdr));
-        {
+        for (p = 0; p < np; p++) {
+            pvr_poly_compile(&hdr, &pass[p]);
+            if (sSent + sizeof(hdr) + 3 * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
+                sDropped += d->count / 3;
+                break;
+            }
+            sSent += sizeof(hdr);
+            pvr_prim(&hdr, sizeof(hdr));
             /* the scissor (x, y, width, height at SCALE) in screen pixels */
             float x0 = (float)d->scissor[0] / (float)SCALE * sx, y0 = (float)d->scissor[1] / (float)SCALE * sy;
             float x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sx, y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sy;
@@ -728,10 +758,13 @@ static void frame_end(void) {
     if (shown >= 0) { draw_list(shown); }
     pvr_list_finish();
     pvr_scene_finish(); /* renders, and gpu_pvr shows the picture (kos_pvr_present) */
-    {   /* BT3_SHOT=<n>: every n-th frame of the game to port/build/shots/pvr_NNNNN.ppm (the other back ends' gpu_*) */
+    {   /* BT3_SHOT=<n>: every n-th frame of the game to port/build/shots/pvr_NNNNN.ppm (the other back ends' gpu_*),
+           BT3_SHOT_FROM / BT3_SHOT_TO limit the frames */
         static int every = -1;
         if (every < 0) { every = getenv("BT3_SHOT") != NULL ? atoi(getenv("BT3_SHOT")) : 0; }
-        if (every > 0 && gGsFrame % (unsigned)every == 0) {
+        if (every > 0 && gGsFrame % (unsigned)every == 0 &&
+            (getenv("BT3_SHOT_FROM") == NULL || (int)gGsFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
+            (getenv("BT3_SHOT_TO") == NULL || (int)gGsFrame <= atoi(getenv("BT3_SHOT_TO")))) {
             extern int kos_pvr_read_front(uint8_t *rgb, int stride, int w, int h);
             static uint8_t rgb[640 * 480 * 3];
             char name[64];
