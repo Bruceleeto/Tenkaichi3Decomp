@@ -1352,6 +1352,45 @@ void GfxPost_FillBlend(u64 alpha, u64 rgbaq) {
     Dma_EndDirect(p);
 }
 
+#ifdef PORT
+/* GfxPost_ClearWork with the clear as a record into the page (not blended: FIX 0x80 takes the source; no test, no
+   depth written), between the state it sets, which the outline's passes that follow draw under. Without frame
+   buffers (Rnd_FxOn) nothing. */
+static void GfxPost_PortClearWork(s32 fbp, s32 fbmsk) {
+    RndState st;
+    u64 *p;
+
+    if (!Rnd_FxOn()) {
+        return;
+    }
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(6, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = fbp | 0x2080000;
+    p[3] = GS_FRAME_1;
+    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[5] = GS_ZBUF_1;
+    p[6] = GS_SET_XYOFFSET(0x7000, 0x7200);
+    p[7] = GS_XYOFFSET_1;
+    p[8] = 0x8000000064;
+    p[9] = GS_ALPHA_1;
+    p[10] = 0x30000;
+    p[11] = GS_TEST_1;
+    p[12] = 0;
+    p[13] = GS_FBA_1;
+    Dma_EndDirect(p + 14);
+    Rnd_StateInit(&st, (u32)fbp);
+    st.blend = RND_BLEND_NONE;
+    Rnd_Fill(&st, (u32)GFX_CLEAR_RGBAQ);
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(1, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = (fbp | 0x2080000) | ((s64)fbmsk << 32);
+    p[3] = GS_FRAME_1;
+    Dma_EndDirect(p + 4);
+}
+#endif
+
 /* Points FRAME_1 at a 16-bit page, clears it to black and then sets its write mask. */
 void GfxPost_ClearWork(s32 fbp, s32 fbmsk) {
     u64 *p;
@@ -1359,6 +1398,12 @@ void GfxPost_ClearWork(s32 fbp, s32 fbmsk) {
     s32 i;
     s32 x0;
 
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        GfxPost_PortClearWork(fbp, fbmsk);
+        return;
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(8, 0, 1);
     p[1] = GIF_REG_AD;

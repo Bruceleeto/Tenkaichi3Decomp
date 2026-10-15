@@ -3,6 +3,9 @@
 #include "sys/heap.h"
 #include "sys/pad.h"
 #include "sys/pad_watch.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 extern void *memset(void *dst, s32 value, u32 size);
 
@@ -185,6 +188,26 @@ void PadWatch_DrawMessage(void) {
 
         Gfx_AddDefaultEnv();
         p = Dma_BeginDirect();
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the darkening as a record, under the state just set (followed) */
+            p[0] = GIF_TAG(1, 1, 1);
+            p[1] = GIF_REG_AD;
+            p[2] = 0x44;
+            p[3] = GS_ALPHA_1;
+            Dma_EndDirect(p + 4);
+            if (!Rnd_Rect(0, 0x6F00, 0x7100, 0x9100, 0x8F00, 0xFFFFFF, 0x60000000, 1)) {
+                p = Dma_BeginDirect();
+                p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
+                p[1] = 0x5510;
+                p[2] = 0x46;
+                p[3] = 0x3F80000060000000ULL;
+                p[4] = GS_SET_XYZ(0x6F00, 0x7100, 0xFFFFFF);
+                p[5] = GS_SET_XYZ(0x9100, 0x8F00, 0xFFFFFF);
+                Dma_EndDirect(p + 6);
+            }
+            goto text;
+        }
+#endif
         p[0] = GIF_TAG(1, 1, 1);
         p[1] = GIF_REG_AD;
         p += 2;
@@ -200,6 +223,9 @@ void PadWatch_DrawMessage(void) {
         p[0] = GS_SET_XYZ(0x6F00, 0x7100, 0xFFFFFF);
         p[1] = GS_SET_XYZ(0x9100, 0x8F00, 0xFFFFFF);
         Dma_EndDirect(p + 2);
+#ifdef PORT
+    text:
+#endif
         Font_PushStyle();
         Font_SetAlign(1);
         Font_SetShadowMode(1);
