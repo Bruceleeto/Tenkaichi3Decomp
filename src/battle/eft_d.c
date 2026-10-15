@@ -203,16 +203,42 @@ static inline void EftSurf_QueueTri(EftScrPos *scr0, EftScrPos *scr1, EftScrPos 
         if (count == 1 && StgTint_IsOn(0)) {
             continue;
         }
-        pkt = (EftTriPkt *)gOtCur;
-        gOtCur = (u32 *)(pkt + 1);
-        EFT_SURF_FILL_PKT(pkt, c, abe, (f32 *)st0, (f32 *)st1);
-        l = layer;
-        pkt->v[2].q = st2->z;
-        if (!(layer < 2)) {
-            l = layer - 2;
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the triangle as a record */
+            s32 *sc[3];
+            f32 *t[3];
+            s32 k;
+            sc[0] = (s32 *)scr0;
+            sc[1] = (s32 *)scr1;
+            sc[2] = (s32 *)scr2;
+            t[0] = (f32 *)st0;
+            t[1] = (f32 *)st1;
+            t[2] = (f32 *)st2;
+            prim = 0x1B;
+            ((EftPrim *)&prim)->abe = abe;
+            pkt = Ot_NewRec(prim, 3);
+            Ot_RecTex0(pkt, tex[i]);
+            for (k = 0; k < 3; k++) {
+                Ot_RecVtx(pkt, k, sc[k][0], sc[k][1], sc[k][2], t[k][0], t[k][1], t[k][2], Ot_RecRgba(c[k].x, c[k].y, c[k].z, c[k].w));
+            }
+            l = layer;
+            if (!(layer < 2)) {
+                l = layer - 2;
+            }
+        } else
+#endif
+        {
+            pkt = (EftTriPkt *)gOtCur;
+            gOtCur = (u32 *)(pkt + 1);
+            EFT_SURF_FILL_PKT(pkt, c, abe, (f32 *)st0, (f32 *)st1);
+            l = layer;
+            pkt->v[2].q = st2->z;
+            if (!(layer < 2)) {
+                l = layer - 2;
+            }
+            pkt->tex0 = tex[i];
+            EFT_SURF_FILL_PKT2(pkt, (s32 *)scr0, (s32 *)scr1, (s32 *)scr2, (f32 *)st0, (f32 *)st1, (f32 *)st2);
         }
-        pkt->tex0 = tex[i];
-        EFT_SURF_FILL_PKT2(pkt, (s32 *)scr0, (s32 *)scr1, (s32 *)scr2, (f32 *)st0, (f32 *)st1, (f32 *)st2);
         EFT_SURF_QUEUE(pkt, z, l, entry);
         layer++;
     }
