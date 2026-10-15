@@ -1,4 +1,5 @@
 #include "common.h"
+#include "sys/dma.h"
 #include "battle/hud_0.h"
 #ifdef PORT
 #include "port/rnd.h"
@@ -143,6 +144,7 @@ void BtlText_PutScissor(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1) {
         p[1] = 0xE;
         p[2] = (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48);
         p[3] = 0x40;
+        PORT_AD(p, 2);
         Dma_EndDirect(p + 4);
         return;
     }
