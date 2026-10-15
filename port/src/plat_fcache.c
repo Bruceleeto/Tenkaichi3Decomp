@@ -14,7 +14,7 @@
 #include <string.h>
 extern void Port_StateTouch(void *p, unsigned long n); /* gs/state.c */
 
-extern const char *Port_FileRoot(void); /* plat_file.c: BT3_DATA or "gamedata" */
+extern const char *Port_FileRoot(void); /* plat_file.c: BT3_DATA or "gamedata" (the Dreamcast: "/cd") */
 
 enum { SLOTS = 32 };
 static struct { char rel[128]; FILE *fp; long size; unsigned long used; } sSlot[SLOTS];

@@ -70,8 +70,16 @@ static int by_ticks(void) {
     static int on = -1;
     if (on < 0) {
         on = getenv("BT3_SYNCTEST") != NULL || getenv("BT3_SOUND_TICKS") != NULL;
+#ifdef __DREAMCAST__
+        on = 1; /* (no sound output yet, nor the sound files on its disc: the streams last as long as the original's, by the table) */
+#endif
     }
     return on || Port_NetSession();
+}
+/* A stream counted by the original's length (disc_blanks): in an online match always, and wherever its file is
+   missing (the Dreamcast's disc has none). */
+static int by_table(int found) {
+    return by_ticks() && (Port_NetActive() || !found);
 }
 
 /* The length of an ADX file in vertical blanks (59.94 a second), -1 if it loops, 0 if it cannot be read. */
@@ -143,12 +151,14 @@ static int disc_blanks(const char *path) {
    menus' guides), and a player's own sound files (a voice mod under mods/, a replaced file, a missing one) must
    not make their copy wait longer or shorter than the other's. With "Skip logos" fixed this was the other way two
    copies came apart: one voice line of another length on one side and the fight began on another blank
-   (2026-10-13). What is HEARD is the player's own file, as long as it lasts. Outside a match nothing changes. */
+   (2026-10-13). What is HEARD is the player's own file, as long as it lasts. Outside a match nothing changes, but
+   for a file that is missing where streams are counted (by_ticks: the Dreamcast, whose disc has no sound files):
+   it lasts the original's length. */
 static void view_start(Player *p, const char *path, int found) {
     PortAdxView *v = &gPortAdxView[p - sPlayers];
     int own = found ? adx_blanks(path) : 0, blanks = own;
 
-    if (by_ticks() && Port_NetActive() && disc_blanks(path) != 0) {
+    if (by_table(found) && disc_blanks(path) != 0) {
         blanks = disc_blanks(path);
         if (blanks != own) {
             static int said;
@@ -601,7 +611,7 @@ void ADXT_StartAfs(void *adxt, int patid, int fid) {
             start(adxt, path);
             PortA11y_StreamStart(path);
         }
-        if (found || (by_ticks() && Port_NetActive() && disc_blanks(path) != 0)) { /* (a match: counted even when this copy lacks the file) */
+        if (found || (by_table(found) && disc_blanks(path) != 0)) { /* (counted even when this copy lacks the file) */
             view_start(adxt, path, found);
         }
     }
@@ -615,7 +625,7 @@ void ADXT_StartFname(void *adxt, char *fname) {
         if (found) {
             start(adxt, path);
         }
-        if (found || (by_ticks() && Port_NetActive() && disc_blanks(path) != 0)) {
+        if (found || (by_table(found) && disc_blanks(path) != 0)) {
             view_start(adxt, path, found);
         }
     }
