@@ -82,6 +82,7 @@ static void *EftSpr_Rec(s64 prim, u64 tex0, u32 rgba, s32 *x, s32 *y, s32 z, f32
     void *p = Ot_NewRec(prim, 4);
 
     Ot_RecTex0(p, tex0);
+    EftVram_PortRecTex(p, tex0);
     Ot_RecVtx(p, 0, x[0], y[0], z, u0, v0, 1.0f, rgba);
     Ot_RecVtx(p, 1, x[1], y[1], z, u0, v1, 1.0f, rgba);
     Ot_RecVtx(p, 2, x[2], y[2], z, u1, v0, 1.0f, rgba);
