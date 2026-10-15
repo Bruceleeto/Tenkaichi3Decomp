@@ -465,6 +465,7 @@ void EftPart10_DrawQuad(Vec4 *corner, EftXVec uv0, EftXVec uv1, EftXVec color, s
         Vec4_ToInt(&col, V(&color));
         rgba = (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)col.w << 24;
         Ot_RecTex0(p, EFT_X_TEX0(tex, texIdx));
+        EftVram_PortRecTex(p, EFT_X_TEX0(tex, texIdx));
         for (i = 0; i < 4; i++) {
             Ot_RecVtx(p, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
         }
@@ -738,6 +739,7 @@ void EftPart10_DrawBillboard(Vec4 *pos, Vec4 *color, f32 w, s32 offX, s32 offY, 
         ctx = layer >= 2;
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x14, 4);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, (u16)x0, (u16)y0, zz & 0xFFFFFF, u0, v0, 1.0f, rgba);
         Ot_RecVtx(p, 1, (u16)x1, (u16)y1, zz & 0xFFFFFF, u0, v1, 1.0f, rgba);
         Ot_RecVtx(p, 2, (u16)x2, (u16)y2, zz & 0xFFFFFF, u1, v0, 1.0f, rgba);
