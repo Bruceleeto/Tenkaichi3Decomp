@@ -4,6 +4,9 @@
 #include "sys/gfx.h"
 #include "sys/heap.h"
 #include "sys/gfxm_e.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Battle object model binding and ground shadow, 0x1131D8..0x114860. See include/sys/gfxm_e.h.
@@ -481,9 +484,67 @@ s32 ObjShadow_IsFlat(ObjMdlObj *obj) {
     return 0;
 }
 
+#ifdef PORT
+/* ObjShadow_AddTargetEnv with the clear as a record into the shadow page (black, alpha 0, not blended, no test, no
+   depth written), between the state it sets, which the silhouette's draws (vertex program 2) that follow take. */
+static void ObjShadow_PortTargetEnv(void) {
+    RndState st;
+    u64 *p = Dma_BeginDirect();
+
+    p[0] = GIF_TAG(11, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = GS_SET_SCISSOR(0, 0xFF, 0, 0xFF);
+    p[3] = GS_SCISSOR_1;
+    p[4] = GS_SET_FRAME(0x150, 4, 0, 0);
+    p[5] = GS_FRAME_1;
+    p[6] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[7] = GS_ZBUF_1;
+    p[8] = GS_SET_XYOFFSET(0x7800, 0x7800);
+    p[9] = GS_XYOFFSET_1;
+    p[10] = 5;
+    p[11] = GS_CLAMP_1;
+    p[12] = 1;
+    p[13] = GS_COLCLAMP;
+    p[14] = 0;
+    p[15] = GS_FBA_1;
+    p[16] = 0x60;
+    p[17] = GS_TEX1_1;
+    p[18] = 0x30000;
+    p[19] = GS_TEST_1;
+    p[20] = ((u64)0x80 << 32) | 0x64;
+    p[21] = GS_ALPHA_1;
+    p[22] = 6;
+    p[23] = GS_PRIM;
+    Dma_EndDirect(p + 24);
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.scissor[2] = 0xFF;
+    st.scissor[3] = 0xFF;
+    Rnd_FillRect(&st, 0.0f, 0.0f, 256.0f, 256.0f, 0);
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(4, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = GS_SET_SCISSOR(1, 0xFE, 1, 0xFE);
+    p[3] = GS_SCISSOR_1;
+    p[4] = 0x3F80000080808080;
+    p[5] = GS_RGBAQ;
+    p[6] = 0;
+    p[7] = GS_PRMODECONT;
+    p[8] = 0x48;
+    p[9] = GS_PRMODE;
+    Dma_EndDirect(p + 10);
+}
+#endif
+
 /* Points the GS at the 256x256 shadow page (0x150), clears it to black with alpha 0 and leaves it ready for
    untextured, blended drawing inside a one pixel border. */
 void ObjShadow_AddTargetEnv(void) {
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        ObjShadow_PortTargetEnv();
+        return;
+    } else {
+#endif
     u64 *p = Dma_BeginDirect();
     u64 *tag;
     s32 i;
@@ -555,6 +616,9 @@ void ObjShadow_AddTargetEnv(void) {
     p[1] = GS_PRMODE;
     p += 2;
     Dma_EndDirect(p);
+#ifdef PORT
+    }
+#endif
 }
 
 /* Box to search for ground triangles: the object's bounds, widened in x and z. Returns 1 when the shadow is
@@ -724,6 +788,11 @@ void ObjShadow_Update(ObjMdlObj *obj) {
 
 /* First shadow pass of an object: draws its silhouette from above into the shadow page. */
 void ObjShadow_BeginRender(ObjMdlObj *obj) {
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no shadow page: the shadow is left out; ObjShadow_Draw too) */
+        return;
+    }
+#endif
     if (ObjShadow_IsEnabled(obj)) {
         ObjShadowWork *work = obj->shadow->work;
 
@@ -740,6 +809,11 @@ void ObjShadow_BeginRender(ObjMdlObj *obj) {
 void ObjShadow_Draw(ObjMdlObj *obj, ObjShadowCam *view) {
     Vec4 color;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) {
+        return;
+    }
+#endif
     if (ObjShadow_IsEnabled(obj)) {
         ObjShadow *sh = obj->shadow;
         ObjShadowWork *work = sh->work;
