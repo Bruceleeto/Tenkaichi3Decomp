@@ -547,6 +547,7 @@ void EftPrim_DrawTriangle(EftBIVec *v0, EftBIVec *v1, EftBIVec *v2, Vec4 *c0, Ve
     if (Port_TakesRecords()) { /* the triangle as a record */
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1B, 3);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, v0->x, v0->y, v0->z, uv0->x, uv0->y, uv0->z, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
         Ot_RecVtx(p, 1, v1->x, v1->y, v1->z, uv1->x, uv1->y, uv1->z, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
         Ot_RecVtx(p, 2, v2->x, v2->y, v2->z, uv2->x, uv2->y, uv2->z, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
@@ -1195,6 +1196,7 @@ void EftBubble_DrawOne(EftBVec pos, EftBMtx m, f32 size, f32 rot, u8 r, u8 g, u8
         }
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, tex->tex0);
+        EftVram_PortRecTex(p, tex->tex0);
         Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, 0.0f, 0.0f, 1.0f, rgba);
         Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, 1.0f, 0.0f, 1.0f, rgba);
         Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, 0.0f, 1.0f, 1.0f, rgba);
@@ -1732,6 +1734,7 @@ void EftGeyser_DrawColumn(EftBTask *task) {
                 if (Port_TakesRecords()) { /* the strip as a record behind the CLAMP packet */
                     p = Ot_NewRec(((u64)abe << 6) | 0x1C, 4);
                     Ot_RecTex0(p, tex0);
+                    EftVram_PortRecTex(p, tex0);
                     for (i2 = 0; i2 < 4; i2++) {
                         Ot_RecVtx(p, i2, scr[i2].x, scr[i2].y, scr[i2].z, uv[i2].x, uv[i2].y, uv[i2].z, Ot_RecRgba(col[i2].x, col[i2].y, col[i2].z, col[i2].w));
                     }
