@@ -190,15 +190,13 @@ void PadWatch_DrawMessage(void) {
         p = Dma_BeginDirect();
 #ifdef PORT
         if (Port_TakesRecords()) { /* the darkening as a record, under the state just set (followed) */
-            p[0] = GIF_TAG(1, 1, 1);
-            p[1] = GIF_REG_AD;
+            PORT_PKT(p, 0, GIF_TAG(1, 1, 1), GIF_REG_AD);
             p[2] = 0x44;
             p[3] = GS_ALPHA_1;
             Dma_EndDirect(p + 4);
             if (!Rnd_Rect(0, 0x6F00, 0x7100, 0x9100, 0x8F00, 0xFFFFFF, 0x60000000, 1)) {
                 p = Dma_BeginDirect();
-                p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-                p[1] = 0x5510;
+                PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5510);
                 p[2] = 0x46;
                 p[3] = 0x3F80000060000000ULL;
                 p[4] = GS_SET_XYZ(0x6F00, 0x7100, 0xFFFFFF);
@@ -208,15 +206,11 @@ void PadWatch_DrawMessage(void) {
             goto text;
         }
 #endif
-        p[0] = GIF_TAG(1, 1, 1);
-        p[1] = GIF_REG_AD;
+        PORT_PKT(p, 0, GIF_TAG(1, 1, 1), GIF_REG_AD);
         p += 2;
-        p[0] = 0x44; /* (Cs - Cd) * As + Cd */
-        p[1] = GS_ALPHA_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_ALPHA_1, 0x44); /* (Cs - Cd) * As + Cd */
         p += 2;
-        p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-        p[1] = 0x5510; /* PRIM, RGBAQ, XYZ2, XYZ2 */
+        PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5510); /* PRIM, RGBAQ, XYZ2, XYZ2 */
         p += 2;
         p[0] = 0x46; /* sprite, alpha blended */
         p[1] = 0x3F80000060000000ULL; /* black, alpha 0x60 */
