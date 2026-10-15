@@ -64,10 +64,13 @@ typedef struct EftVec16 {
 } __attribute__((aligned(16))) EftVec16;
 
 #ifdef PORT
+extern u32 Tex_PalHandle(void *e); /* sys/gfxm_b_b.h */
+
 /* A particle as a record (include/port/rnd.h), once its packet has set the state (closed here, and followed):
    n 4, a strip of four corners; n 2, a sprite of two (the second's depth). Each corner as the packet's XYZ2
-   would carry it. 0 = not taken: the packet goes on, in a new one. */
-static s32 EftBurst_PortQuad(u64 **pkt, u64 tex0, u64 rgbaq, EftIVec *scr, EftFVec *st, s32 n) {
+   would carry it; its texture tex (the one EftBurst_SetTexture uploaded) by its handles. 0 = not taken: the packet
+   goes on, in a new one. */
+static s32 EftBurst_PortQuad(u64 **pkt, EftBurstTex *tex, u64 tex0, u64 rgbaq, EftIVec *scr, EftFVec *st, s32 n) {
     RndPoly r;
     s32 i;
 
@@ -84,6 +87,8 @@ static s32 EftBurst_PortQuad(u64 **pkt, u64 tex0, u64 rgbaq, EftIVec *scr, EftFV
         Rnd_Vtx(&r.v[i], 0, (s32)(xa & 0xFFFF), (s32)((xb >> 16) & 0xFFFF), (u32)(xc >> 32), st[a][0], st[b][1], 1.0f, (u32)rgbaq);
     }
     r.n = 4;
+    r.tex = Port_TexHandle(tex);
+    r.pal = Tex_PalHandle(tex);
     r.gsTex0 = tex0;
     if (Rnd_Draw(&r, 0, 1, 0)) {
         return 1;
@@ -93,8 +98,8 @@ static s32 EftBurst_PortQuad(u64 **pkt, u64 tex0, u64 rgbaq, EftIVec *scr, EftFV
 }
 
 /* A triangle of the burst model as a record through context ctx: each corner's RGBAQ (q in its high word), s t
-   and XYZ2 as the packet carries them. */
-static void EftBurst_PortTri(s32 ctx, u64 tex0, u64 *rgbaq, s32 stride, EftFVec *st, EftIVec *scr) {
+   and XYZ2 as the packet carries them; its texture tex by its handles. */
+static void EftBurst_PortTri(s32 ctx, EftBurstTex *tex, u64 tex0, u64 *rgbaq, s32 stride, EftFVec *st, EftIVec *scr) {
     RndPoly r;
     s32 k;
 
@@ -108,6 +113,8 @@ static void EftBurst_PortTri(s32 ctx, u64 tex0, u64 *rgbaq, s32 stride, EftFVec 
                 (u32)rgbaq[k * stride]);
     }
     r.n = 3;
+    r.tex = Port_TexHandle(tex);
+    r.pal = Tex_PalHandle(tex);
     r.gsTex0 = tex0;
     Rnd_Draw(&r, ctx, 1, 1);
 }
@@ -180,7 +187,7 @@ void EftBurst_DrawQuad(EftBurstPtcl *p) {
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
 #ifdef PORT
-        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+        if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
                               lifeMax < life * 2 ? ((s64)((lifeMax - life) * 16 / lifeMax) << 24) | 0x3F80000000808080
                                                  : ((s64)(life * 16 / lifeMax) << 24) | 0x3F80000000808080,
                               scr, st, 4)) {
@@ -301,7 +308,7 @@ void EftBurst_DrawQuadRot(EftBurstPtcl *p) {
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
 #ifdef PORT
-        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+        if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
                               flags & EFT_BURST_F_COLOR ? (u64)p->color | ((s64)(alpha * life / lifeMax) << 24) | 0x3F80000000000000
                                                         : ((s64)(alpha * life / lifeMax) << 24) | 0x3F80000000805050,
                               scr, st, 4)) {
@@ -396,7 +403,7 @@ void EftBurst_DrawSprite(EftBurstPtcl *p) {
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
 #ifdef PORT
-        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+        if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
                               flags & EFT_BURST_F_COLOR ? (u64)p->color | ((s64)alpha << 24) | 0x3F80000000000000
                                                         : ((s64)(life * 80 / lifeMax) << 24) | 0x3F80000000505050,
                               scr, st, 2)) {
@@ -797,9 +804,9 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
             /* the triangle as records (include/port/rnd.h): its pass through context 1 and the environment map's
                through context 2 */
             if (vis != 0 && Port_TakesRecords() && gRndCtxBad[0] == 0 && (!env || gRndCtxBad[1] == 0)) {
-                EftBurst_PortTri(0, tex->tex0 | 0x5400400002D00, &rgbaq[0][0], 2, st, scr);
+                EftBurst_PortTri(0, tex, tex->tex0 | 0x5400400002D00, &rgbaq[0][0], 2, st, scr);
                 if (env) {
-                    EftBurst_PortTri(1, envTex->tex0 | (((u64)(u32)envTex->vramY << 37) | (u64)(u32)envTex->vramX | 0x400000000),
+                    EftBurst_PortTri(1, envTex, envTex->tex0 | (((u64)(u32)envTex->vramY << 37) | (u64)(u32)envTex->vramX | 0x400000000),
                                      &rgbaq[0][1], 2, st2, scr);
                 }
                 continue;
