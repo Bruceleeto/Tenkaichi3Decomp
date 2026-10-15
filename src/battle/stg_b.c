@@ -1000,6 +1000,26 @@ void ScrXfade_Capture(void) {
     ScrXfade_StoreHalf(fbp + 0x700, 0x200, 0xE0, 1);
 }
 
+#ifdef PORT
+/* The page that keeps the cross-fade's picture: an address none of the game's frame buffers has (as the GPU
+   renderer's own copy of the frame read back, port/src/gs/gs_draw.c GsGpu_Snapshot). */
+#define SCRXFADE_PORT_FBP 0x1FF
+
+/* ScrXfade_StoreHalf as a record: the w x h rows at sbp of the frame (frame 0x70 or 0, upper or lower half) copied
+   into the kept page at the same place, where the frame stands in the draw order (nothing is read back). */
+static void ScrXfade_PortStore(s32 sbp, s32 w, s32 h) {
+    RndState st;
+    s32 y = (u32)sbp % 0xE00 / 8; /* (0 or 224) */
+
+    Rnd_StateInit(&st, SCRXFADE_PORT_FBP);
+    st.blend = RND_BLEND_NONE;
+    st.scissor[1] = y;
+    st.scissor[3] = y + h - 1;
+    Rnd_Blit(&st, Rnd_TargetTex((u32)sbp / 0xE00 * 0x70, 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, (f32)y, (f32)w,
+             (f32)(y + h), 8, (y << 4) + 8, (w << 4) + 8, ((y + h) << 4) + 8, 0x80808080);
+}
+#endif
+
 /* Reads w x h pixels at frame block `sbp` into buffer `index` and builds the packet that uploads them again. */
 void ScrXfade_StoreHalf(s16 sbp, u16 w, u16 h, s32 index) {
     u8 si[0x70];
@@ -1009,6 +1029,14 @@ void ScrXfade_StoreHalf(s16 sbp, u16 w, u16 h, s32 index) {
     u32 *tag = (u32 *)(e + 0x10); /* chain[index].ref */
     s32 qwc;
 
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing kept, nothing drawn by ScrXfade_Draw) */
+        if (Rnd_FxOn()) {
+            ScrXfade_PortStore(sbp, w, h);
+        }
+        return;
+    }
+#endif
     sceGsSetDefStoreImage(si, sbp, w >> 6, 1, 0, 0, w, h);
     FlushCache(0);
     sceGsExecStoreImage(si, (u8 *)p + 0x70);
@@ -1068,6 +1096,35 @@ void ScrXfade_Draw(s32 unused, s32 tbp, u8 alpha) {
     h = 0xE0;
     dbp = 0;
     bw = w >> 6;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the kept page over the frame, blended by alpha; then the state the packet leaves */
+        if (Rnd_FxOn()) {
+            RndState st;
+
+            Rnd_StateInit(&st, GFX_FRAME_FBP());
+            Rnd_Blit(&st, Rnd_TargetTex(SCRXFADE_PORT_FBP, 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, 512.0f, 448.0f,
+                     8, 8, (0x200 << 4) + 8, (0x1C0 << 4) + 8, (alpha << 24) | 0x808080);
+            p = Dma_BeginDirect();
+            Gfx_PutDefaultEnv((GsQword **)&p);
+            p[0] = GIF_TAG(6, 1, 1);
+            p[1] = GIF_REG_AD;
+            p[2] = 0x30000;
+            p[3] = GS_TEST_1;
+            p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+            p[5] = GS_ZBUF_1;
+            p[6] = 0;
+            p[7] = GS_TEX1_1;
+            p[8] = (u64)(u32)tbp | ((u64)bw << 14) | (0xA641ULL << 20);
+            p[9] = GS_TEX0_1;
+            p[10] = 0x156;
+            p[11] = GS_PRIM;
+            p[12] = (u64)((alpha << 24) | 0x808080) | (0x3F800000ULL << 32);
+            p[13] = GS_RGBAQ;
+            Dma_EndDirect(p + 14);
+        }
+        return;
+    }
+#endif
     for (i = 0; i < 2; i++) {
         switch (i) {
         case 0:
