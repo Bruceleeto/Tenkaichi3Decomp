@@ -33,8 +33,6 @@ static uint64_t sXyOff[2] = {0x7200ull << 32 | 0x7000, 0x7200ull << 32 | 0x7000}
 static uint64_t sPrim;        /* PRIM */
 static uint64_t sPrmodeCont = 1, sPrmode; /* PRMODECONT, PRMODE: with AC 0 a primitive's attributes are PRMODE's */
 static int sInOt;             /* the table is being sent: its packets are read by Rnd_OtTake, not again when closed */
-static int sMode;             /* how the packet being read is read (walk's mode) */
-extern int Port_Mark(uint32_t addr, uint64_t d); /* gs_marker.c: a write of the port's registers 0x7B..0x7F to the queue */
 
 /* The registers a draw taken set that the GS does not have yet (Rnd_OtState): the values as written. */
 enum { D_TEX0, D_CLAMP, D_TEX1, D_N };
@@ -54,11 +52,6 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
     int c = 0;
     RndState *s;
 
-    if (addr >= 0x7B && addr <= 0x7F) { /* the port's markers: in their place among the records (when the lists are
-                                            not walked for them: gs/gs_walk.c Gs_MarksQueued) */
-        if (sMode != 0) { Port_Mark(addr, v); }
-        return 1;
-    }
     if (addr == 0x00) {
         sPrim = v;
         sDirtyPrim = v;
@@ -266,7 +259,6 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
 static int walk(const uint64_t *d, unsigned qwc, int mode) {
     const uint64_t *end = d + qwc * 2;
     int kicks = 0, ok = 1, taken = mode == DRAW;
-    sMode = mode != CHECK;
 
     sVn = 0;
     while (d + 2 <= end) {

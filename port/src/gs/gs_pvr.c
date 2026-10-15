@@ -1480,7 +1480,7 @@ static NatTex *nat_get(uint8_t *e) {
    which record the blocks hold from there on (the chain runs after the game has built all of it). */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block);
 int Port_TexNative(void *e, int tbp) {
-    extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
+    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
     uint32_t pkt[12] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7E, 0}; /* (as TexBltPacket) */
     NatTex *n;
     if (!sNatOn) { return 0; }
@@ -1492,7 +1492,7 @@ int Port_TexNative(void *e, int tbp) {
         pkt[9] &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
     }
     sPalAsk = 0;
-    Dma_AddData(pkt, sizeof(pkt));
+    Port_MarkAdd(pkt, sizeof(pkt));
     return (int)((uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
 }
 
@@ -1579,7 +1579,7 @@ static const NatPal *pal_at(uint32_t cbp, uint32_t n) {
    eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
    layer which it is. */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
-    extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
+    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
     uint32_t m[24] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
     uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4;
     uint64_t key;
@@ -1623,9 +1623,9 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
             m[9 + k4 * 4] = p->sub[k4];
             m[10 + k4 * 4] = 0x7D;
         }
-        Dma_AddData(m, sizeof(m));
+        Port_MarkAdd(m, sizeof(m));
     } else {
-        Dma_AddData(m, 12 * 4);
+        Port_MarkAdd(m, 12 * 4);
     }
     return (int)((uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16);
 }
@@ -1641,7 +1641,7 @@ const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) {
    per channel, colour * k + o in 0..255; alpha >= 0: their alpha replaced by it, 0x80 = opaque). 0 = not done so
    (the game draws its passes over them in GS memory as before). cbp < 0: no pass this frame (1: none drawn). */
 int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
-    extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
+    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
     uint32_t m[16] = {0x10000003, 0, 0, 0x50000003, 0x00008002, 0x10000000, 0xE, 0, 0, 0, 0x7B, 0, 0, 0, 0x7C, 0};
     uint64_t v = 1ull << 63;
     int i;
@@ -1655,7 +1655,7 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
     m[8] = (uint32_t)v;
     m[9] = (uint32_t)(v >> 32);
     m[12] = ((uint32_t)cbp >> 5) & 511;
-    Dma_AddData(m, sizeof(m));
+    Port_MarkAdd(m, sizeof(m));
     return 1;
 }
 
