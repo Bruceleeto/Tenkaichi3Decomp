@@ -869,3 +869,110 @@ int Vu1Native_Prog7(const void *chain, const void *consts) {
     walk(chain, p7_batch, &wk);
     return 1;
 }
+
+/* ---------------------------------------------------------------------------------------------- program 8 */
+
+/* Program 8 draws the stage's animated objects (StgModel_DrawAnims, a node at a time: Vu1Node_Draw): program 2a's
+   corners on the stage's batches. A batch: a tag of one register, TEX0 (+0; packed TEX0_1, its value +1, the
+   node's texture as Vu1Node_OrFlags placed it), the strip's tag (+2), corners of position (w: the weight of
+   matrix A), colour, s t q. A corner: A (p - ofsA) and B (p - ofsB) blended by the weight (B + (A - B) w), w taken
+   as 1 in each transform, then screen and clip; the colour as it is; a triangle with a corner outside the clip
+   volume left out (ADC), nothing clipped. Constants: a node's A (world), B (parent), ofsA, ofsB (0..9,
+   Vu1Pkt_CallProg8), screen S and clip C (10..17: the block of Vu1Pkt_LoadProg8, filled by its caller). */
+#define P8_MAXV 84 /* corners of one batch (the output at TOP + 255 leaves room for 84) */
+
+static const float *sP8; /* VU 0..17 (0..9 not read: each node's own) */
+
+void Vu1Native_SetProg8(const void *consts) {
+    sP8 = (const float *)consts;
+}
+
+/* The TEX0 a batch's tag of one register (+0, packed) and its quadword (+1) write for context ctx: the register
+   TEX0_1 / TEX0_2 itself, or A+D naming it. 1 = that, 0 = another register (the one bound is drawn by). */
+static int hdr_tex0(const uint32_t *hdr, int ctx, uint64_t *tex0) {
+    uint32_t reg = hdr[2] & 15;
+    if (reg == (uint32_t)(6 + ctx) || (reg == 14 && (hdr[6] & 0xFF) == (uint32_t)(6 + ctx))) {
+        memcpy(tex0, hdr + 4, 8);
+        return 1;
+    }
+    return 0;
+}
+
+typedef struct P8Walk {
+    int draw;
+    const float *k;
+} P8Walk;
+
+static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    static RndVtx out[P8_MAXV];
+    static uint8_t adc[P8_MAXV];
+    P8Walk *wk = (P8Walk *)arg;
+    const float *k = wk->k, *sc = sP8 + 40, *cm = sP8 + 56;
+    uint32_t prim, n, i, c, flags[3] = {0, 0, 0};
+    uint64_t tex0, lo;
+    int ctx;
+
+    split(hdr, &nh, &vtx, &nv, 3);
+    memcpy(&lo, hdr, 8);
+    /* +0 a tag of one register, no end of packet (+1 its value), +2 the strip's tag */
+    if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 15) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 ||
+        !tag_ok(hdr + 8, 4, 1)) {
+        return 0;
+    }
+    prim = tag_prim(hdr + 8);
+    n = hdr[8] & 0x7FFF;
+    ctx = (int)(prim >> 9) & 1;
+    if (n > P8_MAXV || n * 3 > nv) {
+        return 0;
+    }
+    if (!wk->draw) {
+        /* the register written: a TEX0 (of either context), or one that changes nothing drawn (NOP) */
+        return gRndCtxBad[ctx] == 0 && (hdr_tex0(hdr, 0, &tex0) || hdr_tex0(hdr, 1, &tex0) || (hdr[2] & 15) == 15);
+    }
+    if (!hdr_tex0(hdr, ctx, &tex0)) { /* (the other context's TEX0: this one's is the one bound) */
+        tex0 = Rnd_Tex0(ctx);
+    }
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12); /* position (w: A's weight), colour, s t q */
+        float pa[4], pb[4], p[4], s[4], cl[4], q;
+        int32_t col[4];
+
+        mtx_apply(pa, k, vu_clamp(v[0] - k[32]), vu_clamp(v[1] - k[33]), vu_clamp(v[2] - k[34]), 1.0f);
+        mtx_apply(pb, k + 16, vu_clamp(v[0] - k[36]), vu_clamp(v[1] - k[37]), vu_clamp(v[2] - k[38]), 1.0f);
+        for (c = 0; c < 4; c++) {
+            p[c] = vu_clamp(pb[c] + vu_clamp(vu_clamp(pa[c] - pb[c]) * v[3]));
+        }
+        mtx_apply(s, sc, p[0], p[1], p[2], 1.0f);
+        mtx_apply(cl, cm, p[0], p[1], p[2], 1.0f);
+        q = vu_div(1.0f, s[3]);
+        for (c = 0; c < 4; c++) {
+            s[c] = vu_clamp(s[c] * q);
+            col[c] = vu_ftoi(v[4 + c], 1.0f);
+        }
+        put_vtx(&out[i], ctx, s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col);
+        flags[0] = flags[1];
+        flags[1] = flags[2];
+        flags[2] = clip_flags(cl);
+        adc[i] = (flags[0] | flags[1] | flags[2]) != 0;
+    }
+    put_strip(out, adc, n, prim, tex0, 0);
+    return 1;
+}
+
+int Vu1Native_Prog8(const void *chain, const void *consts) {
+    P8Walk wk;
+
+    if (!Port_TakesRecords() || sP8 == NULL) {
+        return 0;
+    }
+    memset(&wk, 0, sizeof(wk));
+    wk.k = (const float *)consts;
+    if (!walk(chain, p8_batch, &wk)) {
+        gVu1NativeStat[VU1N_P8][0]++;
+        return 0;
+    }
+    gVu1NativeStat[VU1N_P8][1]++;
+    wk.draw = 1;
+    walk(chain, p8_batch, &wk);
+    return 1;
+}

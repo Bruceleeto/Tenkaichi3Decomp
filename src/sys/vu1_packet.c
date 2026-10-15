@@ -365,6 +365,20 @@ void Vu1Node_Draw(Vu1Node *node) {
     u32 *p;
 
     while (1) {
+#ifdef PORT
+        if (node->hasMesh) {
+            /* the node's mesh as records (port/include/vu1_native.h), with the constants its packet would carry */
+            static f32 k[0x28] __attribute__((aligned(16)));
+
+            Mtx_Copy(k, node->world);
+            Mtx_Copy(k + 0x10, node->parent);
+            Vec4_Copy(k + 0x20, node->unkD0);
+            Vec4_Copy(k + 0x24, node->unkE0);
+            if (Vu1Native_Prog8(node->vif, k)) {
+                goto next;
+            }
+        }
+#endif
         if (node->hasMesh) {
             p = Vu1Pkt_CallProg8(node);
             Mtx_Copy(p + 0x14, node->parent);
@@ -372,6 +386,9 @@ void Vu1Node_Draw(Vu1Node *node) {
             Vec4_Copy(p + 0x24, node->unkD0);
             Vec4_Copy(p + 0x28, node->unkE0);
         }
+#ifdef PORT
+    next:
+#endif
         if (node->last) {
             break;
         }
@@ -414,6 +431,9 @@ u32 *Vu1Pkt_LoadProg8(void) {
     p[0x4D] = VU1_VIF_BASE(0x12);
     p[0x4E] = VU1_VIF_OFFSET(0x1F7);
     p[0x4F] = VU1_VIF_NOP;
+#ifdef PORT
+    Vu1Native_SetProg8(p + 4); /* (its caller's screen and clip, for the draws as records) */
+#endif
     return p;
 }
 

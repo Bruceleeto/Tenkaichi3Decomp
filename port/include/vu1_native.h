@@ -40,8 +40,14 @@ int Vu1Native_Prog6(const void *chain);
    address 0 (its matrix, screen, clip, its alpha in 12.w); 1 = taken. */
 int Vu1Native_Prog7(const void *chain, const void *consts);
 
+/* Program 8 (the stage's animated objects): its constant block at VU address 0 (the 0x12 quadwords of
+   Vu1Pkt_LoadProg8; its caller fills screen 10..13 and clip 14..17 before the nodes are drawn, read then); a node's
+   chain (node->vif) drawn with the node's 10 quadwords (world, parent, the two offsets: Vu1Node_Draw); 1 = taken. */
+void Vu1Native_SetProg8(const void *consts);
+int Vu1Native_Prog8(const void *chain, const void *consts);
+
 /* The calls of each program sent as packets [0] and drawn as records [1] (BT3_GS_VERBOSE). */
-enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_P6, VU1N_P7, VU1N_STATS };
+enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_P6, VU1N_P7, VU1N_P8, VU1N_STATS };
 extern unsigned gVu1NativeStat[VU1N_STATS][2];
 
 #endif

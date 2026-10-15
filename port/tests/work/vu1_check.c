@@ -200,6 +200,7 @@ void Gs_Gif(const uint8_t *p, uint32_t qwc) {
                     if ((hi & 0xFF) == 6 || (hi & 0xFF) == 7) { gs.tex0[(hi & 0xFF) - 6] = lo; }
                     else if ((hi & 0xFF) == 0) { gs.prim = Rnd_Prim((uint32_t)lo & 0x7FF); gs.n = 0; }
                     break;
+                case 0x6: case 0x7: gs.tex0[((regs >> (4 * j)) & 15) - 6] = lo; break; /* TEX0_1, TEX0_2 packed */
                 case 0xF: break;
                 default: fprintf(stderr, "vu1_check: GIF register %u\n", (unsigned)((regs >> (4 * j)) & 15)); exit(2);
                 }
@@ -539,14 +540,14 @@ int main(int argc, char **argv) {
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
-    if (prog < 0 || prog == 5 || prog > 7) {
+    if (prog < 0 || prog == 5 || prog > 8) {
         fprintf(stderr, "program %d: not here\n", prog);
         return 2;
     }
     if (getenv("VU1_PRMODE") != NULL) {
         sPrmode = (uint32_t)strtoul(getenv("VU1_PRMODE"), NULL, 0);
     }
-    hdrSize = prog == 4 || (prog == 6 && part != 3) ? 1 : prog == 7 ? 3 : 5;
+    hdrSize = prog == 4 || (prog == 6 && part != 3) ? 1 : prog == 7 || prog == 8 ? 3 : 5;
     f = fopen(blobPath, "rb");
     if (f == NULL) { perror(blobPath); return 2; }
     fseek(f, 0, SEEK_END);
@@ -556,13 +557,14 @@ int main(int argc, char **argv) {
     if (fread(sBlob, 1, sBlobSize, f) != sBlobSize) { return 2; }
     fclose(f);
     b = read_part(argv[2], part, &size);
-    if (prog == 7) { /* only a stage's part (one with the stage's chains, those with the object header) */
-        size_t n4 = 0;
-        for (off = 0; off + 16 <= size && n4 == 0; off += 16) {
-            n4 += is_chain((const uint32_t *)(b + off), (const uint32_t *)(b + size), 1);
+    if (prog == 7 || prog == 8) { /* only a stage's (part 1 with the stage's chains, those with the object header) */
+        size_t n4 = 0, size1 = size;
+        uint8_t *b1 = part == 1 ? b : read_part(argv[2], 1, &size1);
+        for (off = 0; off + 16 <= size1 && n4 == 0; off += 16) {
+            n4 += is_chain((const uint32_t *)(b1 + off), (const uint32_t *)(b1 + size1), 1);
         }
         if (n4 == 0) {
-            printf("program 7: 0 chains (not a stage)\n");
+            printf("program %d: 0 chains (not a stage)\n", prog);
             return 0;
         }
     }
@@ -651,6 +653,31 @@ int main(int argc, char **argv) {
                 run_chain(pkt);
                 Vu1Native_SetProg6(k6);
                 if (!Vu1Native_Prog6(pkt)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                }
+            } else if (prog == 8) {
+                /* Vu1Pkt_LoadProg8 (0x12 quadwords, screen and clip at 10..17 filled by StgModel_DrawAnims), then
+                   per node Vu1Pkt_CallProg8 (10: world A, parent B, ofsA, ofsB) and the node's chain */
+                static float k8[0x12 * 4] __attribute__((aligned(16)));
+                memset(k8, 0, sizeof(k8));
+                rot_mtx(k8, 0.36, 0.48, 0.8, 0.3 * cam - 0.5, span * 0.01, -span * 0.02, span * 0.005);
+                rot_mtx(k8 + 16, 0.6, 0.8, 0, -0.2 + 0.1 * cam, 0, span * 0.03, 0);
+                k8[32] = (float)(span * 0.003); k8[33] = 0; k8[34] = (float)(span * 0.001); k8[35] = 1;
+                k8[36] = 0; k8[37] = (float)(-span * 0.002); k8[38] = 0; k8[39] = 1;
+                memcpy(k8 + 40, consts, 32 * sizeof(float));
+                load_program(0x2C3080 - 0x2BF6B0, 0x300);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 0x12, 0, (const uint32_t *)k8);
+                GsVu1_SetBase(0x12);
+                GsVu1_SetOffset(0x1F7);
+                GsVu1_Unpack(0x6C, 0xA, 0, (const uint32_t *)k8);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0x12);
+                GsVu1_SetOffset(0x1F7);
+                run_chain(t);
+                Vu1Native_SetProg8(k8);
+                if (!Vu1Native_Prog8(t, k8)) {
                     printf("chain at +0x%zX: not taken\n", off);
                     sBad++;
                 }
