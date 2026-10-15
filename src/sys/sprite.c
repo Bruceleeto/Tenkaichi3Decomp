@@ -61,28 +61,17 @@ void Sprite_DrawPicture(SpriteRes *res, s32 x, s32 y, s32 alpha) {
     Gfx_AddDefaultEnv();
     yy = y;
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(5, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(5, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x44; /* Cs * As + Cd * (1 - As) */
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44); /* Cs * As + Cd * (1 - As) */
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x30000; /* alpha and depth tests always pass */
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000); /* alpha and depth tests always pass */
     p += 2;
-    p[0] = ((u64)alpha << 24) | 0x808080;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, ((u64)alpha << 24) | 0x808080);
     p += 2;
-    p[0] = 5; /* clamp S and T */
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, 5); /* clamp S and T */
     p += 2;
     Dma_EndDirect(p);
 #ifdef PORT
@@ -139,20 +128,13 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
     }
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(3, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(3, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x44; /* Cs * As + Cd * (1 - As) */
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44); /* Cs * As + Cd * (1 - As) */
     p += 2;
-    p[0] = 0x60; /* bilinear */
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0x60); /* bilinear */
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
     Dma_EndDirect(p);
 #ifdef PORT
@@ -184,16 +166,13 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
             }
 #endif
             p = Dma_BeginDirect();
-            p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 8);
-            p[1] = 0x535306E1; /* RGBAQ, A+D (ignored), TEX0_1, PRIM, UV, XYZ2, UV, XYZ2 */
+            PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 8), 0x535306E1); /* RGBAQ, A+D (ignored), TEX0_1, PRIM, UV, XYZ2, UV, XYZ2 */
             p += 2;
             p[0] = (u64)spr->r | ((u64)spr->g << 8) | ((u64)spr->b << 16) | ((u64)spr->a << 24);
             p[1] = 0;
             p += 2;
             if ((spr->flags & 4) || res == NULL) {
-                p[0] = 0;
-                p[1] = 0x46;
-                PORT_AD(p, 0);
+                PORT_REG(p, 0, 0x46, 0);
             } else {
                 p[0] = res->tex[spr->tex].tex0 | ((u64)(res->tex[spr->tex].cbpOfs + SPRITE_CBP_LIST) << 37) |
                        (((u64)4 << 32) | SPRITE_TBP);
