@@ -1390,7 +1390,8 @@ static void frame_end(void) {
    to (gGsNat), where the draws still look for it.
    The palette stays the game's (it changes them): read from GS memory when it changes, into the codebook of
    an 8-bit one (VQ, the palette as the codebook) or into a bank of palette RAM for a 4-bit one (PAL4). */
-#define MAX_NAT 4096
+/* (the attract demo's 1 v 1 fight has about 170 at once; a full table says so, nat_full: raise it then) */
+#define MAX_NAT 1024
 typedef struct NatTex {
     PvrTex t;          /* as it is drawn */
     uint32_t e;        /* the entry's game address; 0 = a free record */
@@ -1417,6 +1418,11 @@ typedef struct NatTex {
    shapes is two textures (the loading screen's 256 x 128 and 128 x 256 of the same data; as port/tools/dc_tex.c). */
 #define KEY_SHAPE(key, t0) ((key) ^ ((uint64_t)(((t0) >> 14) & 0xFFFFF) + 1) * 0xD6E8FEB86659FD93ull)
 static NatTex sNat[MAX_NAT];
+
+/* No record free for a texture (MAX_NAT): it is drawn the old way, or not at all. */
+static void nat_full(uint32_t addr) {
+    Port_Lost("a texture record: the table is full (MAX_NAT, gs_pvr.c)", Port_Addr(addr), __builtin_return_address(0));
+}
 static uint16_t sNatGen;
 static uint16_t sNatHash[MAX_NAT]; /* by the entry's address (its bits from 6: entries are 0x40 bytes): record + 1 */
 #define NAT_HASH(addr) (((addr) >> 6) * 2654435761u >> 20 & (MAX_NAT - 1))
@@ -1493,7 +1499,7 @@ static NatTex *nat_get(uint8_t *e) {
         }
     }
     for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
-    if (i == MAX_NAT) { sNatWhy[4]++; return NULL; }
+    if (i == MAX_NAT) { sNatWhy[4]++; nat_full(addr); return NULL; }
     n = &sNat[i];
     memset(n, 0, sizeof(*n));
     n->e = addr;
@@ -1849,7 +1855,7 @@ static NatTex *nat_copy(NatTex *n) {
     uint32_t i;
     NatTex *v;
     for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
-    if (i == MAX_NAT) { return NULL; }
+    if (i == MAX_NAT) { nat_full(n->e); return NULL; }
     v = &sNat[i];
     *v = *n;
     v->palOk = 0;
@@ -1875,7 +1881,7 @@ static NatTex *nat_view(NatTex *n, uint32_t tw, uint32_t th) {
         if (sNat[i - 1].tw == tw && sNat[i - 1].th == th) { return &sNat[i - 1]; }
     }
     for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
-    if (i == MAX_NAT) { return NULL; }
+    if (i == MAX_NAT) { nat_full(n->e); return NULL; }
     v = &sNat[i];
     memset(v, 0, sizeof(*v));
     v->e = n->e;
