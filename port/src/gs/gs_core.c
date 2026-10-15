@@ -1505,13 +1505,11 @@ int GsRef_Threaded(void) {
 }
 
 /* A transfer on the GIF channel itself (the game uses it for texture uploads outside the frame's list):
-   `qwc` quadwords of GIF data at `addr`, or with chain = 1 a source chain of them starting at `addr`. */
-void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
+   `qwc` quadwords of GIF data at `addr`, or with chain = 1 a source chain of them starting at `addr`. (gs_walk.c
+   Port_GsGifChannel, when the reference draws.) */
+void GsRef_GifChannel(uint32_t addr, uint32_t qwc, int chain) {
     int guard;
 
-    if (!Gs_On()) {
-        return;
-    }
     if (sThreaded) {
         render_wait(); /* the GS is one device: this transfer goes after the list that is being drawn */
     }
@@ -1538,13 +1536,11 @@ void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
     }
 }
 
-/* Carries out a source-chain transfer on VIF1 that starts at `tadr` (PS2 address = host address). */
-void Port_GsVif1Chain(uint32_t tadr, int tte) {
+/* Carries out a source-chain transfer on VIF1 that starts at `tadr` (PS2 address = host address). (gs_walk.c
+   Port_GsVif1Chain, when the reference draws.) */
+void GsRef_Vif1Chain(uint32_t tadr, int tte) {
     uint64_t tChain;
 
-    if (!Gs_On()) {
-        return;
-    }
     if (!sGpu) {
         run_chain(tadr, tte);
         return;

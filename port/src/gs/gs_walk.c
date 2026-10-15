@@ -7,7 +7,9 @@
  *   - the settings read from the environment (Port_GetEnv);
  *   - reading the shown picture back for the game (Gs_StoreImage);
  *   - the queue of the records the game hands over (include/port/rnd.h), drawn at their places in the list;
- *   - the frame's time.
+ *   - the frame's time;
+ *   - the walk of the frame's list without the GS (the Dreamcast's; the PC's with BT3_WALK=1), and the transfers on
+ *     the GIF channel the same way.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -16,16 +18,21 @@
 #include <string.h>
 #include <time.h>
 #include "gs_internal.h"
+#include "../port_addr.h"
 #include "../../../include/port/rnd.h" /* the records of the queue */
 
 unsigned gGsFrame; /* pictures so far (a frame that is only being re-run is not one) */
 #define sFrame gGsFrame
 static int sGpu;   /* 1: the GPU back end draws (BT3_GS=gpu) */
 
+static int sWalk;  /* 1: the lists are walked here (Gs_WalkChain), not by the reference: the Dreamcast; BT3_WALK=1 */
+
 #ifdef PORT_GS_REF
 int GsRef_Start(int gpu);  /* gs_core.c: the reference's tables and switches, the GPU back end (on its thread) */
 int GsRef_Threaded(void);  /* gs_core.c: 1 = the back end runs on the render thread (BT3_GS_THREAD) */
 void GsRef_StoreImage(unsigned fbp, unsigned y0, unsigned w, unsigned h, unsigned char *rgb); /* from GS memory */
+void GsRef_Vif1Chain(uint32_t tadr, int tte);              /* gs_core.c: the list, by the reference */
+void GsRef_GifChannel(uint32_t addr, uint32_t qwc, int chain); /* gs_core.c: a GIF transfer, by the reference */
 #endif
 
 /* getenv for the renderer's files (gs_internal.h): remembered per name. The names are string literals, so the
@@ -70,16 +77,25 @@ const char *Gs_Mode(void) {
     return strcmp(m, "none") == 0 || strcmp(m, "off") == 0 || strcmp(m, "0") == 0 ? NULL : m;
 }
 
-/* 1 once a renderer is chosen (the first transfer to the GS starts it); 0: nothing is drawn. */
+/* 1 once a renderer is chosen (the first transfer to the GS starts it); 0: nothing is drawn. With the reference
+   linked, BT3_WALK=1 has the lists walked here as on the Dreamcast (the GPU back end on this thread; the reference
+   gets its tables but draws nothing), so that what still goes by packet can be seen against the reference. */
 int Gs_On(void) {
     static int on = -1;
 
     if (on < 0) {
+        int gpu;
         on = Gs_Mode() != NULL;
+        gpu = on && strcmp(Gs_Mode(), "gpu") == 0;
 #ifdef PORT_GS_REF
-        sGpu = GsRef_Start(on && strcmp(Gs_Mode(), "gpu") == 0);
+        sWalk = getenv("BT3_WALK") != NULL && atoi(getenv("BT3_WALK")) != 0;
+        sGpu = GsRef_Start(gpu && !sWalk);
+        if (sWalk) {
+            sGpu = gpu && GsGpu_Init();
+        }
 #else
-        sGpu = on && strcmp(Gs_Mode(), "gpu") == 0 && GsGpu_Init();
+        sWalk = 1;
+        sGpu = gpu && GsGpu_Init();
 #endif
     }
     return on;
@@ -90,11 +106,14 @@ int GsGpu_Enabled(void) {
 }
 
 /* The picture is finished: counted, and BT3_XFADE_AT=<frame> (testing) asks for the fight's screen cross-fade at
-   that frame, as the game does between the shots of an intro, so a run without a window can show it in any fight. */
+   that frame, as the game does between the shots of an intro, so a run without a window can show it in any fight.
+   BT3_GS_FROM=<frame> (testing): nothing is drawn before that frame, the frames are left out as frame skipping
+   leaves them out (the software reference is slow, and so is the PVR's on PC): a run reaches a late frame sooner. */
 void Gs_FrameCount(void) {
-    static int at = -2;
+    static int at = -2, from = -2;
     if (at == -2) {
         at = getenv("BT3_XFADE_AT") != NULL ? atoi(getenv("BT3_XFADE_AT")) : -1;
+        from = getenv("BT3_GS_FROM") != NULL ? atoi(getenv("BT3_GS_FROM")) : 0;
     }
     if (at >= 0 && (int)sFrame == at) {
         extern void ScrXfade_RequestCapture(void);
@@ -104,6 +123,9 @@ void Gs_FrameCount(void) {
     }
     if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture; a skipped one is counted) */
         sFrame++;
+    }
+    if ((int)sFrame < from) {
+        gsSkipFrame = 1; /* (for the frame that comes now: the renderer's end of the last one decided it) */
     }
 }
 
@@ -341,4 +363,325 @@ void Gs_FramePace(uint64_t tChain) {
         if (t - start > perMax) { perMax = t - start; }
     }
     start = t;
+}
+
+/* ---- the walk ----
+   The frame's list as the Dreamcast takes it (and the PC with BT3_WALK=1, in place of the reference's run_chain): the
+   DMA chain is followed only to find where the queued records go, and the port's markers in its GIF packets (GS
+   registers 0x7B..0x7F, which the real GS does not have) are carried out. Everything else the list still holds for
+   the GS is passed over and counted (BT3_GS_VERBOSE): what it would have uploaded, drawn, set, or run on VU1. Of each
+   layer only as much is read as it takes to find the next: the DMA tags, the VIF codes (with STCYCL, which an
+   UNPACK's length depends on), the GIF tags and the register numbers of their A+D writes. */
+enum { W_UPLOAD, W_IMAGE_QW, W_DRAW, W_VERTS, W_STATE, W_VU1_CALL, W_VU1_QW, W_MPG, W_MARK, W_COUNT };
+static unsigned sW[2][W_COUNT]; /* passed over: [0] in the frame's list, [1] on the GIF channel since the last list */
+static int sWSrc;               /* what is being walked: 0 the list, 1 the GIF channel */
+static uint32_t sWTag;          /* the DMA tag whose data is being walked (BT3_WALK_LOG) */
+
+/* BT3_WALK_LOG=<frame>: each GIF packet passed over in that frame, with the address of the DMA tag it came with. */
+static int walk_log(void) {
+    static int at = -2;
+    if (at == -2) {
+        at = getenv("BT3_WALK_LOG") != NULL ? atoi(getenv("BT3_WALK_LOG")) : -1;
+    }
+    return at >= 0 && (int)sFrame == at;
+}
+
+/* A write to one of the port's registers (gs_marker.c, gs_pvr.c): 0x7F a native effect, 0x7B..0x7E what the PVR
+   layer keeps per page and block. */
+static void walk_mark(uint32_t addr, uint64_t d) {
+    sW[sWSrc][W_MARK]++;
+    if (addr == 0x7F) {
+        if (sGpu) {
+            GsGpu_Native((int)d);
+        }
+        return;
+    }
+#ifdef PORT_GS_REF
+    Gs_RegWrite(addr, d); /* (gs_core.c) */
+#endif
+}
+
+static int is_vertex(uint32_t r) {
+    return r == 0x4 || r == 0x5 || r == 0xC || r == 0xD;
+}
+
+/* The GIF tag being read (walk_gif, read from game address at), counted as kind (W_UPLOAD, W_DRAW, W_STATE). */
+static void tag_count(int kind, const uint64_t *tag, uint32_t at) {
+    sW[sWSrc][kind]++;
+    if (walk_log()) {
+        uint32_t flg = (uint32_t)(tag[0] >> 58) & 3, nreg = (uint32_t)(tag[0] >> 60) & 15;
+        fprintf(stderr, "walk: frame %u: %s, DMA tag at %08x: GIF tag at %08x: %s, %u loops, flg %u, %u registers %016llx%s\n", sFrame,
+                sWSrc ? "GIF channel" : "list", (unsigned)sWTag, (unsigned)at, kind == W_UPLOAD ? "upload" : kind == W_DRAW ? "draw" : "state",
+                (unsigned)(tag[0] & 0x7FFF), (unsigned)flg, (unsigned)(nreg ? nreg : 16), (unsigned long long)tag[1], ((tag[0] >> 46) & 1) ? " (with PRIM)" : "");
+    }
+}
+
+/* One run of GIF data (whole quadwords): the tags, and in PACKED the A+D writes, read; the rest passed over. A tag's
+   data may continue in the next run, as for the GS. */
+static void walk_gif(const uint8_t *p, uint32_t qwc) {
+    static uint64_t tag[2];     /* current tag: persists across runs */
+    static uint32_t loops, reg; /* loops left, register index within the loop */
+    static int kind;            /* what it is counted as (tag_count); -1 the port's markers, -2 not known yet */
+    static uint32_t at;         /* where the tag was read */
+    const uint64_t *q = (const uint64_t *)p;
+
+    while (qwc != 0) {
+        uint32_t flg, nreg, i;
+
+        if (loops == 0) {
+            tag[0] = q[0];
+            tag[1] = q[1];
+            at = Port_Addr(q);
+            q += 2;
+            qwc--;
+            loops = tag[0] & 0x7FFF;
+            reg = 0;
+            if (loops == 0) {
+                continue;
+            }
+            flg = (tag[0] >> 58) & 3;
+            nreg = (tag[0] >> 60) & 15;
+            nreg = nreg ? nreg : 16;
+            if (flg >= 2) {
+                kind = W_UPLOAD;
+            } else if (flg == 0 && nreg == 1 && (tag[1] & 15) == 0xE) {
+                kind = -2; /* A+D alone: the first write says what it is (the port's markers are packets of their own) */
+                continue;
+            } else {
+                kind = W_STATE;
+                for (i = 0; i < nreg; i++) {
+                    if (is_vertex((uint32_t)(tag[1] >> (4 * i)) & 15)) {
+                        kind = W_DRAW;
+                    }
+                }
+            }
+            tag_count(kind, tag, at);
+            continue;
+        }
+        flg = (tag[0] >> 58) & 3;
+        nreg = (tag[0] >> 60) & 15;
+        nreg = nreg ? nreg : 16;
+        if (flg == 0) { /* PACKED: one quadword per register */
+            uint32_t r = (tag[1] >> (4 * reg)) & 15;
+            if (r == 0xE) {
+                uint32_t a = (uint32_t)(q[1] & 0xFF);
+                if (kind == -2) {
+                    kind = a >= 0x7B && a <= 0x7F ? -1 : is_vertex(a) ? W_DRAW : W_STATE;
+                    if (kind >= 0) {
+                        tag_count(kind, tag, at);
+                    }
+                }
+                if (kind >= 0 && walk_log()) {
+                    fprintf(stderr, "walk:   A+D %02x %016llx\n", (unsigned)a, (unsigned long long)q[0]);
+                }
+                if (a >= 0x7B && a <= 0x7F) {
+                    walk_mark(a, q[0]);
+                } else if (is_vertex(a)) {
+                    if (kind == W_STATE) { /* (a state packet that turns out to draw) */
+                        sW[sWSrc][W_STATE]--;
+                        sW[sWSrc][W_DRAW]++;
+                        kind = W_DRAW;
+                    }
+                    sW[sWSrc][W_VERTS]++;
+                }
+            } else if (is_vertex(r)) {
+                sW[sWSrc][W_VERTS]++;
+            }
+            q += 2;
+            qwc--;
+            if (++reg == nreg) {
+                reg = 0;
+                loops--;
+            }
+        } else if (flg == 1) { /* REGLIST: 64 bits per register */
+            int half;
+            for (half = 0; half < 2 && loops != 0; half++) {
+                if (is_vertex((uint32_t)(tag[1] >> (4 * reg)) & 15)) {
+                    sW[sWSrc][W_VERTS]++;
+                }
+                if (++reg == nreg) {
+                    reg = 0;
+                    loops--;
+                }
+            }
+            q += 2;
+            qwc--;
+        } else { /* IMAGE */
+            uint32_t n = loops < qwc ? loops : qwc;
+            sW[sWSrc][W_IMAGE_QW] += n;
+            q += 2 * n;
+            qwc -= n;
+            loops -= n;
+        }
+    }
+}
+
+/* One run of VIF data (32-bit words): DIRECT's GIF data to walk_gif, the data of every other command passed over.
+   A command's data may continue in the next run (the command word often sits in the DMA tag, its data behind). */
+static void walk_vif(const uint32_t *w, uint32_t count) {
+    static uint32_t direct;  /* quadwords of GIF data still to come */
+    static uint32_t skip;    /* words of a command's data still to come */
+    static uint32_t cl, wl;  /* STCYCL */
+    uint32_t i = 0;
+
+    while (i < count) {
+        uint32_t code, cmd, num, imm;
+
+        if (direct != 0) {
+            uint32_t qwc = (count - i) / 4 < direct ? (count - i) / 4 : direct;
+            if (qwc == 0) {
+                break; /* misaligned run: dropped, as by the reference */
+            }
+            walk_gif((const uint8_t *)&w[i], qwc);
+            i += qwc * 4;
+            direct -= qwc;
+            continue;
+        }
+        if (skip != 0) {
+            uint32_t n = count - i < skip ? count - i : skip;
+            i += n;
+            skip -= n;
+            continue;
+        }
+        code = w[i++];
+        cmd = (code >> 24) & 0x7F;
+        num = (code >> 16) & 0xFF;
+        imm = code & 0xFFFF;
+        switch (cmd) {
+        case 0x01: cl = imm & 0xFF; wl = (imm >> 8) & 0xFF; break;
+        case 0x14: case 0x15: case 0x17: sW[0][W_VU1_CALL]++; break; /* MSCAL, MSCALF, MSCNT */
+        case 0x20: skip = 1; break;                                   /* STMASK */
+        case 0x30: case 0x31: skip = 4; break;                        /* STROW, STCOL */
+        case 0x4A: skip = (num ? num : 256) * 2; sW[0][W_MPG]++; break; /* MPG: a microprogram */
+        case 0x50: case 0x51: direct = imm ? imm : 65536; break;      /* DIRECT, DIRECTHL */
+        default:
+            if (cmd >= 0x60) { /* UNPACK: as many words as the VIF reads for it (gs_vu1.c GsVu1_UnpackWords) */
+                uint32_t vn = (cmd >> 2) & 3, vl = cmd & 3, n = num ? num : 256;
+                uint32_t bits = vn == 3 && vl == 3 ? 16 : (32u >> vl) * (vn + 1);
+                if (wl > cl && wl != 0) {
+                    n = cl * (n / wl) + (n % wl > cl ? cl : n % wl);
+                }
+                skip = (n * bits + 31) / 32;
+                sW[0][W_VU1_QW] += n;
+            }
+            break;
+        }
+    }
+}
+
+/* The counts of the frame (BT3_GS_VERBOSE, every 30 frames): what was passed over. */
+static void walk_report(void) {
+    if (getenv("BT3_GS_VERBOSE") != NULL && sFrame % 30 == 0) {
+        int k;
+        for (k = 0; k < 2; k++) {
+            const unsigned *c = sW[k];
+            fprintf(stderr, "walk: frame %u: %s: passed over %u uploads (%u quadwords), %u draw packets (%u vertices), %u state packets, "
+                            "%u VU1 calls (%u vectors unpacked, %u microprograms); %u markers\n", sFrame,
+                    k ? "GIF channel since the last list" : "list", c[W_UPLOAD], c[W_IMAGE_QW], c[W_DRAW], c[W_VERTS], c[W_STATE],
+                    c[W_VU1_CALL], c[W_VU1_QW], c[W_MPG], c[W_MARK]);
+        }
+    }
+    memset(sW, 0, sizeof(sW));
+}
+
+/* One frame's list: the DMA chain at `tadr` on VIF1, the records at their places, then the end of the frame. */
+static void walk_chain(uint32_t tadr, int tte) {
+    uint32_t stack[2], sp = 0;
+    int guard;
+
+    sWSrc = 0;
+    for (guard = 0; guard < 100000; guard++) {
+        const uint32_t *tag = (const uint32_t *)Port_Ptr(tadr);
+        uint32_t qwc = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, addr = tag[1]; /* a game address: all 32 bits */
+        const uint32_t *data;
+        int end = 0;
+
+        Gs_RndDrain(tadr);
+        sWTag = tadr;
+        switch (id) {
+        case 0: data = (const uint32_t *)Port_Ptr(addr); end = 1; break;                 /* REFE */
+        case 1: data = tag + 4; tadr += 16 + qwc * 16; break;                             /* CNT */
+        case 2: data = tag + 4; tadr = addr; break;                                       /* NEXT */
+        case 3: case 4: data = (const uint32_t *)Port_Ptr(addr); tadr += 16; break;      /* REF, REFS */
+        case 5: data = tag + 4; if (sp < 2) { stack[sp++] = tadr + 16 + qwc * 16; } tadr = addr; break; /* CALL */
+        case 6: data = tag + 4; if (sp > 0) { tadr = stack[--sp]; } else { end = 1; } break;          /* RET */
+        default: data = tag + 4; end = 1; break;                                          /* END */
+        }
+        if (tte) {
+            walk_vif(tag + 2, 2);
+        }
+        walk_vif(data, qwc * 4);
+        if (end) {
+            break;
+        }
+    }
+    Gs_RndRest();
+    walk_report();
+    if (sGpu) {
+        GsGpu_FrameEnd();
+    }
+    Gs_FrameCount();
+}
+
+/* Carries out a source-chain transfer on VIF1 that starts at `tadr` (PS2 address = host address): the frame's list. */
+void Port_GsVif1Chain(uint32_t tadr, int tte) {
+    uint64_t tChain;
+
+    if (!Gs_On()) {
+        return;
+    }
+#ifdef PORT_GS_REF
+    if (!sWalk) {
+        GsRef_Vif1Chain(tadr, tte);
+        return;
+    }
+#endif
+    if (!sGpu) {
+        return;
+    }
+    tChain = Gs_NowNs();
+    Gs_RndTake(tadr);
+    walk_chain(tadr, tte);
+    Gs_FramePace(tChain); /* the frame's work ends here */
+}
+
+/* A transfer on the GIF channel itself (the game uses it for texture uploads outside the frame's list, the Sony
+   library for the clear of each frame): `qwc` quadwords of GIF data at `addr`, or with chain = 1 a source chain of
+   them starting at `addr`. */
+void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
+    int guard;
+
+    if (!Gs_On()) {
+        return;
+    }
+#ifdef PORT_GS_REF
+    if (!sWalk) {
+        GsRef_GifChannel(addr, qwc, chain);
+        return;
+    }
+#endif
+    sWSrc = 1;
+    sWTag = addr;
+    if (!chain) {
+        walk_gif((const uint8_t *)Port_Ptr(addr), qwc);
+        sWSrc = 0;
+        return;
+    }
+    for (guard = 0; guard < 100000; guard++) {
+        const uint32_t *tag = (const uint32_t *)Port_Ptr(addr);
+        uint32_t n = tag[0] & 0xFFFF, id = (tag[0] >> 28) & 7, ref = tag[1];
+
+        sWTag = addr;
+        if (id == 0 || id == 3 || id == 4) {
+            walk_gif((const uint8_t *)Port_Ptr(ref), n);
+            addr += 16;
+        } else {
+            walk_gif((const uint8_t *)(tag + 4), n);
+            addr = id == 2 ? ref : addr + 16 + n * 16;
+        }
+        if (id == 0 || id == 7) {
+            break;
+        }
+    }
+    sWSrc = 0;
 }
