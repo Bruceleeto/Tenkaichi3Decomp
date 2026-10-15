@@ -810,6 +810,7 @@ static s32 FlashDraw_PortQuad(FlashQuad *q, u64 tex0, s32 mask, u64 *end) {
         r.st.flags = RND_SMOOTH | ((q->flags & FLASH_QUAD_REPEAT) ? RND_REPEAT : 0);
     }
     r.st.blend = (q->flags & FLASH_QUAD_ADD) ? RND_BLEND_ADD : (q->flags & FLASH_QUAD_SUB) ? RND_BLEND_SUB : RND_BLEND_NORMAL;
+    r.st.flags |= gRndCtx[0].flags & RND_ZWRITE; /* (the packets leave ZBUF as the context has it: depth 0 written) */
     if (mask == 1) {
         r.st.flags |= RND_NO_COLOUR;
         r.st.ztest = RND_Z_GEQUAL;

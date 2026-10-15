@@ -191,6 +191,9 @@ static unsigned sStat[9]; /* texture entries, 4-bit, 8-bit, other formats, bad p
 
 #define KEY_DIRECT 0x9E3779B97F4A7C15ull /* (as port/src/gs/gs_pvr.c) */
 #define KEY_T8     0xC2B2AE3D27D4EB4Full
+/* A texture's key: its upload's hash and the shape TEX0 reads it as (TBW, PSM, TW, TH): one upload drawn as two
+   shapes is two textures (the loading screen's 256 x 128 and 128 x 256 of the same data). */
+#define KEY_SHAPE(key, t0) ((key) ^ ((uint64_t)(((t0) >> 14) & 0xFFFFF) + 1) * 0xD6E8FEB86659FD93ull)
 
 static void out_add(uint64_t key, uint32_t w, uint32_t h, uint32_t bits, uint32_t psm, const void *data, uint32_t bytes);
 
@@ -531,7 +534,7 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
             if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) {
                 memset(sVram, 0, sizeof(sVram));
                 if (upload(b + pix, size, rd32(e + 0x18), 0, 1)) {
-                    emit_direct(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+                    emit_direct(KEY_SHAPE(sKey, t0), psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
                 }
             }
             continue;
@@ -542,7 +545,7 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
         if (sDump != NULL && sDumped < 40 && sStat[psm == 0x14 ? 1 : 2] % 997 == 1) {
             dump(e, b, n, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
         }
-        emit(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+        emit(KEY_SHAPE(sKey, t0), psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
     }
     xml(-1, "</textures>");
     return 1;
@@ -626,7 +629,7 @@ static int font(const uint8_t *b, uint32_t n) {
     if (upload(b + pix, size, rd32(e + 0x18), 0, 1)) {
         sStat[0]++;
         sStat[1]++;
-        emit(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+        emit(KEY_SHAPE(sKey, t0), psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
     } else {
         sStat[4]++;
     }

@@ -1272,6 +1272,9 @@ typedef struct NatTex {
 } NatTex;
 #define KEY_DIRECT 0x9E3779B97F4A7C15ull /* (as port/tools/dc_tex.c) */
 #define KEY_T8     0xC2B2AE3D27D4EB4Full
+/* A texture's key: its upload's hash and the shape TEX0 reads it as (TBW, PSM, TW, TH): one upload drawn as two
+   shapes is two textures (the loading screen's 256 x 128 and 128 x 256 of the same data; as port/tools/dc_tex.c). */
+#define KEY_SHAPE(key, t0) ((key) ^ ((uint64_t)(((t0) >> 14) & 0xFFFFF) + 1) * 0xD6E8FEB86659FD93ull)
 static NatTex sNat[MAX_NAT];
 static uint16_t sNatGen;
 static uint16_t sNatHash[MAX_NAT]; /* by the entry's address (its bits from 6: entries are 0x40 bytes): record + 1 */
@@ -1362,6 +1365,7 @@ static NatTex *nat_get(uint8_t *e) {
     if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) { /* 16-bit PVR texels, and its 8-bit view */
         uint32_t fmt, vb;
         if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key)) { sNatWhy[1]++; return n; }
+        key = KEY_SHAPE(key, t0);
         if ((k = TexPak_Find(key ^ KEY_DIRECT, &w, &h, &bits)) < 0) { goto missing; }
         if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != 16) { sNatWhy[3]++; return n; }
         fmt = TexPak_Psm(k) >> 6;
@@ -1383,6 +1387,7 @@ static NatTex *nat_get(uint8_t *e) {
     }
     if (psm != 0x13 && psm != 0x14) { sNatWhy[0]++; return n; }
     if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key)) { sNatWhy[1]++; return n; }
+    key = KEY_SHAPE(key, t0);
     if ((k = TexPak_Find(key, &w, &h, &bits)) < 0) {
     missing:
         sNatWhy[2]++;
