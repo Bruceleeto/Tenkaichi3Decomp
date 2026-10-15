@@ -27,9 +27,11 @@ void ColorFade_Draw(void) {
         p += 2;
         p[0] = 0x44;
         p[1] = GS_ALPHA_1;
+        PORT_AD(p, 0);
         p += 2;
         p[0] = 0x30000;
         p[1] = GS_TEST_1;
+        PORT_AD(p, 0);
         p += 2;
 #ifdef PORT
         /* The sprite as a record (include/port/rnd.h): the default state, blended, no test, depth 0 written. */
