@@ -1151,45 +1151,63 @@ void EftBlade_Draw(EftAaTask *task) {
             }
             p = (EftBladeTriPkt *)gOtCur;
             gOtCur = (u8 *)(p + 1);
-            layer = def->layer;
-            p->prim = EftBlade_MakePrim(0xB, abe, layer >= 2);
-            p->dmaTag = 0x20000005;
-            p->vif1 = 0x50000005;
-            p->vif0 = 0x10000000;
-            p->gifTag = 0x8400000000008001;
-            p->regs = 0xF4141410;
-            p->next = NULL;
-            p->v[0].rgbaq.r = col.x;
-            p->v[0].rgbaq.g = col.y;
-            p->v[0].rgbaq.b = col.z;
-            p->v[0].rgbaq.a = (f32)alpha[0] * aScale;
-            p->v[0].rgbaq.q = 1.0f;
-            p->v[1].rgbaq.r = col.x;
-            p->v[1].rgbaq.g = col.y;
-            p->v[1].rgbaq.b = col.z;
-            p->v[1].rgbaq.a = (f32)alpha[1] * aScale;
-            p->v[1].rgbaq.q = 1.0f;
-            p->v[2].rgbaq.r = col.x;
-            p->v[2].rgbaq.g = col.y;
-            p->v[2].rgbaq.b = col.z;
-            p->v[2].rgbaq.a = (f32)alpha[2] * aScale;
-            l = layer;
-            p->v[2].rgbaq.q = 1.0f;
-            if (l >= 2) {
-                l -= 2;
+#ifdef PORT
+            if (Port_TakesRecords()) { /* the triangle as a record, in the packet's place */
+                s32 j;
+                gOtCur = (u8 *)p;
+                layer = def->layer;
+                p = Ot_NewRec(EftBlade_MakePrim(0xB, abe, layer >= 2), 3);
+                for (j = 0; j < 3; j++) {
+                    Ot_RecVtx(p, j, scr[j].x, scr[j].y, scr[j].z, 0.0f, 0.0f, 1.0f,
+                              (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)((f32)alpha[j] * aScale) << 24);
+                }
+                l = layer;
+                if (l >= 2) {
+                    l -= 2;
+                }
+            } else
+#endif
+            {
+                layer = def->layer;
+                p->prim = EftBlade_MakePrim(0xB, abe, layer >= 2);
+                p->dmaTag = 0x20000005;
+                p->vif1 = 0x50000005;
+                p->vif0 = 0x10000000;
+                p->gifTag = 0x8400000000008001;
+                p->regs = 0xF4141410;
+                p->next = NULL;
+                p->v[0].rgbaq.r = col.x;
+                p->v[0].rgbaq.g = col.y;
+                p->v[0].rgbaq.b = col.z;
+                p->v[0].rgbaq.a = (f32)alpha[0] * aScale;
+                p->v[0].rgbaq.q = 1.0f;
+                p->v[1].rgbaq.r = col.x;
+                p->v[1].rgbaq.g = col.y;
+                p->v[1].rgbaq.b = col.z;
+                p->v[1].rgbaq.a = (f32)alpha[1] * aScale;
+                p->v[1].rgbaq.q = 1.0f;
+                p->v[2].rgbaq.r = col.x;
+                p->v[2].rgbaq.g = col.y;
+                p->v[2].rgbaq.b = col.z;
+                p->v[2].rgbaq.a = (f32)alpha[2] * aScale;
+                l = layer;
+                p->v[2].rgbaq.q = 1.0f;
+                if (l >= 2) {
+                    l -= 2;
+                }
+                p->v[0].xyz.x = scr[0].x;
+                p->v[0].xyz.y = scr[0].y;
+                p->v[0].xyz.z = scr[0].z;
+                p->v[0].xyz.f = 0xFF;
+                p->v[1].xyz.x = scr[1].x;
+                p->v[1].xyz.y = scr[1].y;
+                p->v[1].xyz.z = scr[1].z;
+                p->v[1].xyz.f = 0xFF;
+                p->v[2].xyz.x = scr[2].x;
+                p->v[2].xyz.y = scr[2].y;
+                p->v[2].xyz.z = scr[2].z;
+                p->v[2].xyz.f = 0xFF;
             }
-            p->v[0].xyz.x = scr[0].x;
-            p->v[0].xyz.y = scr[0].y;
-            p->v[0].xyz.z = scr[0].z;
-            p->v[0].xyz.f = 0xFF;
-            p->v[1].xyz.x = scr[1].x;
-            p->v[1].xyz.y = scr[1].y;
-            p->v[1].xyz.z = scr[1].z;
-            p->v[1].xyz.f = 0xFF;
-            p->v[2].xyz.x = scr[2].x;
-            p->v[2].xyz.y = scr[2].y;
-            p->v[2].xyz.z = scr[2].z;
-            p->v[2].xyz.f = 0xFF;
             z = scr[0].z >> 8;
             if (z < 0) {
                 e = &gOtZ[0].layer[l];
