@@ -872,7 +872,7 @@ static void GfxLens_PortCapture(s32 split, s32 side) {
     s32 u0 = split != 0 && side == 1 ? 0x100 : 0;
     s32 u1 = split != 0 ? u0 + 0x100 : 0x200;
     u64 *p;
-    s32 n = 0;
+    s32 n = 0, n2;
 
     Rnd_StateInit(&st, 0x150);
     st.blend = RND_BLEND_NONE;
@@ -921,6 +921,9 @@ static void GfxLens_PortCapture(s32 split, s32 side) {
     p[n++] = GS_TEX0_1;
     p[n++] = gGfxLens.tex->entries->tex0 | 0x5C00400002F00;
     p[n++] = GS_TEX0_1 + 1;
+    for (n2 = 2; n2 < n; n2 += 2) {
+        PORT_AD(p, n2);
+    }
     Dma_EndDirect(p + n);
 }
 #endif
