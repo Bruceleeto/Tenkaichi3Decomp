@@ -417,7 +417,7 @@ int Rnd_OtRecTakes(const RndOtRec *r) {
 }
 
 /* Its corners go through vertex() as the packet's would: its PRIM and TEX0 written as taken, then each corner's
-   colour, texture coordinates and position, each one a kick. */
+   colour and Q, texture coordinates (textured) and position, each one a kick. */
 void Rnd_OtRec(const RndOtRec *r) {
     int i;
 
@@ -429,20 +429,21 @@ void Rnd_OtRec(const RndOtRec *r) {
     for (i = 0; i < r->n; i++) {
         const RndOtVtx *v = &r->v[i];
         sRgba = v->rgba;
-        if (r->fst) {
+        sQ = v->q;
+        if (r->tme && r->fst) {
             sU = (int)v->s & 0x3FFF;
             sVv = (int)v->t & 0x3FFF;
-        } else {
+        } else if (r->tme) { /* (an untextured packet writes no ST: what the last one wrote stays) */
             sS = v->s;
             sT = v->t;
-            sQ = v->q;
         }
         vertex(v->x, v->y, v->z & 0xFFFFFF, 1, DRAW);
     }
     gRndOtStat[2]++;
 }
 
-/* The packet: PRIM (and TEX0) as PACKED registers, then each corner's RGBAQ, ST (Q in it) or UV, and XYZ2. */
+/* The packet: PRIM (and TEX0) as PACKED registers, then each corner's RGBAQ, ST (Q in it) or UV when textured,
+   and XYZ2. (The Q of an untextured one or of UV is left as it was: nothing reads it.) */
 uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
     uint64_t *start = dst;
     int i;
@@ -457,26 +458,34 @@ uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
         dst[1] = 0;
         dst += 2;
     }
-    dst[0] = (uint64_t)r->n | 1ull << 15 | 3ull << 60; /* NLOOP n, EOP, PACKED, three registers */
-    dst[1] = 0x1 | (uint64_t)(r->fst ? 0x3 : 0x2) << 4 | 0x5ull << 8;
+    if (r->tme) {
+        dst[0] = (uint64_t)r->n | 1ull << 15 | 3ull << 60; /* NLOOP n, EOP, PACKED, three registers */
+        dst[1] = 0x1 | (uint64_t)(r->fst ? 0x3 : 0x2) << 4 | 0x5ull << 8;
+    } else {
+        dst[0] = (uint64_t)r->n | 1ull << 15 | 2ull << 60; /* two: RGBAQ, XYZ2 */
+        dst[1] = 0x1 | 0x5ull << 4;
+    }
     dst += 2;
     for (i = 0; i < r->n; i++) {
         const RndOtVtx *v = &r->v[i];
         uint32_t q;
         dst[0] = (uint64_t)(v->rgba & 0xFF) | (uint64_t)((v->rgba >> 8) & 0xFF) << 32;
         dst[1] = (uint64_t)((v->rgba >> 16) & 0xFF) | (uint64_t)((v->rgba >> 24) & 0xFF) << 32;
-        if (r->fst) {
-            dst[2] = (uint64_t)((int)v->s & 0x3FFF) | (uint64_t)((int)v->t & 0x3FFF) << 32;
-            dst[3] = 0;
-        } else {
-            memcpy(&dst[2], &v->s, 4);
-            memcpy((uint8_t *)&dst[2] + 4, &v->t, 4);
+        dst += 2;
+        if (r->tme && r->fst) {
+            dst[0] = (uint64_t)((int)v->s & 0x3FFF) | (uint64_t)((int)v->t & 0x3FFF) << 32;
+            dst[1] = 0;
+            dst += 2;
+        } else if (r->tme) {
+            memcpy(&dst[0], &v->s, 4);
+            memcpy((uint8_t *)&dst[0] + 4, &v->t, 4);
             memcpy(&q, &v->q, 4);
-            dst[3] = q;
+            dst[1] = q;
+            dst += 2;
         }
-        dst[4] = (uint64_t)v->x | (uint64_t)v->y << 32;
-        dst[5] = v->z & 0xFFFFFF;
-        dst += 6;
+        dst[0] = (uint64_t)v->x | (uint64_t)v->y << 32;
+        dst[1] = v->z & 0xFFFFFF;
+        dst += 2;
     }
     walk(start, (unsigned)(dst - start) / 2, FOLLOW); /* (what it sets, as a packet that stays) */
     gRndOtStat[0]++;

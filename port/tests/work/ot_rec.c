@@ -55,7 +55,7 @@ static void reset(void) {
 static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
     uint64_t *s = d, prim = (uint64_t)r->type | (uint64_t)r->gouraud << 3 | (uint64_t)r->tme << 4 | (uint64_t)r->abe << 6 |
                             (uint64_t)r->fst << 8 | (uint64_t)r->ctx << 9;
-    int i, nreg = 1 + (r->setTex0 != 0) + r->n * 3;
+    int i, nreg = 1 + (r->setTex0 != 0) + r->n * (r->tme ? 3 : 2);
     uint64_t regs = 0;
     int k = 0;
 
@@ -66,7 +66,9 @@ static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
     if (!packed) {
         for (i = 0; i < r->n; i++) {
             regs |= 1ull << (k++ * 4);
-            regs |= (uint64_t)(r->fst ? 3 : 2) << (k++ * 4);
+            if (r->tme) {
+                regs |= (uint64_t)(r->fst ? 3 : 2) << (k++ * 4);
+            }
             regs |= 4ull << (k++ * 4);
         }
         d[0] = 1 | 1ull << 15 | 1ull << 58 | (uint64_t)(nreg & 15) << 60;
@@ -81,7 +83,8 @@ static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
             *d = v->rgba;
             memcpy((uint8_t *)d + 4, &v->q, 4);
             d++;
-            if (r->fst) {
+            if (!r->tme) {
+            } else if (r->fst) {
                 *d++ = (uint64_t)((int)v->s & 0x3FFF) | (uint64_t)((int)v->t & 0x3FFF) << 16;
             } else {
                 memcpy(d, &v->s, 4);
@@ -106,21 +109,25 @@ static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
         d[1] = 0;
         d += 2;
     }
-    d[0] = (uint64_t)r->n | 1ull << 15 | 3ull << 60;
-    d[1] = 0x1 | 0x2 << 4 | 0x4 << 8;
+    d[0] = (uint64_t)r->n | 1ull << 15 | (r->tme ? 3ull : 2ull) << 60;
+    d[1] = r->tme ? 0x1 | 0x2 << 4 | 0x4 << 8 : 0x1 | 0x4 << 4;
     d += 2;
     for (i = 0; i < r->n; i++) {
         const RndOtVtx *v = &r->v[i];
         uint32_t q;
         d[0] = (v->rgba & 0xFF) | (uint64_t)((v->rgba >> 8) & 0xFF) << 32;
         d[1] = ((v->rgba >> 16) & 0xFF) | (uint64_t)(v->rgba >> 24) << 32;
-        memcpy(&d[2], &v->s, 4);
-        memcpy((uint8_t *)&d[2] + 4, &v->t, 4);
-        memcpy(&q, &v->q, 4);
-        d[3] = q;
-        d[4] = v->x | (uint64_t)v->y << 32;
-        d[5] = (uint64_t)v->z << 4 | 0xFFull << 36;
-        d += 6;
+        d += 2;
+        if (r->tme) {
+            memcpy(&d[0], &v->s, 4);
+            memcpy((uint8_t *)&d[0] + 4, &v->t, 4);
+            memcpy(&q, &v->q, 4);
+            d[1] = q;
+            d += 2;
+        }
+        d[0] = v->x | (uint64_t)v->y << 32;
+        d[1] = (uint64_t)v->z << 4 | 0xFFull << 36;
+        d += 2;
     }
     return (unsigned)(d - s) / 2;
 }
@@ -151,6 +158,12 @@ static void compare(const char *what, unsigned prim, After *a, After *b) {
     }
     sPolys += sGotN[0];
     for (i = 0; i < sGotN[0]; i++) {
+        int j, side;
+        for (side = 0; side < 2; side++) {
+            for (j = 0; j < 4 && sGot[side][i].gsTex0 == 0; j++) { /* (untextured: s t q are what the GS last had, not read) */
+                sGot[side][i].v[j].s = sGot[side][i].v[j].t = sGot[side][i].v[j].q = 0.0f;
+            }
+        }
         if (memcmp(&sGot[0][i], &sGot[1][i], sizeof(RndPoly)) != 0) {
             printf("FAIL %s prim %03X: polygon %d differs\n", what, prim, i);
             sFail++;
@@ -253,7 +266,7 @@ static void one(unsigned prim, int n, int setTex0, int packed, int bad) {
 
 int main(void) {
     static const struct { unsigned prim; int n; } kinds[] = {
-        {0x00B, 3}, {0x01B, 3}, {0x05B, 3}, {0x25B, 3},
+        {0x00B, 3}, {0x04B, 3}, {0x24B, 3}, {0x01B, 3}, {0x05B, 3}, {0x25B, 3},
         {0x014, 4}, {0x01C, 4}, {0x054, 4}, {0x05C, 4}, {0x25C, 4}, {0x21C, 4}, {0x254, 4},
         {0x046, 2}, {0x246, 2}, {0x056, 2}, {0x156, 2},
         {0x001, 2}, {0x002, 3}, {0x042, 4},
