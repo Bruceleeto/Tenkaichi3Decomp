@@ -639,6 +639,7 @@ void EftQuad_DrawSprite(EftYVec *corner, EftYVec uv0, EftYVec uv1, EftYVec color
                 Vec4_ToInt(&col, &color);
                 rgba = (u8)col.r | (u8)col.g << 8 | (u8)col.b << 16 | (u32)(u8)col.a << 24;
                 Ot_RecTex0(p, tex->e[texIdx].tex0);
+                EftVram_PortRecTex(p, tex->e[texIdx].tex0);
                 for (i = 0; i < 4; i++) {
                     Ot_RecVtx(p, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
                 }
