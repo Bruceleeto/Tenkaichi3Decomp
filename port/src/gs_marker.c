@@ -48,6 +48,17 @@ int Port_Poly(const RndPoly *p) {
     return Gs_RecordPush(p, 1, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
 }
 
+extern int Gs_MarksQueued(void); /* gs/gs_walk.c */
+int Port_Mark(uint32_t addr, uint64_t d) {
+    uint64_t m[2];
+    if (!Gs_MarksQueued()) {
+        return 0;
+    }
+    m[0] = addr;
+    m[1] = d;
+    return Gs_RecordPush(m, 2, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+}
+
 int Port_TakesRecords(void) {
     return Gs_TakesRecords();
 }

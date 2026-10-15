@@ -27,7 +27,10 @@ unsigned gGsFrame; /* pictures so far (a frame that is only being re-run is not 
 #define sFrame gGsFrame
 static int sGpu;   /* 1: the GPU back end draws (BT3_GS=gpu) */
 
-static int sWalk;  /* 1: the lists are walked here (Gs_WalkChain), not by the reference: the Dreamcast; BT3_WALK=1 */
+static int sWalk;  /* the lists are walked here, not by the reference (the Dreamcast; BT3_WALK=1..3 on PC): 1 the markers
+                      carried out as the walk meets them; 2 the markers queued with the records (Port_Mark), the walk
+                      only counting them; 3 the same and the frame's list not walked: the queue drawn in order */
+int Gs_MarksQueued(void) { return sWalk >= 2 && sGpu; }
 
 #ifdef PORT_GS_REF
 int GsRef_Start(int gpu);  /* gs_core.c: the reference's tables and switches, the GPU back end (on its thread) */
@@ -95,13 +98,14 @@ int Gs_On(void) {
         on = Gs_Mode() != NULL;
         gpu = on && strcmp(Gs_Mode(), "gpu") == 0;
 #ifdef PORT_GS_REF
-        sWalk = getenv("BT3_WALK") != NULL && atoi(getenv("BT3_WALK")) != 0;
+        sWalk = getenv("BT3_WALK") != NULL ? atoi(getenv("BT3_WALK")) : 0;
+        sWalk = sWalk < 0 ? 0 : sWalk > 3 ? 3 : sWalk;
         sGpu = GsRef_Start(gpu && !sWalk);
         if (sWalk) {
             sGpu = gpu && GsGpu_Init();
         }
 #else
-        sWalk = 1;
+        sWalk = 3; /* (the frame's list not walked: the queue drawn in order) */
         sGpu = gpu && GsGpu_Init();
 #endif
     }
@@ -213,14 +217,15 @@ int Gs_TakesRecords(void) {
    fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
 typedef struct RndCmd {
     uint32_t list, at; /* the display list's first address; the address in it */
-    uint32_t kind;     /* 0 RndQuad, 1 RndPoly */
-    union { RndQuad q; RndPoly p; } r;
+    uint32_t kind;     /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value) */
+    union { RndQuad q; RndPoly p; uint64_t m[2]; } r;
 } RndCmd;
 typedef struct RndQueue {
     RndCmd *cmd;
     uint32_t n, cap, next; /* (next: the walk's) */
 } RndQueue;
 static RndQueue sRndFill, sRndWalk;
+static unsigned sMarksIn; /* markers queued (Port_Mark) since the last report */
 static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
 
 /* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
@@ -245,7 +250,8 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
     f->cmd[f->n].list = list;
     f->cmd[f->n].at = at;
     f->cmd[f->n].kind = (uint32_t)kind;
-    if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
+    if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else if (kind == 1) { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
+    else { memcpy(f->cmd[f->n].r.m, rec, 16); sMarksIn++; }
     f->n++;
     return 1;
 }
@@ -272,7 +278,7 @@ void Gs_RndTake(uint32_t tadr) {
 }
 
 static void rnd_draw(const RndCmd *c) {
-    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else { GsGpu_Poly(&c->r.p); }
+    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else if (c->kind == 1) { GsGpu_Poly(&c->r.p); } else { Gs_Marker((uint32_t)c->r.m[0], c->r.m[1]); }
 }
 
 /* The walk is at the DMA tag at tadr: the records queued in front of it. */
@@ -479,7 +485,7 @@ static int walk_log(void) {
 /* A write to one of the port's registers, met by the walk. */
 static void walk_mark(uint32_t addr, uint64_t d) {
     sW[sWSrc][W_MARK]++;
-    Gs_Marker(addr, d);
+    if (sWSrc == 1 || !Gs_MarksQueued()) { Gs_Marker(addr, d); } /* (else the list's are in the queue) */
 }
 
 static int is_vertex(uint32_t r) {
@@ -597,6 +603,25 @@ static void walk_gif(const uint8_t *p, uint32_t qwc) {
     }
 }
 
+/* The counts of the frame (BT3_GS_VERBOSE, every 30 frames): what was passed over. */
+static void walk_report(void) {
+    if (getenv("BT3_GS_VERBOSE") != NULL && sFrame % 30 == 0) {
+        int k;
+        for (k = 0; k < 2; k++) {
+            const unsigned *c = sW[k];
+            fprintf(stderr, "walk: frame %u: %s: passed over %u uploads (%u quadwords), %u draw packets (%u vertices), %u state packets, "
+                            "%u VU1 calls (%u vectors unpacked, %u microprograms); %u markers\n", sFrame,
+                    k ? "GIF channel since the last list" : "list", c[W_UPLOAD], c[W_IMAGE_QW], c[W_DRAW], c[W_VERTS], c[W_STATE],
+                    c[W_VU1_CALL], c[W_VU1_QW], c[W_MPG], c[W_MARK]);
+        }
+        fprintf(stderr, "walk: frame %u: %u markers queued; %u textures drawn white (not in tex.pak, no GS memory)\n", sFrame, sMarksIn,
+                GsDraw_TexMisses());
+    }
+    memset(sW, 0, sizeof(sW));
+    sMarksIn = 0;
+}
+
+#ifdef PORT_GS_REF /* the frame's list walked (BT3_WALK=1, 2): the PC only, to compare */
 /* One run of VIF data (32-bit words): DIRECT's GIF data to walk_gif, the data of every other command passed over.
    A command's data may continue in the next run (the command word often sits in the DMA tag, its data behind). */
 static void walk_vif(const uint32_t *w, uint32_t count) {
@@ -650,22 +675,6 @@ static void walk_vif(const uint32_t *w, uint32_t count) {
     }
 }
 
-/* The counts of the frame (BT3_GS_VERBOSE, every 30 frames): what was passed over. */
-static void walk_report(void) {
-    if (getenv("BT3_GS_VERBOSE") != NULL && sFrame % 30 == 0) {
-        int k;
-        for (k = 0; k < 2; k++) {
-            const unsigned *c = sW[k];
-            fprintf(stderr, "walk: frame %u: %s: passed over %u uploads (%u quadwords), %u draw packets (%u vertices), %u state packets, "
-                            "%u VU1 calls (%u vectors unpacked, %u microprograms); %u markers\n", sFrame,
-                    k ? "GIF channel since the last list" : "list", c[W_UPLOAD], c[W_IMAGE_QW], c[W_DRAW], c[W_VERTS], c[W_STATE],
-                    c[W_VU1_CALL], c[W_VU1_QW], c[W_MPG], c[W_MARK]);
-        }
-        fprintf(stderr, "walk: frame %u: %u textures drawn white (not in tex.pak, no GS memory)\n", sFrame, GsDraw_TexMisses());
-    }
-    memset(sW, 0, sizeof(sW));
-}
-
 /* One frame's list: the DMA chain at `tadr` on VIF1, the records at their places, then the end of the frame. */
 static void walk_chain(uint32_t tadr, int tte) {
     uint32_t stack[2], sp = 0;
@@ -704,6 +713,26 @@ static void walk_chain(uint32_t tadr, int tte) {
     }
     Gs_FrameCount();
 }
+#endif
+
+/* One frame's list not walked (sWalk 3): its records and markers in the order they were queued, then the end of
+   the frame. */
+static void list_draw(void) {
+    RndQueue *w = &sRndWalk;
+    while (w->next < w->n) {
+        rnd_draw(&w->cmd[w->next++]);
+    }
+    w->n = w->next = 0;
+    if (sRndLost != 0 && getenv("BT3_GS_VERBOSE") != NULL) {
+        fprintf(stderr, "rnd: frame %u: %u records not queued (no memory)\n", sFrame, sRndLost);
+    }
+    sRndLost = 0;
+    walk_report();
+    if (sGpu) {
+        GsGpu_FrameEnd();
+    }
+    Gs_FrameCount();
+}
 
 /* Carries out a source-chain transfer on VIF1 that starts at `tadr` (PS2 address = host address): the frame's list. */
 void Port_GsVif1Chain(uint32_t tadr, int tte) {
@@ -723,7 +752,15 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
     }
     tChain = Gs_NowNs();
     Gs_RndTake(tadr);
-    walk_chain(tadr, tte);
+#ifdef PORT_GS_REF
+    if (sWalk != 3) {
+        walk_chain(tadr, tte);
+    } else
+#endif
+    {
+        (void)tte;
+        list_draw();
+    }
     Gs_FramePace(tChain); /* the frame's work ends here */
 }
 
