@@ -141,67 +141,92 @@ void EftLink_DrawQuad(Vec4 *corner, EftWVec uv0, EftWVec uv1, EftWVec color, s32
     if (p == NULL) {
         return;
     }
-    ctx = layer >= 2;
-    p->prim = ((u64)abe << 6) | ((u64)ctx << 9) | 0x1C;
-    p->dmaTag = 0x20000008;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000008;
-    p->gifTag = 0xE400000000008001;
-    p->regs = 0x42142142142160 + (ctx << 4);
-    p->next = NULL;
-    z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
-    if (noDepth) {
-        scr[0].z = 0xFFFFFF;
-        scr[1].z = 0xFFFFFF;
-        scr[2].z = 0xFFFFFF;
-        scr[3].z = 0xFFFFFF;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        u32 rgba;
+        s32 i;
+
+        gOtCur = (u32 *)p;
+        ctx = layer >= 2;
+        p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+        if (noDepth) {
+            scr[0].z = 0xFFFFFF;
+            scr[1].z = 0xFFFFFF;
+            scr[2].z = 0xFFFFFF;
+            scr[3].z = 0xFFFFFF;
+        }
+        Vec4_ToInt(&col, V(&color));
+        rgba = (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)col.w << 24;
+        Ot_RecTex0(p, EFTW_TEX0(tex, texIdx));
+        for (i = 0; i < 4; i++) {
+            Ot_RecVtx(p, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
+        }
+    } else
+#endif
+    {
+        ctx = layer >= 2;
+        p->prim = ((u64)abe << 6) | ((u64)ctx << 9) | 0x1C;
+        p->dmaTag = 0x20000008;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000008;
+        p->gifTag = 0xE400000000008001;
+        p->regs = 0x42142142142160 + (ctx << 4);
+        p->next = NULL;
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+        if (noDepth) {
+            scr[0].z = 0xFFFFFF;
+            scr[1].z = 0xFFFFFF;
+            scr[2].z = 0xFFFFFF;
+            scr[3].z = 0xFFFFFF;
+        }
+        Vec4_ToInt(&col, V(&color));
+        p->v[0].rgbaq.r = col.x;
+        p->v[0].rgbaq.g = col.y;
+        p->v[0].rgbaq.b = col.z;
+        p->v[0].rgbaq.a = col.w;
+        p->v[0].rgbaq.q = stq[0].z;
+        p->v[1].rgbaq.r = col.x;
+        p->v[1].rgbaq.g = col.y;
+        p->v[1].rgbaq.b = col.z;
+        p->v[1].rgbaq.a = col.w;
+        p->v[1].rgbaq.q = stq[1].z;
+        p->v[2].rgbaq.r = col.x;
+        p->v[2].rgbaq.g = col.y;
+        p->v[2].rgbaq.b = col.z;
+        p->v[2].rgbaq.a = col.w;
+        p->v[2].rgbaq.q = stq[2].z;
+        p->v[3].rgbaq.r = col.x;
+        p->v[3].rgbaq.g = col.y;
+        p->v[3].rgbaq.b = col.z;
+        p->v[3].rgbaq.a = col.w;
+        p->v[3].rgbaq.q = stq[3].z;
+        p->v[0].st.s = stq[0].x;
+        p->v[0].st.t = stq[0].y;
+        p->v[1].st.s = stq[1].x;
+        p->v[1].st.t = stq[1].y;
+        p->v[2].st.s = stq[2].x;
+        p->v[2].st.t = stq[2].y;
+        p->v[3].st.s = stq[3].x;
+        p->v[3].st.t = stq[3].y;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+        p->tex0 = EFTW_TEX0(tex, texIdx);
     }
-    Vec4_ToInt(&col, V(&color));
-    p->v[0].rgbaq.r = col.x;
-    p->v[0].rgbaq.g = col.y;
-    p->v[0].rgbaq.b = col.z;
-    p->v[0].rgbaq.a = col.w;
-    p->v[0].rgbaq.q = stq[0].z;
-    p->v[1].rgbaq.r = col.x;
-    p->v[1].rgbaq.g = col.y;
-    p->v[1].rgbaq.b = col.z;
-    p->v[1].rgbaq.a = col.w;
-    p->v[1].rgbaq.q = stq[1].z;
-    p->v[2].rgbaq.r = col.x;
-    p->v[2].rgbaq.g = col.y;
-    p->v[2].rgbaq.b = col.z;
-    p->v[2].rgbaq.a = col.w;
-    p->v[2].rgbaq.q = stq[2].z;
-    p->v[3].rgbaq.r = col.x;
-    p->v[3].rgbaq.g = col.y;
-    p->v[3].rgbaq.b = col.z;
-    p->v[3].rgbaq.a = col.w;
-    p->v[3].rgbaq.q = stq[3].z;
-    p->v[0].st.s = stq[0].x;
-    p->v[0].st.t = stq[0].y;
-    p->v[1].st.s = stq[1].x;
-    p->v[1].st.t = stq[1].y;
-    p->v[2].st.s = stq[2].x;
-    p->v[2].st.t = stq[2].y;
-    p->v[3].st.s = stq[3].x;
-    p->v[3].st.t = stq[3].y;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
-    p->tex0 = EFTW_TEX0(tex, texIdx);
     l = layer;
     if (l >= 2) {
         l -= 2;
