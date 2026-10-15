@@ -87,6 +87,10 @@ void Ot_SetDefaultAlpha(void) {
     gOt->alpha2[1] = 0x49;
 }
 
+#ifdef PORT
+static s32 sOtRecFull; /* records turned away since the cursor was last rewound */
+#endif
+
 /* Rewinds the packet allocation cursor. */
 void Ot_ResetCursor(void) {
 #ifdef PORT
@@ -94,6 +98,11 @@ void Ot_ResetCursor(void) {
        than the packets they stand for, so a frame needs no more than it did on the PS2; told if one ever does. */
     if ((u8 *)gOtCur > (u8 *)gOt->buf + gOt->bufSize) {
         fprintf(stderr, "ot: the ordering table's packet memory overran by %d bytes\n", (s32)((u8 *)gOtCur - ((u8 *)gOt->buf + gOt->bufSize)));
+    }
+    /* The records turned away this frame because the packet memory had no room left for them (Ot_RecRoom). */
+    if (sOtRecFull != 0) {
+        fprintf(stderr, "ot: %d records had no room in the packet memory and were not drawn\n", sOtRecFull);
+        sOtRecFull = 0;
     }
 #endif
     gOtCur = gOt->buf;
@@ -388,14 +397,50 @@ s32 Ot_Align64(s32 size) {
    texture, fst, the type) and n corners, which the caller fills before it links the node as it would the packet. */
 extern char Ot_RecHeadCheck[OT_REC_HEAD == (s32)(u32) & ((OtRec *)0)->v ? 1 : -1]; /* (the corners' offset in OtRec) */
 
+/* The bytes a record of n corners takes from the packet memory: its header, then the record padded to quadwords. */
+u32 Ot_RecBytes(s32 n) {
+    return sizeof(OtPrim) + ((OT_REC_HEAD + n * sizeof(RndOtVtx) + 15) & ~15);
+}
+
+/* The bytes an A+D node (Ot_NewAd) takes: its header, a GIF tag and one register. */
+u32 Ot_AdBytes(void) {
+    return sizeof(OtPrim) + 0x20;
+}
+
+/* 1 if `bytes` more fit in the packet memory at the cursor, else 0 (and the record is counted, told by
+   Ot_ResetCursor). A producer asks before the first node of a draw for all its nodes together, so a draw is queued
+   whole or not at all. BT3_OT_BYTES=<n> (port/src/headless.c Port_OtBytes) makes the memory seem smaller, to try
+   it with a full one. */
+s32 Ot_RecRoom(u32 bytes) {
+    static s32 sLimit = -1;
+    u32 size;
+
+    if (gOtCur == NULL || gOt == NULL) {
+        return 0;
+    }
+    if (sLimit < 0) {
+        extern int Port_OtBytes(void);
+        sLimit = Port_OtBytes();
+    }
+    size = gOt->bufSize;
+    if (sLimit > 0 && (u32)sLimit < size) {
+        size = sLimit;
+    }
+    if ((u8 *)gOtCur + bytes > (u8 *)gOt->buf + size) {
+        sOtRecFull++;
+        return 0;
+    }
+    return 1;
+}
+
 void *Ot_NewRec(u64 prim, s32 n) {
     OtPrim *node = (OtPrim *)gOtCur;
     OtRec *r;
 
-    if (node == NULL) {
+    if (node == NULL || !Ot_RecRoom(Ot_RecBytes(n))) {
         return NULL;
     }
-    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + ((OT_REC_HEAD + n * sizeof(RndOtVtx) + 15) & ~15)); /* (its n corners) */
+    gOtCur = (u32 *)((u8 *)node + Ot_RecBytes(n)); /* (its n corners) */
     node->qwc = 0;
     node->tagId = OT_REC_TAG;
     node->next = NULL;
@@ -446,10 +491,10 @@ void *Ot_NewAd(u32 addr, u64 data) {
     OtPrim *node = (OtPrim *)gOtCur;
     u64 *d;
 
-    if (node == NULL) {
+    if (node == NULL || !Ot_RecRoom(Ot_AdBytes())) {
         return NULL;
     }
-    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + 0x20);
+    gOtCur = (u32 *)((u8 *)node + Ot_AdBytes());
     node->qwc = 2;
     node->tagId = DMA_TAG_NEXT >> 16;
     node->next = NULL;

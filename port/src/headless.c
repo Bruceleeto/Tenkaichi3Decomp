@@ -247,6 +247,13 @@ int Port_NetMenuListed(void) {
     return e == NULL || atoi(e) != 0;
 }
 
+/* BT3_OT_BYTES=<n>: the ordering table's packet memory seems only n bytes long to its records (src/sys/gfx_ot.c
+   Ot_RecRoom), to try a full one. 0: its own size. */
+int Port_OtBytes(void) {
+    const char *e = getenv("BT3_OT_BYTES");
+    return e != NULL ? atoi(e) : 0;
+}
+
 /* "Unlock everything" on the Cheats tab of the settings window (port/src/gs/ui.cpp): the game's own leftover debug
    function Save_UnlockAll (0x266088, no caller in the game): every character, stage, music track and item, the
    unlock flags, and the largest amount of Zenni. It changes the save in memory (the records list is emptied too);

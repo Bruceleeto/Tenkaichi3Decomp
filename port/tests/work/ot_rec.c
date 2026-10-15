@@ -4,9 +4,31 @@
  * handed to Port_Poly, and the registers left to write before the next packet (Rnd_OtState), are compared. The
  * record's own packet (Rnd_OtRecPacket, for a state that cannot be drawn) is read back the same way and compared too.
  *
- *   gcc -m32 -O1 -Iinclude port/tests/work/ot_rec.c -lm -o /tmp/ot_rec && /tmp/ot_rec
+ * And the packet memory the nodes come from (src/sys/gfx_ot.c Ot_RecRoom, Ot_NewRec, Ot_NewAd): when it is full a
+ * node is not taken (NULL), the cursor stays, nothing is linked, and the turned-away draws are counted.
+ *
+ *   gcc -m32 -O1 -Iinclude -Iport/include port/tests/work/ot_rec.c -lm -o /tmp/ot_rec && /tmp/ot_rec
  */
 #include "../../src/rnd_gs.c"
+#include "port_compat.h"
+#include "../../../src/sys/gfx_ot.c"
+
+/* What gfx_ot.c needs from the rest of the game, for its record nodes alone. */
+Ot *gOt;
+OtPrim *gOtHead, *gOtTail;
+u32 *gOtCur;
+OtSlot *gOtFirst, *gOtZ, *gOtLast;
+Gfx gGfx;
+OtView *gBtlCamView;
+s32 BtlStage_IsReady(void) { return 0; }
+void Dma_AddData(void *src, s32 size) { (void)src; (void)size; }
+u64 *Dma_BeginDirect(void) { return NULL; }
+void Dma_EndDirect(u64 *end) { (void)end; }
+void *Heap_Alloc(s32 size, u32 align, s32 fromTail, s32 heap) { (void)size; (void)align; (void)fromTail; (void)heap; return NULL; }
+void Heap_Free(void *ptr) { (void)ptr; }
+s32 Ot_Reset(void) { return 1; }
+static int sOtBytes;
+int Port_OtBytes(void) { return sOtBytes; }
 
 RndState gRndCtx[2];
 static int sTakes = 1;
@@ -277,6 +299,83 @@ static void one(unsigned prim, int n, int setTex0, int packed, int bad) {
     }
 }
 
+/* A packet memory of 0x400 bytes made to seem 0x200 long (BT3_OT_BYTES): records of four corners and A+D nodes taken
+   until the next does not fit, linked as a producer links them; then the next of each is NULL, the cursor stays,
+   the chain is as it was, and the two are counted until Ot_ResetCursor rewinds. */
+static void full(void) {
+    static u32 mem[0x400 / 4] __attribute__((aligned(64)));
+    static Ot ot;
+    OtPrim head, *p, *last;
+    OtEntry e;
+    u32 *before;
+    int taken = 0;
+
+    memset(&ot, 0, sizeof(ot));
+    ot.buf = mem;
+    ot.bufSize = sizeof(mem);
+    gOt = &ot;
+    gOtCur = NULL;
+    sCases++;
+    if (Ot_NewRec(0x5C, 4) != NULL || Ot_NewAd(8, 5) != NULL || Ot_RecRoom(16)) {
+        printf("FAIL full: a node taken before there is packet memory\n");
+        sFail++;
+    }
+    sOtBytes = 0x200;
+    gOtCur = mem;
+    head.next = NULL;
+    e.head = e.tail = &head;
+    while (Ot_RecRoom(Ot_RecBytes(4))) {
+        p = Ot_NewRec(0x5C, 4);
+        if (p == NULL) {
+            printf("FAIL full: Ot_RecRoom has room, Ot_NewRec none\n");
+            sFail++;
+            return;
+        }
+        e.tail->next = p;
+        e.tail = p;
+        taken++;
+    }
+    while (Ot_RecRoom(Ot_AdBytes())) {
+        p = Ot_NewAd(8, 5);
+        e.tail->next = p;
+        e.tail = p;
+        taken++;
+    }
+    last = e.tail;
+    before = gOtCur;
+    if ((u8 *)gOtCur > (u8 *)mem + 0x200 || (u8 *)gOtCur + Ot_AdBytes() <= (u8 *)mem + 0x200) {
+        printf("FAIL full: the cursor at %d bytes after %d nodes\n", (int)((u8 *)gOtCur - (u8 *)mem), taken);
+        sFail++;
+    }
+    sOtRecFull = 0;
+    if (Ot_NewRec(0x5C, 4) != NULL || Ot_NewAd(8, 5) != NULL || Ot_NewRec(0x46, 2) != NULL) {
+        printf("FAIL full: a node taken from a full packet memory\n");
+        sFail++;
+    }
+    if (gOtCur != before || e.tail != last || last->next != NULL) {
+        printf("FAIL full: the cursor or the chain moved\n");
+        sFail++;
+    }
+    if (sOtRecFull != 3) {
+        printf("FAIL full: %d turned away counted, not 3\n", sOtRecFull);
+        sFail++;
+    }
+    for (p = head.next; p != NULL && p != last; p = p->next) {
+        taken--;
+    }
+    if (p != last || taken != 1) {
+        printf("FAIL full: the chain does not hold the nodes taken\n");
+        sFail++;
+    }
+    Ot_ResetCursor();
+    if (sOtRecFull != 0 || gOtCur != mem || Ot_NewRec(0x5C, 4) == NULL) {
+        printf("FAIL full: Ot_ResetCursor did not rewind and clear the count\n");
+        sFail++;
+    }
+    gOt = NULL;
+    gOtCur = NULL;
+}
+
 int main(void) {
     static const struct { unsigned prim; int n; } kinds[] = {
         {0x00B, 3}, {0x04B, 3}, {0x24B, 3}, {0x01B, 3}, {0x05B, 3}, {0x25B, 3},
@@ -307,6 +406,7 @@ int main(void) {
     }
     sTakes = 0;
     one(0x05C, 4, 1, 0, 0);
+    full();
     printf("%d cases (%d polygons compared), %d failed; records drawn %u, sent as packets %u\n", sCases, sPolys, sFail, gRndOtStat[2], gRndOtStat[0]);
     return sFail != 0;
 }

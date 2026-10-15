@@ -10,7 +10,8 @@
  * Ot_Send hands it to the renderer (port/src/rnd_gs.c Rnd_OtRec) in its place in the list, which draws it exactly
  * as it would have drawn the packet it stands for.
  *
- * A producer, where Port_TakesRecords(): node = Ot_NewRec(the packet's PRIM, corners), NULL when there is no
+ * A producer, where Port_TakesRecords(): first Ot_RecRoom(the bytes of all the draw's nodes: Ot_RecBytes, Ot_AdBytes),
+ * the draw skipped when it is 0; node = Ot_NewRec(the packet's PRIM, corners), NULL when there is no (room in the)
  * packet memory; Ot_RecTex0 if the packet writes TEX0 (and Ot_RecTexHandles: the texture's handles); Ot_RecVtx for each corner in the packet's order; then the
  * node linked where the packet would have been. State the packet set by A+D around its draw (CLAMP, TEST) stays
  * a packet: Ot_NewAd nodes linked in the same order around the record.
@@ -23,6 +24,9 @@
 #define OT_REC_HEAD 24 /* the bytes of an OtRec in front of its corners: a node holds only the corners it has */
 typedef RndOtRec OtRec;
 
+s32 Ot_RecRoom(u32 bytes); /* 1 if that many bytes fit in the packet memory, else 0 (counted) */
+u32 Ot_RecBytes(s32 n);    /* the bytes of a record of n corners */
+u32 Ot_AdBytes(void);      /* the bytes of an A+D node */
 void *Ot_NewRec(u64 prim, s32 n);
 void *Ot_NewAd(u32 addr, u64 data); /* a packet node that writes one GS register (A+D) */
 /* Corner i: x, y in sixteenths of a pixel (XYOFFSET in), the 24-bit depth, s t q (with fst: U, V in sixteenths of
