@@ -357,63 +357,81 @@ void EftAura_DrawFlames(EftAuraWork *aura, s32 objId, f32 alpha) {
         if (pkt == NULL) {
             return;
         }
-        pkt->prim = 0x5C;
-        pkt->tag = 0x20000008;
-        pkt->vif0 = 0x10000000;
-        pkt->vif1 = 0x50000008;
-        pkt->gif0 = 0xE400000000008001;
-        pkt->gif1 = 0x42142142142160;
-        pkt->next = NULL;
-        pkt->v[0].r = rgb[0];
-        pkt->v[0].g = rgb[1];
-        pkt->v[0].b = rgb[2];
-        pkt->v[0].a = al[0];
-        pkt->v[0].q = st[0].z;
-        pkt->v[1].r = rgb[0];
-        pkt->v[1].g = rgb[1];
-        pkt->v[1].b = rgb[2];
-        pkt->v[1].a = al[1];
-        pkt->v[1].q = st[1].z;
-        pkt->v[2].r = rgb[0];
-        pkt->v[2].g = rgb[1];
-        pkt->v[2].b = rgb[2];
-        pkt->v[2].a = al[2];
-        pkt->v[2].q = st[2].z;
-        pkt->v[3].r = rgb[0];
-        pkt->v[3].g = rgb[1];
-        pkt->v[3].b = rgb[2];
-        pkt->v[3].a = al[3];
-        pkt->v[3].q = st[3].z;
-        pkt->v[0].s = st[0].x;
-        pkt->v[0].t = st[0].y;
-        pkt->v[1].s = st[1].x;
-        pkt->v[1].t = st[1].y;
-        pkt->v[2].s = st[2].x;
-        pkt->v[2].t = st[2].y;
-        pkt->v[3].s = st[3].x;
-        pkt->v[3].t = st[3].y;
-        pkt->v[0].x = scr[0].x;
-        pkt->v[0].y = scr[0].y;
-        pkt->v[0].z = scr[0].z;
-        pkt->v[0].f = 0xFF;
-        pkt->v[1].x = scr[1].x;
-        pkt->v[1].y = scr[1].y;
-        pkt->v[1].z = scr[1].z;
-        pkt->v[1].f = 0xFF;
-        pkt->v[2].x = scr[2].x;
-        pkt->v[2].y = scr[2].y;
-        pkt->v[2].z = scr[2].z;
-        pkt->v[2].f = 0xFF;
-        pkt->v[3].x = scr[3].x;
-        pkt->v[3].y = scr[3].y;
-        pkt->v[3].z = scr[3].z;
-        pkt->v[3].f = 0xFF;
-        if (EftAura_FlameFlagInl(f, 0x800)) {
-            pkt->tex0 = sparkTex->entry[0].tex0;
-        } else if (EftAura_WorkFlagInl(aura, 0x80)) {
-            pkt->tex0 = aura->tex[f->tex + 1];
-        } else {
-            pkt->tex0 = aura->tex[0];
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+            gOtCur = (u32 *)pkt;
+            pkt = Ot_NewRec(0x5C, 4);
+            if (EftAura_FlameFlagInl(f, 0x800)) {
+                Ot_RecTex0(pkt, sparkTex->entry[0].tex0);
+            } else if (EftAura_WorkFlagInl(aura, 0x80)) {
+                Ot_RecTex0(pkt, aura->tex[f->tex + 1]);
+            } else {
+                Ot_RecTex0(pkt, aura->tex[0]);
+            }
+            for (i = 0; i < 4; i++) {
+                Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, st[i].x, st[i].y, st[i].z, rgb[0] | rgb[1] << 8 | rgb[2] << 16 | (u32)al[i] << 24);
+            }
+        } else
+#endif
+        {
+            pkt->prim = 0x5C;
+            pkt->tag = 0x20000008;
+            pkt->vif0 = 0x10000000;
+            pkt->vif1 = 0x50000008;
+            pkt->gif0 = 0xE400000000008001;
+            pkt->gif1 = 0x42142142142160;
+            pkt->next = NULL;
+            pkt->v[0].r = rgb[0];
+            pkt->v[0].g = rgb[1];
+            pkt->v[0].b = rgb[2];
+            pkt->v[0].a = al[0];
+            pkt->v[0].q = st[0].z;
+            pkt->v[1].r = rgb[0];
+            pkt->v[1].g = rgb[1];
+            pkt->v[1].b = rgb[2];
+            pkt->v[1].a = al[1];
+            pkt->v[1].q = st[1].z;
+            pkt->v[2].r = rgb[0];
+            pkt->v[2].g = rgb[1];
+            pkt->v[2].b = rgb[2];
+            pkt->v[2].a = al[2];
+            pkt->v[2].q = st[2].z;
+            pkt->v[3].r = rgb[0];
+            pkt->v[3].g = rgb[1];
+            pkt->v[3].b = rgb[2];
+            pkt->v[3].a = al[3];
+            pkt->v[3].q = st[3].z;
+            pkt->v[0].s = st[0].x;
+            pkt->v[0].t = st[0].y;
+            pkt->v[1].s = st[1].x;
+            pkt->v[1].t = st[1].y;
+            pkt->v[2].s = st[2].x;
+            pkt->v[2].t = st[2].y;
+            pkt->v[3].s = st[3].x;
+            pkt->v[3].t = st[3].y;
+            pkt->v[0].x = scr[0].x;
+            pkt->v[0].y = scr[0].y;
+            pkt->v[0].z = scr[0].z;
+            pkt->v[0].f = 0xFF;
+            pkt->v[1].x = scr[1].x;
+            pkt->v[1].y = scr[1].y;
+            pkt->v[1].z = scr[1].z;
+            pkt->v[1].f = 0xFF;
+            pkt->v[2].x = scr[2].x;
+            pkt->v[2].y = scr[2].y;
+            pkt->v[2].z = scr[2].z;
+            pkt->v[2].f = 0xFF;
+            pkt->v[3].x = scr[3].x;
+            pkt->v[3].y = scr[3].y;
+            pkt->v[3].z = scr[3].z;
+            pkt->v[3].f = 0xFF;
+            if (EftAura_FlameFlagInl(f, 0x800)) {
+                pkt->tex0 = sparkTex->entry[0].tex0;
+            } else if (EftAura_WorkFlagInl(aura, 0x80)) {
+                pkt->tex0 = aura->tex[f->tex + 1];
+            } else {
+                pkt->tex0 = aura->tex[0];
+            }
         }
         if (BtlScene_IsStageFlagOn()) {
             EftAura_OtAdd((OtPrim *)pkt, z, 1);
