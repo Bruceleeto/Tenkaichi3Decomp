@@ -38,7 +38,6 @@ typedef struct Target {
 } Target;
 
 GsState gGs;
-uint32_t gGsPageGen[512];
 unsigned gGsFbUploads; /* bit 0 / 1: pixels were uploaded into display buffer 0 / 0x70 since the back end last looked */
 #define gs gGs
 #define Vertex GsVertex
@@ -255,30 +254,8 @@ static uint16_t sBlockSrc[16384]; /* record + 1 per block, 0 = no source */
 static GsSrc *sSrcCur;            /* the upload under way */
 static int sSrcRef;               /* the data now going to the GS came by a DMA REF */
 static uint8_t *sOwn[16384];      /* a block drawn into after its upload: its contents, kept here (sBlockSrc = 0xFFFF) */
-uint64_t gGsTint[512];            /* per page: the tint of the palettes there this frame (gs_pvr.c Port_ClutTint), cleared
-                                     each frame */
-static uint64_t sTintNext;        /* the tint the next 0x7C sets */
-uint16_t gGsPal[16384];           /* per block: the palette of tex.pak uploaded there (gs_pvr.c's record + 1; 0 = none), until
-                                     something else is uploaded or drawn over it */
-uint16_t gGsNat[16384];           /* per block: the game's texture entry held there as a PVR texture of its own (gs_pvr.c's
-                                     record + 1; 0 = none), until something else is uploaded over it */
 #define SRC_OWN 0xFFFFu
 uint32_t gGsSrcMiss;              /* reads Gs_SrcRead could not answer (for the check) */
-
-/* A marker of gs_pvr.c in place of an upload (0x7D, 0x7E): d = block | record + 1 << 32 | blocks << 48. The blocks
-   the upload would have written hold neither a native texture nor a palette of the pack from then on, but the
-   first holds the record. Their pages changed, as with an upload (what was drawn there is no longer there). */
-static void nat_mark(uint16_t *map, uint64_t d) {
-    uint32_t b = (uint32_t)d & 0x3FFF, n = (uint32_t)(d >> 48), i;
-    for (i = 0; i < n; i++) {
-        gGsNat[(b + i) & 16383] = 0;
-        gGsPal[(b + i) & 16383] = 0;
-    }
-    for (i = b / 32; i <= (b + (n ? n : 1) - 1) / 32; i++) {
-        gGsPageGen[i & 511]++;
-    }
-    map[b] = (uint16_t)(d >> 32);
-}
 
 static void src_drop(GsSrc *s) {
     free(s->own);
@@ -1124,12 +1101,7 @@ static void reg_write(uint32_t addr, uint64_t d) {
     case 0x51: gs.trxpos = d; break;
     case 0x52: gs.trxreg = d; break;
     case 0x53: gs.trxdir = d; transfer_begin(); break;
-    case 0x7F: if (sGpu) { GsGpu_Native((int)d); } break; /* not a GS register: the port's marker (gs_marker.c) */
-    case 0x7B: sTintNext = d; break; /* (a tint of the palettes of the two pages from page d: gs_pvr.c Port_ClutTint) */
-    case 0x7C: gGsTint[d & 511] = gGsTint[(d + 1) & 511] = sTintNext; break;
-    case 0x7D: nat_mark(gGsPal, d); break; /* (a palette of tex.pak in its place: gs_pvr.c Port_PalNative) */
-    case 0x7E: nat_mark(gGsNat, d); break; /* nor this: the texture entry uploaded to block
-                    d is a PVR texture of its own (gs_pvr.c's record d >> 32), sent instead of its pixels */
+    case 0x7B: case 0x7C: case 0x7D: case 0x7E: case 0x7F: Gs_Marker(addr, d); break; /* not GS registers: the port's (gs_walk.c) */
     default: break;
     }
 }
