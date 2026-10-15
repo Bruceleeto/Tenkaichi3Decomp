@@ -2,6 +2,9 @@
 #include "sys/color_fade.h"
 #include "sys/dma.h"
 #include "sys/gfx.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 extern void *memset(void *dst, s32 c, u32 n);
 extern void LipSync_Clear(void); /* clears the 0x14 bytes at 0x31E570 (not decompiled) */
@@ -15,7 +18,11 @@ void ColorFade_Draw(void) {
     if (gColorFade.a != 0) {
         Gfx_AddDefaultEnv();
         p = Dma_BeginDirect();
+#ifdef PORT
+        p[0] = GIF_TAG(2, Port_TakesRecords(), 1); /* (the end of the packet when the sprite is a record) */
+#else
         p[0] = GIF_TAG(2, 1, 1);
+#endif
         p[1] = GIF_REG_AD;
         p += 2;
         p[0] = 0x44;
@@ -24,6 +31,17 @@ void ColorFade_Draw(void) {
         p[0] = 0x30000;
         p[1] = GS_TEST_1;
         p += 2;
+#ifdef PORT
+        /* The sprite as a record (include/port/rnd.h): the default state, blended, no test, depth 0 written. */
+        if (Port_TakesRecords()) {
+            RndState st;
+            Dma_EndDirect(p);
+            Rnd_StateInit(&st, (u32)(GFX_FRAME_REG() & 0x1FF));
+            st.flags = RND_ZWRITE | RND_SMOOTH;
+            Rnd_Fill(&st, (u32)gColorFade.r | ((u32)gColorFade.g << 8) | ((u32)gColorFade.b << 16) | ((u32)gColorFade.a << 24));
+            return;
+        }
+#endif
         p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
         p[1] = 0x5510;
         p += 2;
