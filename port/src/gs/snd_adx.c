@@ -48,8 +48,9 @@ typedef struct Player {
     int vol;                /* 0.1 dB, 0 = full, -960 and below = silent */
     int pan[2];             /* per input channel: -15 left .. 15 right, PAN_AUTO */
     /* the game speed's time stretch (stretch_feed): decoded sound waiting to be laid out, and the end of the
-       piece laid out last, which the next one is faded over */
-    int16_t stIn[ST_CAP * 2], stTail[ST_OV_MAX * 2];
+       piece laid out last, which the next one is faded over (one block, taken the first time the player plays at
+       another speed: stretch_buffers; freed by stop) */
+    int16_t *stIn, *stTail;
     int stN, stHasTail;
     double stSkip;
 } Player;
@@ -279,6 +280,7 @@ static void put_pcm(Player *p, AudioStream *stream, const int16_t *data, int byt
    8 ms faded into the previous one, each taken (40 - 8) * speed ms after the last, and within 15 ms of that the
    place where it fits what was heard last (the largest correlation with the previous piece's end), which is what
    keeps a tone from stuttering. Returns the bytes handed to the stream; 0 = the file has ended. */
+static int stretch_buffers(Player *p);
 static int stretch_feed(Player *p, AudioStream *stream, int speedMilli) {
     int seq = (int)p->rate * 40 / 1000, ov = (int)p->rate * 8 / 1000, seek = (int)p->rate * 15 / 1000;
     int16_t out[4096 * 2];
@@ -348,7 +350,7 @@ static void feed(void *user, AudioStream *stream, int additional) {
         if (p->loop && p - sPlayers <= 1 && gPortMusicFollows <= 0) {
             speed = 1000;
         }
-        if (speed != 1000) {
+        if (speed != 1000 && stretch_buffers(p)) {
             int n = stretch_feed(p, stream, speed);
             if (n == 0) {
                 p->stat = ADXT_STAT_PLAYEND;
@@ -407,7 +409,29 @@ static void stop(Player *p) {
     }
     free(p->file);
     p->file = NULL;
+    free(p->stIn);
+    p->stIn = p->stTail = NULL;
+    p->stN = p->stHasTail = 0;
     p->stat = ADXT_STAT_STOP;
+}
+
+/* The stretcher's buffers (stretch_feed), taken when first needed. 0 = no memory for them: the player plays at the
+   game's own pace, said once. */
+static int stretch_buffers(Player *p) {
+    if (p->stIn == NULL) {
+        p->stIn = malloc((ST_CAP + ST_OV_MAX) * 2 * sizeof(int16_t));
+        if (p->stIn == NULL) {
+            static int said;
+            if (!said) {
+                said = 1;
+                fprintf(stderr, "bt3: ERROR: no memory to play sound at another speed: played at the game's own\n");
+            }
+            return 0;
+        }
+        p->stTail = p->stIn + ST_CAP * 2;
+        p->stN = p->stHasTail = 0;
+    }
+    return 1;
 }
 
 /* An online match computes with the default voice set on both sides (net.c). A player who chose the other one hears

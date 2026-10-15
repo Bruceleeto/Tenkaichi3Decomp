@@ -30,7 +30,7 @@ typedef struct Live {
     uintptr_t caller;
 } Live;
 
-static Live sLive[SLOTS];
+static Live *sLive; /* SLOTS of them, taken when the report is switched on (no memory used otherwise) */
 static uint32_t sLiveCount, sDropped;
 static int sOn;
 static uint32_t sBase, sSize;
@@ -81,6 +81,7 @@ static void snapshot(void) {
     static struct { uintptr_t caller; uint32_t bytes, n; } by[CALLERS];
     int count = 0, i, j;
 
+    if (sLive == NULL) { return; }
     for (i = 0; i < SLOTS; i++) {
         if (sLive[i].addr == 0) { continue; }
         for (j = 0; j < count && by[j].caller != sLive[i].caller; j++) {}
@@ -124,7 +125,9 @@ static void report(void) {
 
 void Port_HeapCreated(unsigned start, int size) {
     static int once;
-    memset(sLive, 0, sizeof(sLive));
+    if (sLive != NULL) {
+        memset(sLive, 0, SLOTS * sizeof(*sLive));
+    }
     sLiveCount = sDropped = sUsed = sPeak = sAllocs = sFails = 0;
     sBase = start;
     sSize = (uint32_t)size;
@@ -133,6 +136,10 @@ void Port_HeapCreated(unsigned start, int size) {
     sNextNote = 1u << 20;
     sTopCount = 0;
     sOn = getenv("BT3_HEAP_MB") != NULL || getenv("BT3_HEAP_REPORT") != NULL;
+    if (sOn && sLive == NULL && (sLive = calloc(SLOTS, sizeof(*sLive))) == NULL) {
+        fprintf(stderr, "bt3: ERROR: no memory for the heap report (%u KB): it is off\n", (unsigned)(SLOTS * sizeof(*sLive)) >> 10);
+        sOn = 0;
+    }
     if (sOn) {
         fprintf(stderr, "bt3: heap: %u KB at 0x%08x%s\n", sSize >> 10, sBase, getenv("BT3_HEAP_MB") != NULL ? " (BT3_HEAP_MB)" : "");
         if (!once) { atexit(report); }

@@ -34,8 +34,9 @@ GS_PC    := gs_gpu.c gs_gl.c gs_window.c audio_sdl.c gs_input.c a11y.c gs_texpac
 # walked by gs_walk.c alone
 GS_PC    += gs_core.c gs_vu1.c
 GS_SRC   := $(filter-out $(addprefix port/src/gs/,$(GS_PC)),$(sort $(wildcard port/src/gs/*.c)))
-PC_SRC   := $(filter-out port/src/plat_crash.c,$(sort $(wildcard port/src/*.c)))
-DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c)
+# (the data check, plat_verify.c and plat_fprint.c, left out: port/src/null/verify_null.c)
+PC_SRC   := $(filter-out port/src/plat_crash.c port/src/plat_verify.c port/src/plat_fprint.c,$(sort $(wildcard port/src/*.c)))
+DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c verify_null.c)
 
 GAME_OBJ := $(foreach f,$(GAME_SRC),$(OBJ)/$(subst /,_,$(patsubst src/%.c,%,$(f))).o)
 NL_OBJ   := $(patsubst port/third_party/newlib_libm/%.c,$(OBJ)/nl_%.o,$(NL_SRC))
@@ -110,7 +111,9 @@ $(OBJ)/dc_%_null.o: port/src/null/%_null.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
 
 # the link, with a stub for each symbol still missing
+# (link_dc.py links every object of the folder: those of sources no longer built are removed first)
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
+	rm -f $(filter-out $(OBJS),$(wildcard $(OBJ)/*.o))
 	$(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
 
 # the disc's textures as the PVR takes them (port/tools/dc_tex.c), from the data `make extract` wrote; run it
