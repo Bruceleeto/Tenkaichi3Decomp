@@ -545,6 +545,9 @@ void EftPrim_DrawTriangle(EftBIVec *v0, EftBIVec *v1, EftBIVec *v2, Vec4 *c0, Ve
     ctx = layer >= 2;
 #ifdef PORT
     if (Port_TakesRecords()) { /* the triangle as a record */
+        if (!Ot_RecRoom(Ot_RecBytes(3))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1B, 3);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
@@ -1194,6 +1197,9 @@ void EftBubble_DrawOne(EftBVec pos, EftBMtx m, f32 size, f32 rot, u8 r, u8 g, u8
         if (l >= 2) {
             l -= 2;
         }
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, tex->tex0);
         EftVram_PortRecTex(p, tex->tex0);
@@ -1705,7 +1711,13 @@ void EftGeyser_DrawColumn(EftBTask *task) {
             }
             abe = 1;
             tex0 = w->tex->tex[1].tex0;
-            if (!(col[0].w <= 0.0f && col[1].w <= 0.0f && col[2].w <= 0.0f)) {
+            /* (as records: the CLAMP packet and the record together or neither; with no room left in the packet memory
+               this piece is not drawn, the next ones still move on along the texture) */
+            if (!(col[0].w <= 0.0f && col[1].w <= 0.0f && col[2].w <= 0.0f)
+#ifdef PORT
+                && (!Port_TakesRecords() || Ot_RecRoom(sizeof(EftBClampPkt) + Ot_RecBytes(4)))
+#endif
+            ) {
 #ifdef PORT
                 s32 i2;
 #endif
