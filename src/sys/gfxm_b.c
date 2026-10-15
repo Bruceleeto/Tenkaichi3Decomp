@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 /*
  * Screen-space passes of the battle (0x106D60..0x109938): full-screen strips that read the depth buffer through a
  * CLUT, the alpha-key overlay of the battle objects, the lens discs, the underwater wobble and the depth fog.
@@ -286,6 +289,17 @@ void GfxPost_DrawTintRect(u64 alpha, Vec4 *color) {
            ((u64)(u8)(u32)color->w << 24) | 0x3F80000000000000;
     p[1] = GS_RGBAQ;
     p += 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the rectangle as a record, under the state just set (followed) */
+        Dma_EndDirect(p);
+        if (Rnd_Rect(0, GFX_OFX, 0x7200, (512 << 4) + GFX_OFX, 0x8E00, 0,
+                     (u8)(u32)color->x | ((u8)(u32)color->y << 8) | ((u8)(u32)color->z << 16) | ((u32)(u8)(u32)color->w << 24), 1)) {
+            Dma_AddZbuf(GFX_ZBP, 0);
+            return;
+        }
+        p = Dma_BeginDirect();
+    }
+#endif
     tag = p;
     p += 2;
     for (i = 0; i < 16; i++) {
