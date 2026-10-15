@@ -30,7 +30,13 @@ typedef struct GsState {
 
 extern GsState gGs;
 extern uint32_t gGsPageGen[512]; /* bumped whenever an upload writes into that 8 KB page of GS memory */
-extern unsigned gGsFrame;
+extern unsigned gGsFrame; /* pictures so far (gs_walk.c) */
+
+/* The front end both builds have (gs_walk.c). PORT_GS_REF (the PC's Makefile): the PS2 reference is linked too
+   (gs_core.c, gs_vu1.c); the Dreamcast build has gs_walk.c alone. */
+const char *Gs_Mode(void); /* BT3_GS: "gpu", "1" (the software reference); NULL = nothing is drawn */
+int Gs_On(void);           /* the renderer started (the first transfer to the GS does it); 0 = nothing is drawn */
+void Gs_FrameCount(void);  /* a picture is finished */
 
 uint32_t Gs_PageHash(uint32_t page); /* content hash of an 8 KB page of GS memory */
 uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y);

@@ -53,7 +53,7 @@ int sceGsSetDefStoreImage(void *si, int sbp, int sbw, int spsm, int x, int y, in
     return 0;
 }
 int sceGsExecStoreImage(void *si, void *dst) {
-    extern void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb); /* gs/gs_core.c */
+    extern void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb); /* gs/gs_walk.c */
     (void)si;
     Gs_StoreImage((unsigned)sStoreBp, (unsigned)sStoreW, (unsigned)sStoreH, (unsigned char *)dst);
     return 0;
@@ -145,7 +145,7 @@ void Port_LagMark(int what) {
         first = t;
     }
     {
-        extern unsigned gGsFrame; /* gs/gs_draw.c: the pictures so far */
+        extern unsigned gGsFrame; /* gs/gs_walk.c: the pictures so far */
         fprintf(stderr, "lag %c %u %u\n", what, (unsigned)((t - first) / 1000ull), gGsFrame);
     }
 }
@@ -504,7 +504,7 @@ int Port_AspectMilli(void) {
         /* BT3_ASPECT_AT=<frame>:<w>:<h> (testing): from that frame on the shape is w:h, as if it had been changed in
            the settings window at that moment (a run without a window can then show a change made during a fight). */
         static int at = -2, to;
-        extern unsigned gGsFrame; /* gs_core.c */
+        extern unsigned gGsFrame; /* gs/gs_walk.c */
         if (at == -2) {
             int f = 0, w = 0, h = 0;
             const char *e = getenv("BT3_ASPECT_AT");

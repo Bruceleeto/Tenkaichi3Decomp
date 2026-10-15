@@ -91,6 +91,12 @@ PC_CFLAGS   := -m32 -std=gnu99 -c -O2 -g -fno-pic -malign-double -fno-strict-ali
 PC_SOFT     := -msoft-float -mno-sse -mno-mmx -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
 PC_HARD     := plat_libm plat_fastvec vu1_native
 
+# the PS2 reference is linked (port/src/gs/gs_core.c, gs_vu1.c, gs_sony.c): what records are compared against
+# (BT3_RND=0); the Dreamcast build has the front end without it (gs_walk.c)
+GAME_CFLAGS += -DPORT_GS_REF
+GS_CFLAGS   += -DPORT_GS_REF
+PC_CFLAGS   += -DPORT_GS_REF
+
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 
 PVR_INC   := -I$(PVR_DIR) -I$(PVR_DIR)/kos

@@ -293,7 +293,9 @@ void Heap_Free(void *ptr) {
         extern void Port_TexFreed(u32 lo, u32 hi); /* port/src/gs/gs_pvr.c: texture entries that are PVR textures */
         Port_HeapNoteFree((u32)ptr);
         if (block != NULL) {
+#ifdef PORT_GS_REF /* (the PS2 reference's GS memory: the PC's only) */
             Gs_SrcFreed((u32)ptr, (u32)ptr + block->dataSize);
+#endif
             Port_TexFreed((u32)ptr, (u32)ptr + block->dataSize);
         }
     }

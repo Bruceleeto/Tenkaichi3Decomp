@@ -42,7 +42,6 @@ typedef struct Target {
 GsState gGs;
 uint32_t gGsPageGen[512];
 unsigned gGsFbUploads; /* bit 0 / 1: pixels were uploaded into display buffer 0 / 0x70 since the back end last looked */
-unsigned gGsFrame;
 #define gs gGs
 #define Vertex GsVertex
 #define sFrame gGsFrame
@@ -1242,10 +1241,6 @@ void Gs_RegWrite(uint32_t addr, uint64_t d) {
     reg_write(addr, d);
 }
 
-int GsGpu_Enabled(void) {
-    return sGpu;
-}
-
 /* ------------------------------------------------------------------------------------------------ GIF */
 
 /* One run of GIF data (whole quadwords). */
@@ -1433,20 +1428,6 @@ static void screenshot(void) {
             }
         }
     }
-    {
-        /* BT3_XFADE_AT=<frame> (testing): the fight's screen cross-fade is asked for at that frame, as the game does
-           between the shots of an intro, so a run without a window can show it in any fight. */
-        static int at = -2;
-        if (at == -2) {
-            at = getenv("BT3_XFADE_AT") != NULL ? atoi(getenv("BT3_XFADE_AT")) : -1;
-        }
-        if (at >= 0 && (int)sFrame == at) {
-            extern void ScrXfade_RequestCapture(void);
-            extern void ScrXfade_Start(int request, uint32_t seconds); /* (the game's float, as its 32 bits) */
-            ScrXfade_RequestCapture();
-            ScrXfade_Start(1, 0x3F800000u);
-        }
-    }
     if (every > 0 && best != NULL && !sGpu && sFrame % (unsigned)every == 0 &&
         (getenv("BT3_SHOT_FROM") == NULL || (int)sFrame >= atoi(getenv("BT3_SHOT_FROM"))) &&
         (getenv("BT3_SHOT_TO") == NULL || (int)sFrame <= atoi(getenv("BT3_SHOT_TO")))) {
@@ -1473,11 +1454,9 @@ static void screenshot(void) {
     for (i = 0; i < sTargetCount; i++) {
         sTargets[i].drawn = 0;
     }
-    if (!gPortResim) { /* (a frame that is only being re-run is not a frame of the picture; a skipped one is counted) */
-        sFrame++;
-        if (sFrame % 100 == 0 && getenv("BT3_SRC_CHECK") != NULL) {
-            src_audit();
-        }
+    Gs_FrameCount();
+    if (!gPortResim && sFrame % 100 == 0 && getenv("BT3_SRC_CHECK") != NULL) {
+        src_audit();
     }
 }
 
@@ -1604,75 +1583,34 @@ static uint64_t now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-/* getenv for the renderer's files (gs_internal.h): remembered per name. The names are string literals, so the
-   same call site always passes the same pointer and the search is a few pointer comparisons. */
-#undef getenv
-const char *Port_GetEnv(const char *name) {
-    static struct { const char *name, *value; } known[256];
-    static volatile int count;
-    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-    const char *value;
-    int i, n = count;
-
-    for (i = 0; i < n; i++) {
-        if (known[i].name == name) {
-            return known[i].value;
+/* The reference's part of the start (gs_walk.c Gs_On): its tables and switches, and with gpu = 1 the GPU back end
+   (BT3_GS=gpu), on the render thread with BT3_GS_THREAD. 1 = the GPU back end draws. */
+int GsRef_Start(int gpu) {
+    tables_init();
+    gs.prmodecont = 1; /* the GS starts with the attributes in PRIM */
+    sDrawFrom = getenv("BT3_GS_FROM") != NULL ? atoi(getenv("BT3_GS_FROM")) : 0;
+    sDumpFrame = getenv("BT3_GS_DUMP") != NULL ? atoi(getenv("BT3_GS_DUMP")) : -1;
+    if (getenv("BT3_GS_PROBE") != NULL) {
+        sscanf(getenv("BT3_GS_PROBE"), "%d,%d", &sProbeX, &sProbeY);
+    }
+    if (gpu) {
+        /* BT3_GS_THREAD=1: the back end and the list run on the render thread (experimental: the game was seen
+           to change data a list still refers to, which shows as a jumping camera). Default: this thread. */
+        sThreaded = getenv("BT3_GS_THREAD") != NULL;
+        if (sThreaded) {
+            pthread_create(&sThread, NULL, render_thread, NULL);
+            render_post(1, 0, 0);
+            render_wait();
+            sGpu = sInitResult;
+        } else {
+            sGpu = GsGpu_Init();
         }
     }
-    value = getenv(name);
-    pthread_mutex_lock(&lock);
-    if (count < 256) {
-        known[count].name = name;
-        known[count].value = value;
-        count++; /* published last: a reader never sees a half-written entry */
-    }
-    pthread_mutex_unlock(&lock);
-    return value;
-}
-/* Each place a variable is asked for remembers its answer (the names are literals; the environment does not
-   change while the game runs). Asked in the middle of drawing, the search in Port_GetEnv was 3% of a frame. */
-#define getenv(name) (__extension__({ static const char *v_; static int k_; if (!k_) { v_ = Port_GetEnv(name); k_ = 1; } v_; }))
-
-/* Which renderer: BT3_GS = "gpu" (the window), "1" (the software reference), "none" (nothing is drawn: tests).
-   Without the variable a release program opens its window, so that it can be started by a double click; a
-   developer's build draws nothing, as the checks expect. */
-static const char *gs_mode(void) {
-    extern volatile uint32_t gPortDataStripped; /* plat_mem.c: 1 in a release program */
-    const char *m = getenv("BT3_GS");
-
-    if (m == NULL) {
-        return gPortDataStripped == 1 ? "gpu" : NULL;
-    }
-    return strcmp(m, "none") == 0 || strcmp(m, "off") == 0 || strcmp(m, "0") == 0 ? NULL : m;
+    return sGpu;
 }
 
-static int gs_on(void) {
-    static int on = -1;
-
-    if (on < 0) {
-        on = gs_mode() != NULL;
-        tables_init();
-        gs.prmodecont = 1; /* the GS starts with the attributes in PRIM */
-        sDrawFrom = getenv("BT3_GS_FROM") != NULL ? atoi(getenv("BT3_GS_FROM")) : 0;
-        sDumpFrame = getenv("BT3_GS_DUMP") != NULL ? atoi(getenv("BT3_GS_DUMP")) : -1;
-        if (getenv("BT3_GS_PROBE") != NULL) {
-            sscanf(getenv("BT3_GS_PROBE"), "%d,%d", &sProbeX, &sProbeY);
-        }
-        if (on && strcmp(gs_mode(), "gpu") == 0) {
-            /* BT3_GS_THREAD=1: the back end and the list run on the render thread (experimental: the game was seen
-               to change data a list still refers to, which shows as a jumping camera). Default: this thread. */
-            sThreaded = getenv("BT3_GS_THREAD") != NULL;
-            if (sThreaded) {
-                pthread_create(&sThread, NULL, render_thread, NULL);
-                render_post(1, 0, 0);
-                render_wait();
-                sGpu = sInitResult;
-            } else {
-                sGpu = GsGpu_Init();
-            }
-        }
-    }
-    return on;
+int GsRef_Threaded(void) {
+    return sThreaded;
 }
 
 /* A transfer on the GIF channel itself (the game uses it for texture uploads outside the frame's list):
@@ -1680,7 +1618,7 @@ static int gs_on(void) {
 void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
     int guard;
 
-    if (!gs_on()) {
+    if (!Gs_On()) {
         return;
     }
     if (sThreaded) {
@@ -1715,7 +1653,7 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
     static unsigned n, over;
     uint64_t t, tChain;
 
-    if (!gs_on()) {
+    if (!Gs_On()) {
         return;
     }
     if (!sGpu) {
@@ -1864,62 +1802,15 @@ static void run_chain(uint32_t tadr, int tte) {
     sMissingTex = 0;
 }
 
-/* The game reads a piece of a frame buffer back (sceGsExecStoreImage; the cross-fade of the fight's scenes takes the
-   frame being shown, 512 x 224 at a time). `bp` in units of 64 pixels: 0xE00 a frame buffer (32 a page), 8 a row of
-   512. Delivered as 3 bytes a pixel, top row first.
-     - software renderer: from its GS memory;
-     - GPU back end: the frame buffer's picture is read from the card once and kept for the calls that follow in the
-       same frame (two halves), reduced to the GS's 512 x 448;
-     - nothing drawn (tests) or the back end on a thread of its own: black, and the game is not told otherwise. */
-void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
-    extern int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba); /* gs_draw.c */
-    static uint8_t kept[512 * 448 * 4];
-    static unsigned keptFrame = ~0u, keptFbp = ~0u;
-    unsigned fbp = bp / 0xE00 * 0x70, y0 = bp % 0xE00 / 8, x, y;
+/* Gs_StoreImage (gs_walk.c) for the software renderer: rows y0.. of the frame buffer at fbp, w x h, from GS memory,
+   3 bytes a pixel. */
+void GsRef_StoreImage(unsigned fbp, unsigned y0, unsigned w, unsigned h, unsigned char *rgb) {
+    unsigned x, y;
 
-    if (w > 512) { w = 512; }
-    memset(rgb, 0, (size_t)w * h * 3);
-    if (getenv("BT3_GS_VERBOSE") != NULL || getenv("BT3_STORE_LOG") != NULL) {
-        fprintf(stderr, "gs: frame %u: the game reads %ux%u back from buffer %#x, row %u\n", sFrame, w, h, fbp, y0);
-    }
-    if (sGpu) {
-        if (sThreaded) {
-            return;
-        }
-        {
-            /* First choice: the frame stays on the card as it was drawn and the cross-fade draws from that (the
-               game is handed black, which it uploads and never shows). BT3_XFADE_READ=1: the game's own way. */
-            extern int GsGpu_Snapshot(uint32_t fbp);
-            static unsigned snapFrame = ~0u, snapFbp = ~0u;
-            if (getenv("BT3_XFADE_READ") == NULL) {
-                if (snapFrame == sFrame && snapFbp == fbp) {
-                    return;
-                }
-                if (GsGpu_Snapshot(fbp)) {
-                    snapFrame = sFrame;
-                    snapFbp = fbp;
-                    return;
-                }
-            }
-        }
-        if (keptFrame != sFrame || keptFbp != fbp) {
-            if (!GsGpu_ReadFrame(fbp, kept)) {
-                return;
-            }
-            keptFrame = sFrame;
-            keptFbp = fbp;
-        }
-        for (y = 0; y < h && y0 + y < 448; y++) {
-            for (x = 0; x < w; x++) {
-                memcpy(rgb + (y * w + x) * 3, kept + ((y0 + y) * 512 + x) * 4, 3);
-            }
-        }
-    } else if (gs_mode() != NULL) {
-        for (y = 0; y < h && y0 + y < 448; y++) {
-            for (x = 0; x < w; x++) {
-                uint32_t c = vram_rw(fbp << 5, 8, 0, x, y0 + y, 0, 0);
-                memcpy(rgb + (y * w + x) * 3, &c, 3);
-            }
+    for (y = 0; y < h && y0 + y < 448; y++) {
+        for (x = 0; x < w; x++) {
+            uint32_t c = vram_rw(fbp << 5, 8, 0, x, y0 + y, 0, 0);
+            memcpy(rgb + (y * w + x) * 3, &c, 3);
         }
     }
 }

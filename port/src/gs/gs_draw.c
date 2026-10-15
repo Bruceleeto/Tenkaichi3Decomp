@@ -1828,7 +1828,7 @@ int GsGpu_Snapshot(uint32_t fbp) {
 }
 
 /* The picture of the frame buffer at `fbp` as the GS has it, 512 x 448 RGBA (the game reads the shown frame back
-   for its cross-fade: Gs_StoreImage in gs_core.c). The buffer asked for, or else the frame's own. */
+   for its cross-fade: Gs_StoreImage in gs_walk.c). The buffer asked for, or else the frame's own. */
 int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba) {
     int t = GsDraw_TargetGet(fbp, 0);
     if (t < 0 || !gsTargets[t].cleared) {
