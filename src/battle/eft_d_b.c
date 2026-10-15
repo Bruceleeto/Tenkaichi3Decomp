@@ -536,6 +536,22 @@ void EftBurst_ClearAlphaPlane(void) {
     p[0] = 0x1BF000001FF0000;
     p[1] = 0x41; /* SCISSOR_2 */
     p += 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the sprite as a record, under the state just set (followed) */
+        RndPoly r;
+        s32 i;
+        Dma_EndDirect(p);
+        memset(&r, 0, sizeof(r));
+        for (i = 0; i < 4; i++) {
+            Rnd_Vtx(&r.v[i], 1, i & 1 ? 0x9000 : 0x7000, i & 2 ? 0x8E00 : 0x7200, 0, 0.0f, 0.0f, 1.0f, 0);
+        }
+        r.n = 4;
+        if (Rnd_Draw(&r, 1, 0, 0)) {
+            return;
+        }
+        p = Dma_BeginDirect();
+    }
+#endif
     p[0] = 0x4400000000008001;
     p[1] = 0x5510;
     p += 2;
