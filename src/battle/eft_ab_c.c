@@ -2265,6 +2265,7 @@ void EftZap_DrawQuad(EftAcVec *pos, EftAcVec color, f32 u0, f32 v0, f32 u1, f32 
         gOtCur = (u8 *)p;
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
         Ot_RecTex0(p, *t);
+        EftVram_PortRecTex(p, *t);
         for (i = 0; i < 4; i++) {
             Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
         }
