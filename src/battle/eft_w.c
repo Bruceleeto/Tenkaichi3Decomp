@@ -148,6 +148,9 @@ void EftLink_DrawQuad(Vec4 *corner, EftWVec uv0, EftWVec uv1, EftWVec color, s32
 
         gOtCur = (u32 *)p;
         ctx = layer >= 2;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
         z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
         if (noDepth) {
@@ -883,6 +886,9 @@ void EftLink_DrawBillboard(Vec4 *pos, f32 w, f32 h, Vec4 *color, s32 offX, s32 o
 
         gOtCur = (u32 *)p;
         ctx = layer >= 2;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x14, 4);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
