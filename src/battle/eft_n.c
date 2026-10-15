@@ -1543,61 +1543,79 @@ void EftBolt_Draw(EftBoltWork *work, EftBolt *bolt, f32 alpha) {
             if (pkt == NULL) {
                 return;
             }
-            pkt->tag = 0x20000008;
-            pkt->vif1 = 0x50000008;
-            pkt->prim = 0x5C;
-            pkt->vif0 = 0x10000000;
-            pkt->gif0 = 0xE400000000008001;
-            pkt->gif1 = 0x42142142142160;
-            pkt->next = NULL;
-            IVec4_Set(col0, seg->r * 255.0f, seg->g * 255.0f, seg->b * 255.0f, seg->alpha * 255.0f * alpha);
-            IVec4_Set(col1, next->r * 255.0f, next->g * 255.0f, next->b * 255.0f,
-                          next->alpha * 255.0f * alpha);
-            pkt->v[0].r = col0[0];
-            pkt->v[0].g = col0[1];
-            pkt->v[0].b = col0[2];
-            pkt->v[0].a = col0[3];
-            pkt->v[0].q = st[0].z;
-            pkt->v[1].r = col0[0];
-            pkt->v[1].g = col0[1];
-            pkt->v[1].b = col0[2];
-            pkt->v[1].a = col0[3];
-            pkt->v[1].q = st[1].z;
-            pkt->v[2].r = col1[0];
-            pkt->v[2].g = col1[1];
-            pkt->v[2].b = col1[2];
-            pkt->v[2].a = col1[3];
-            pkt->v[2].q = st[2].z;
-            pkt->v[3].r = col1[0];
-            pkt->v[3].g = col1[1];
-            pkt->v[3].b = col1[2];
-            pkt->v[3].a = col1[3];
-            pkt->v[3].q = st[3].z;
-            pkt->v[0].s = st[0].x;
-            pkt->v[0].t = st[0].y;
-            pkt->v[1].s = st[1].x;
-            pkt->v[1].t = st[1].y;
-            pkt->v[2].s = st[2].x;
-            pkt->v[2].t = st[2].y;
-            pkt->v[3].s = st[3].x;
-            pkt->v[3].t = st[3].y;
-            pkt->v[0].x = scr[0].x;
-            pkt->v[0].y = scr[0].y;
-            pkt->v[0].z = scr[0].z;
-            pkt->v[0].f = 0xFF;
-            pkt->v[1].x = scr[1].x;
-            pkt->v[1].y = scr[1].y;
-            pkt->v[1].z = scr[1].z;
-            pkt->v[1].f = 0xFF;
-            pkt->v[2].x = scr[2].x;
-            pkt->v[2].y = scr[2].y;
-            pkt->v[2].z = scr[2].z;
-            pkt->v[2].f = 0xFF;
-            pkt->v[3].x = scr[3].x;
-            pkt->v[3].y = scr[3].y;
-            pkt->v[3].z = scr[3].z;
-            pkt->v[3].f = 0xFF;
-            pkt->tex0 = work->tex0;
+#ifdef PORT
+            if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+                u32 rgba0, rgba1;
+                gOtCur = (u32 *)pkt;
+                IVec4_Set(col0, seg->r * 255.0f, seg->g * 255.0f, seg->b * 255.0f, seg->alpha * 255.0f * alpha);
+                IVec4_Set(col1, next->r * 255.0f, next->g * 255.0f, next->b * 255.0f,
+                              next->alpha * 255.0f * alpha);
+                rgba0 = (u8)col0[0] | (u8)col0[1] << 8 | (u8)col0[2] << 16 | (u32)(u8)col0[3] << 24;
+                rgba1 = (u8)col1[0] | (u8)col1[1] << 8 | (u8)col1[2] << 16 | (u32)(u8)col1[3] << 24;
+                pkt = Ot_NewRec(0x5C, 4);
+                Ot_RecTex0(pkt, work->tex0);
+                for (i = 0; i < 4; i++) {
+                    Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, st[i].x, st[i].y, st[i].z, i < 2 ? rgba0 : rgba1);
+                }
+            } else
+#endif
+            {
+                pkt->tag = 0x20000008;
+                pkt->vif1 = 0x50000008;
+                pkt->prim = 0x5C;
+                pkt->vif0 = 0x10000000;
+                pkt->gif0 = 0xE400000000008001;
+                pkt->gif1 = 0x42142142142160;
+                pkt->next = NULL;
+                IVec4_Set(col0, seg->r * 255.0f, seg->g * 255.0f, seg->b * 255.0f, seg->alpha * 255.0f * alpha);
+                IVec4_Set(col1, next->r * 255.0f, next->g * 255.0f, next->b * 255.0f,
+                              next->alpha * 255.0f * alpha);
+                pkt->v[0].r = col0[0];
+                pkt->v[0].g = col0[1];
+                pkt->v[0].b = col0[2];
+                pkt->v[0].a = col0[3];
+                pkt->v[0].q = st[0].z;
+                pkt->v[1].r = col0[0];
+                pkt->v[1].g = col0[1];
+                pkt->v[1].b = col0[2];
+                pkt->v[1].a = col0[3];
+                pkt->v[1].q = st[1].z;
+                pkt->v[2].r = col1[0];
+                pkt->v[2].g = col1[1];
+                pkt->v[2].b = col1[2];
+                pkt->v[2].a = col1[3];
+                pkt->v[2].q = st[2].z;
+                pkt->v[3].r = col1[0];
+                pkt->v[3].g = col1[1];
+                pkt->v[3].b = col1[2];
+                pkt->v[3].a = col1[3];
+                pkt->v[3].q = st[3].z;
+                pkt->v[0].s = st[0].x;
+                pkt->v[0].t = st[0].y;
+                pkt->v[1].s = st[1].x;
+                pkt->v[1].t = st[1].y;
+                pkt->v[2].s = st[2].x;
+                pkt->v[2].t = st[2].y;
+                pkt->v[3].s = st[3].x;
+                pkt->v[3].t = st[3].y;
+                pkt->v[0].x = scr[0].x;
+                pkt->v[0].y = scr[0].y;
+                pkt->v[0].z = scr[0].z;
+                pkt->v[0].f = 0xFF;
+                pkt->v[1].x = scr[1].x;
+                pkt->v[1].y = scr[1].y;
+                pkt->v[1].z = scr[1].z;
+                pkt->v[1].f = 0xFF;
+                pkt->v[2].x = scr[2].x;
+                pkt->v[2].y = scr[2].y;
+                pkt->v[2].z = scr[2].z;
+                pkt->v[2].f = 0xFF;
+                pkt->v[3].x = scr[3].x;
+                pkt->v[3].y = scr[3].y;
+                pkt->v[3].z = scr[3].z;
+                pkt->v[3].f = 0xFF;
+                pkt->tex0 = work->tex0;
+            }
             /* the fourth term is scr[2].w, not scr[3].z: a typo in the original */
             z = (scr[0].z + scr[1].z + scr[2].z + scr[2].w) >> 10;
             EftAura_OtAdd((OtPrim *)pkt, z, 1);
