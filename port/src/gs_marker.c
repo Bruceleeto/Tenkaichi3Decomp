@@ -19,46 +19,26 @@ void Port_GsMarker(int effect) {
     Dma_AddData(pkt, sizeof(pkt));
 }
 
-/* include/port/rnd.h: the quad as fourteen writes of register 0x79 and one of 0x7A, which ends it (1: a quad). */
+/* include/port/rnd.h: the quad to the renderer's queue (gs/gs_core.c Gs_RecordPush), with the place in the display
+   list it belongs at: the list being built (its first address) and the list's cursor (where the next packet goes). */
 #include <string.h>
 #include "../../include/port/rnd.h"
+#include "port_addr.h"
 
-#define RND_WORDS (sizeof(RndQuad) / 8)
-typedef char RndQuadSize[sizeof(RndQuad) == 112 ? 1 : -1];
-
-extern int Gs_TakesRecords(void); /* gs/gs_core.c */
+extern int Gs_TakesRecords(void);                                       /* gs/gs_core.c */
+extern int Gs_RecordPush(const RndQuad *q, uint32_t list, uint32_t at); /* gs/gs_core.c */
+extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
+extern uint32_t gDmaBuf[2];   /* its two buffers (game addresses) */
+extern int gDmaBufIdx;        /* the one being built */
 
 RndState gRndCtx[2];
 int gRndCtxValid;
 
 int Port_Quad(const RndQuad *q) {
-    uint32_t pkt[4 + 4 + (RND_WORDS + 1) * 4];
-    uint32_t i;
-
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    pkt[0] = 0x10000000u | (RND_WORDS + 2); /* DMA CNT: the GIF tag and the writes */
-    pkt[1] = 0;
-    pkt[2] = 0x10000000u;                   /* VIF FLUSHE */
-    pkt[3] = 0x50000000u | (RND_WORDS + 2); /* VIF DIRECT */
-    pkt[4] = 0x8000u | (RND_WORDS + 1);     /* GIF tag: a loop per write, EOP, one register: A+D */
-    pkt[5] = 0x10000000u;
-    pkt[6] = 0xE;
-    pkt[7] = 0;
-    for (i = 0; i <= RND_WORDS; i++) {
-        uint32_t *w = &pkt[8 + i * 4];
-        if (i < RND_WORDS) {
-            memcpy(w, (const uint8_t *)q + i * 8, 8);
-        } else {
-            w[0] = 1;
-            w[1] = 0;
-        }
-        w[2] = i < RND_WORDS ? 0x79 : 0x7A;
-        w[3] = 0;
-    }
-    Dma_AddData(pkt, sizeof(pkt));
-    return 1;
+    return Gs_RecordPush(q, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
 }
 
 int Port_TakesRecords(void) {

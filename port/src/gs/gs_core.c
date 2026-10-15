@@ -26,6 +26,7 @@
 #include <time.h>
 #include "gs_internal.h"
 #include "../port_addr.h"
+#include "../../../include/port/rnd.h" /* the records of the queue */
 
 #define SURF_W 1024
 #define SURF_H 1024
@@ -229,6 +230,92 @@ int Gs_TakesRecords(void) {
     static int off = -1;
     if (off < 0) { off = getenv("BT3_RND") != NULL && atoi(getenv("BT3_RND")) == 0; }
     return sGpu && !off;
+}
+
+/* ---- the renderer's command queue (include/port/rnd.h) ----
+   What the game hands over as records does not travel in its display list: it is queued here with the place in the
+   list it belongs at (the list's first address, and the address the list's cursor had: the DMA tag written there
+   next). The list is walked as before (run_chain); before the tag at an address the records queued at it are drawn,
+   so they come between the packets the game put in front of them and after them. A list's records go to the walk
+   when the list is handed over (rnd_take); records of a list not handed over yet stay. Two queues: the one the game
+   fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
+typedef struct RndCmd {
+    uint32_t list, at; /* the display list's first address; the address in it */
+    RndQuad q;
+} RndCmd;
+typedef struct RndQueue {
+    RndCmd *cmd;
+    uint32_t n, cap, next; /* (next: the walk's) */
+} RndQueue;
+static RndQueue sRndFill, sRndWalk;
+static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
+
+/* port/src/gs_marker.c Port_Quad: q at address `at` of the list that starts at `list`. 0 = not taken. */
+int Gs_RecordPush(const RndQuad *q, uint32_t list, uint32_t at) {
+    RndQueue *f = &sRndFill;
+    if (f->n != 0 && f->cmd[f->n - 1].list == list && at < f->cmd[f->n - 1].at) {
+        /* the list was started again without being handed over (src/sys/dma.c Dma_ResetBuffers): its records go */
+        uint32_t i, keep = 0;
+        for (i = 0; i < f->n; i++) {
+            if (f->cmd[i].list != list) { f->cmd[keep++] = f->cmd[i]; }
+        }
+        f->n = keep;
+    }
+    if (f->n == f->cap) {
+        uint32_t cap = f->cap ? f->cap * 2 : 1024;
+        RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
+        if (c == NULL) { sRndLost++; return 0; }
+        f->cmd = c;
+        f->cap = cap;
+    }
+    f->cmd[f->n].list = list;
+    f->cmd[f->n].at = at;
+    f->cmd[f->n].q = *q;
+    f->n++;
+    return 1;
+}
+
+/* The list at tadr is handed over: its records from the queue being filled to the one the walk reads, in order. */
+static void rnd_take(uint32_t tadr) {
+    RndQueue *f = &sRndFill, *w = &sRndWalk;
+    uint32_t i, keep = 0;
+    w->n = w->next = 0;
+    if (w->cap < f->n) {
+        RndCmd *c = realloc(w->cmd, f->n * sizeof(RndCmd));
+        if (c == NULL) { sRndLost += f->n; f->n = 0; return; }
+        w->cmd = c;
+        w->cap = f->n;
+    }
+    for (i = 0; i < f->n; i++) {
+        if (f->cmd[i].list == tadr) {
+            w->cmd[w->n++] = f->cmd[i];
+        } else {
+            f->cmd[keep++] = f->cmd[i];
+        }
+    }
+    f->n = keep;
+}
+
+/* The walk is at the DMA tag at tadr: the records queued in front of it. */
+static void rnd_drain(uint32_t tadr) {
+    RndQueue *w = &sRndWalk;
+    while (w->next < w->n && w->cmd[w->next].at == tadr) {
+        GsGpu_Quad(&w->cmd[w->next++].q);
+    }
+}
+
+/* The walk is done: what it did not meet (the game moved its cursor back over them) is drawn last, and counted. */
+static void rnd_rest(void) {
+    RndQueue *w = &sRndWalk;
+    while (w->next < w->n) {
+        GsGpu_Quad(&w->cmd[w->next++].q);
+        sRndLate++;
+    }
+    w->n = w->next = 0;
+    if ((sRndLate != 0 || sRndLost != 0) && getenv("BT3_GS_VERBOSE") != NULL) {
+        fprintf(stderr, "rnd: frame %u: %u records not met by the walk (drawn last), %u not queued (no memory)\n", sFrame, sRndLate, sRndLost);
+    }
+    sRndLate = sRndLost = 0;
 }
 
 uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y) {
@@ -1101,9 +1188,6 @@ static void prim_update(void) {
     gs.prim = (gs.prmodecont & 1) ? gs.primRaw : (gs.primRaw & 7) | (gs.prmode & 0x7F8);
 }
 
-static uint64_t sRnd[16]; /* (see 0x79 below) */
-static int sRndN;
-
 static void reg_write(uint32_t addr, uint64_t d) {
     sStat[4]++;
     if (sDumpFrame == (int)sFrame && (addr == 0x4C || addr == 0x4D || addr == 0x18 || addr == 0x19 || addr == 0x40 || addr == 0x41 ||
@@ -1137,8 +1221,6 @@ static void reg_write(uint32_t addr, uint64_t d) {
     case 0x51: gs.trxpos = d; break;
     case 0x52: gs.trxreg = d; break;
     case 0x53: gs.trxdir = d; transfer_begin(); break;
-    case 0x79: if (sRndN < 16) { sRnd[sRndN++] = d; } break; /* a record the game hands over (port/src/gs_marker.c Port_Quad), */
-    case 0x7A: if (sGpu && d == 1 && sRndN == 14) { GsGpu_Quad((const void *)sRnd); } sRndN = 0; break; /* and its end */
     case 0x7F: if (sGpu) { GsGpu_Native((int)d); } break; /* not a GS register: the port's marker (gs_marker.c) */
     case 0x7B: sTintNext = d; break; /* (a tint of the palettes of the two pages from page d: gs_pvr.c Port_ClutTint) */
     case 0x7C: gGsTint[d & 511] = gGsTint[(d + 1) & 511] = sTintNext; break;
@@ -1636,7 +1718,9 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
     tChain = now_ns();
     if (sThreaded) {
         render_wait(); /* the previous list must be finished before this one starts (the PS2's sceGsSyncPath) */
+        rnd_take(tadr);
     } else {
+        rnd_take(tadr);
         run_chain(tadr, tte);
     }
     /* The frame's work ends here. Time it (BT3_GS_VERBOSE), then keep 30 frames per second. */
@@ -1718,6 +1802,7 @@ static void run_chain(uint32_t tadr, int tte) {
         const uint32_t *data;
         int end = 0;
 
+        rnd_drain(tadr);
         switch (id) {
         case 0: data = (const uint32_t *)Port_Ptr(addr); end = 1; break;                 /* REFE */
         case 1: data = tag + 4; tadr += 16 + qwc * 16; break;                             /* CNT */
@@ -1742,6 +1827,7 @@ static void run_chain(uint32_t tadr, int tte) {
             break;
         }
     }
+    rnd_rest();
     if (getenv("BT3_GS_VERBOSE") != NULL && (sFrame < 4 || sFrame % 60 == 0)) {
         fprintf(stderr, "gs: frame %u: %u DMA tags, %u VIF codes, %u DIRECT qwords, %u GIF tags, %u register writes, %u vertices, "
                         "%u image qwords, %d targets\n", sFrame, sStat[0], sStat[1], sStat[2], sStat[3], sStat[4], sStat[5],

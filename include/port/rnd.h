@@ -3,10 +3,11 @@
 
 /*
  * Drawing without GS packets: what the game hands the renderer itself instead of a GIF packet that sends vertices
- * under the GS's registers. The record travels in the display list where the packet would have been (a run of
- * writes to GS registers 0x79 / 0x7A, which the real GS does not have), so it is drawn in the game's order; the GS
- * layer records it as it records a primitive (port/src/gs/gs_draw.c GsGpu_Quad). Nothing of the GS's drawing state
- * is read for it: the record says all of it (RndState).
+ * under the GS's registers. The record goes to the renderer's queue (port/src/gs/gs_core.c), not into the display
+ * list: it is queued with the place in the list where the packet would have been, and drawn when the walk of the
+ * list reaches that place, so it is drawn in the game's order among the draws that are still packets. It becomes a
+ * draw of the shared list straight from its state (port/src/gs/gs_draw.c GsGpu_Quad); nothing of the GS's state is
+ * read or made for it, but for a texture that has no handles (from GS memory by TEX0, counted).
  *
  * The packets that only SET state are still sent: the draws that are still packets read it. A record replaces a
  * draw, not the state the PS2 would have had after it. BT3_RND_CHECK=1 compares each record's state with the GS's
@@ -80,10 +81,10 @@ typedef struct RndQuad {
                           without handles (not converted ahead of time); 0 with tex 0: the colour alone */
     RndState st;
     uint32_t pad;
-} RndQuad; /* 112 bytes: fourteen words of the list */
+} RndQuad; /* 112 bytes */
 
 /* port/src/gs_marker.c */
-int Port_Quad(const RndQuad *q); /* puts the quad into the display list; 0 = not taken (the software renderer,
+int Port_Quad(const RndQuad *q); /* queues the quad at the display list's cursor; 0 = not taken (the software renderer,
                                     which draws only GS packets: the caller sends its packet as before) */
 int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
 void Rnd_StateInit(RndState *s, uint32_t fbp); /* the whole picture, blended normally, no test, nothing else */
