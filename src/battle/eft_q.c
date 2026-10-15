@@ -1677,49 +1677,66 @@ void EftTrail_DrawSprite(u8 r, u8 g, u8 b, u8 a, f32 x, f32 y, f32 z, f32 w, f32
     if (IVec4_InGsRange4(&scr[0], &scr[1], &scr[2], &scr[3])) {
         return;
     }
-    p = (EftQQuadPkt *)gOtCur;
-    gOtCur = (u32 *)(p + 1);
-    p->prim = 0x54;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = 0xF42424242160;
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
+        p = Ot_NewRec(0x54, 4);
+        Ot_RecTex0(p, tex0);
+        Ot_RecVtx(p, 0, (u16)scr[0].x, (u16)scr[0].y, scr[0].z, u0, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 1, (u16)scr[1].x, (u16)scr[1].y, scr[1].z, u1, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 2, (u16)scr[2].x, (u16)scr[2].y, scr[2].z, u0, v1, 1.0f, rgba);
+        Ot_RecVtx(p, 3, (u16)scr[3].x, (u16)scr[3].y, scr[3].z, u1, v1, 1.0f, rgba);
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+    } else
+#endif
+    {
+        p = (EftQQuadPkt *)gOtCur;
+        gOtCur = (u32 *)(p + 1);
+        p->prim = 0x54;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = 0xF42424242160;
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->rgbaq.r = r;
+        p->rgbaq.g = g;
+        p->rgbaq.b = b;
+        p->rgbaq.a = a;
+        p->rgbaq.q = 1.0f;
+        p->tex0 = tex0;
+        p->next = NULL;
+        p->st0.s = u0;
+        p->st0.t = v0;
+        p->st1.s = u1;
+        p->st1.t = v0;
+        p->st2.s = u0;
+        p->st2.t = v1;
+        p->st3.s = u1;
+        p->st3.t = v1;
+        p->xyz0.x = scr[0].x;
+        p->xyz0.y = scr[0].y;
+        p->xyz0.z = scr[0].z;
+        p->xyz0.f = 0xFF;
+        p->xyz1.x = scr[1].x;
+        p->xyz1.y = scr[1].y;
+        p->xyz1.z = scr[1].z;
+        p->xyz1.f = 0xFF;
+        p->xyz2.x = scr[2].x;
+        p->xyz2.y = scr[2].y;
+        p->xyz2.z = scr[2].z;
+        p->xyz2.f = 0xFF;
+        p->xyz3.x = scr[3].x;
+        p->xyz3.y = scr[3].y;
+        p->xyz3.z = scr[3].z;
+        p->xyz3.f = 0xFF;
     }
-    p->rgbaq.r = r;
-    p->rgbaq.g = g;
-    p->rgbaq.b = b;
-    p->rgbaq.a = a;
-    p->rgbaq.q = 1.0f;
-    p->tex0 = tex0;
-    p->next = NULL;
-    p->st0.s = u0;
-    p->st0.t = v0;
-    p->st1.s = u1;
-    p->st1.t = v0;
-    p->st2.s = u0;
-    p->st2.t = v1;
-    p->st3.s = u1;
-    p->st3.t = v1;
-    p->xyz0.x = scr[0].x;
-    p->xyz0.y = scr[0].y;
-    p->xyz0.z = scr[0].z;
-    p->xyz0.f = 0xFF;
-    p->xyz1.x = scr[1].x;
-    p->xyz1.y = scr[1].y;
-    p->xyz1.z = scr[1].z;
-    p->xyz1.f = 0xFF;
-    p->xyz2.x = scr[2].x;
-    p->xyz2.y = scr[2].y;
-    p->xyz2.z = scr[2].z;
-    p->xyz2.f = 0xFF;
-    p->xyz3.x = scr[3].x;
-    p->xyz3.y = scr[3].y;
-    p->xyz3.z = scr[3].z;
-    p->xyz3.f = 0xFF;
     oz = scr[0].z >> 8;
     if (oz < 0) {
         e = &gOtZ[0].layer[l];
