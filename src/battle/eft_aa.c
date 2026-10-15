@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/eft_aa.h"
+#ifdef PORT
+#include "port/ot_rec.h"
+#endif
 
 /*
  * Effect modules, 0x199F28..0x19E0C0. See include/battle/eft_aa.h for the list.
@@ -495,63 +498,82 @@ void EftGndDust_DrawQuad(Vec4 *pos, Vec4 *color, Mtx44 *mtx, u64 tex0, f32 scale
     if (p == NULL) {
         return;
     }
-    p->dmaTag = 0x20000008;
-    p->vif1 = 0x50000008;
-    p->prim = 0x5C;
-    p->vif0 = 0x10000000;
-    p->gifTag = 0xE400000000008001;
-    p->regs = 0x42142142142160;
-    p->next = NULL;
-    p->v[0].rgbaq.r = color->x;
-    p->v[0].rgbaq.g = color->y;
-    p->v[0].rgbaq.b = color->z;
-    p->v[0].rgbaq.a = color->w;
-    p->v[0].rgbaq.q = stq[0].z;
-    p->v[1].rgbaq.r = color->x;
-    p->v[1].rgbaq.g = color->y;
-    p->v[1].rgbaq.b = color->z;
-    p->v[1].rgbaq.a = color->w;
-    p->v[1].rgbaq.q = stq[1].z;
-    p->v[2].rgbaq.r = color->x;
-    p->v[2].rgbaq.g = color->y;
-    p->v[2].rgbaq.b = color->z;
-    p->v[2].rgbaq.a = color->w;
-    p->v[2].rgbaq.q = stq[2].z;
-    p->v[3].rgbaq.r = color->x;
-    p->v[3].rgbaq.g = color->y;
-    p->v[3].rgbaq.b = color->z;
-    p->v[3].rgbaq.a = color->w;
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        u32 rgba;
+        gOtCur = (u8 *)p;
+        p = Ot_NewRec(0x5C, 4);
+        rgba = Ot_RecRgba(color->x, color->y, color->z, color->w);
+        Ot_RecTex0(p, tex0);
+        for (i = 0; i < 4; i++) {
+            Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
+        }
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+    } else
+#endif
+    {
+        p->dmaTag = 0x20000008;
+        p->vif1 = 0x50000008;
+        p->prim = 0x5C;
+        p->vif0 = 0x10000000;
+        p->gifTag = 0xE400000000008001;
+        p->regs = 0x42142142142160;
+        p->next = NULL;
+        p->v[0].rgbaq.r = color->x;
+        p->v[0].rgbaq.g = color->y;
+        p->v[0].rgbaq.b = color->z;
+        p->v[0].rgbaq.a = color->w;
+        p->v[0].rgbaq.q = stq[0].z;
+        p->v[1].rgbaq.r = color->x;
+        p->v[1].rgbaq.g = color->y;
+        p->v[1].rgbaq.b = color->z;
+        p->v[1].rgbaq.a = color->w;
+        p->v[1].rgbaq.q = stq[1].z;
+        p->v[2].rgbaq.r = color->x;
+        p->v[2].rgbaq.g = color->y;
+        p->v[2].rgbaq.b = color->z;
+        p->v[2].rgbaq.a = color->w;
+        p->v[2].rgbaq.q = stq[2].z;
+        p->v[3].rgbaq.r = color->x;
+        p->v[3].rgbaq.g = color->y;
+        p->v[3].rgbaq.b = color->z;
+        p->v[3].rgbaq.a = color->w;
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->v[3].rgbaq.q = stq[3].z;
+        p->v[0].st.s = stq[0].x;
+        p->v[0].st.t = stq[0].y;
+        p->v[1].st.s = stq[1].x;
+        p->v[1].st.t = stq[1].y;
+        p->v[2].st.s = stq[2].x;
+        p->v[2].st.t = stq[2].y;
+        p->v[3].st.s = stq[3].x;
+        p->v[3].st.t = stq[3].y;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+        p->tex0 = tex0;
     }
-    p->v[3].rgbaq.q = stq[3].z;
-    p->v[0].st.s = stq[0].x;
-    p->v[0].st.t = stq[0].y;
-    p->v[1].st.s = stq[1].x;
-    p->v[1].st.t = stq[1].y;
-    p->v[2].st.s = stq[2].x;
-    p->v[2].st.t = stq[2].y;
-    p->v[3].st.s = stq[3].x;
-    p->v[3].st.t = stq[3].y;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
-    z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
-    p->tex0 = tex0;
     if (z < 0) {
         e = &gOtZ[0].layer[l];
     } else if (z >= 0x1000) {
