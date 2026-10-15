@@ -149,33 +149,26 @@ $(ASSETS)/tex.pak: port/tools/dc_tex.c Makefile.dc
 	$(HOSTCC) -O2 -o $(BUILD)/dc_tex $<
 	$(BUILD)/dc_tex $@ gamedata/pzs3us0 gamedata/pzs3us1 gamedata/pzs3us2
 
-# make -f Makefile.dc disc: the program and the data as a GD-ROM image (port/build/dc/disc/bt3.gdi: for Flycast and
-# GDEMU), as the game reads it from /cd (port/src/plat_file.c): partitions 0 and 1 as `make extract` wrote them
+# make -f Makefile.dc disc: the program and the data on a selfboot disc image (port/build/dc/disc/bt3.cdi, mkdcdisc),
+# as the game reads it from /cd (port/src/plat_file.c): partitions 0 and 1 as `make extract` wrote them
 # (pzs3usN/NNNNN.bin), the disc's loose data (disc/DATA, without the PS2 movies and their sound), the PVR's textures
-# (tex.pak) and the movies as pl_mpeg plays them (if made). No sound files (partition 2): there is no sound output
-# yet, and a stream lasts the original's length without its file (gs/snd_adx.c by_table). The files are hard links
-# into gamedata, and mkisofs writes the image as it goes (mkdcdisc holds all of it in memory). About 1.7 GB: more
-# than a GD-ROM's 1 GB from sector 45,000, which Flycast reads past. Needs dc-assets first.
-MKISOFS  ?= mkisofs
+# (tex.pak) and the movies as pl_mpeg plays them (if made). No sound files (partition 2, 1.07 GB): there is no sound
+# output yet, and a stream lasts the original's length without its file (gs/snd_adx.c by_table). The files are
+# hard links into gamedata. About 2 GB, for Flycast. mkdcdisc copies the data to TMPDIR first (/tmp is often in
+# memory: here a folder of the build) and takes about 3.5 GB of memory itself; it is stopped past 4 GB. Needs
+# dc-assets first.
+MKDCDISC ?= mkdcdisc
 DISC_DIR := $(BUILD)/disc
 DISC_FS  := $(DISC_DIR)/data
 disc: $(EXE)
 	@test -f $(ASSETS)/tex.pak || { echo "no $(ASSETS)/tex.pak: make -f Makefile.dc dc-assets" >&2; exit 1; }
-	rm -rf $(DISC_DIR) && mkdir -p $(DISC_FS)/disc/DATA
+	rm -rf $(DISC_DIR) && mkdir -p $(DISC_FS)/disc/DATA $(DISC_DIR)/tmp
 	cp -al gamedata/pzs3us0 gamedata/pzs3us1 $(DISC_FS)/
 	for f in gamedata/disc/DATA/*; do case "$$f" in *.PSS|*.ADX) ;; *) ln "$$f" $(DISC_FS)/disc/DATA/ ;; esac; done
 	ln $(ASSETS)/tex.pak $(DISC_FS)/
 	for f in $(wildcard $(ASSETS)/*.mpg); do ln "$$f" $(DISC_FS)/; done
-	sh-elf-objcopy -R .stack -O binary $(EXE) $(DISC_FS)/1ST_READ.BIN
-	$(KOS_BASE)/utils/makeip/makeip -g "DRAGON BALL Z BUDOKAI TENKAICHI 3" -f $(DISC_DIR)/IP.BIN > /dev/null
-	# track 3: the data from sector 45,000 (IP.BIN in its first 16); tracks 1 and 2: the low-density area's
-	$(MKISOFS) -quiet -C 0,45000 -G $(DISC_DIR)/IP.BIN -V BT3 -sysid "SEGA SEGAKATANA" -l -r -J -o $(DISC_DIR)/track03.iso $(DISC_FS)
-	mkdir -p $(DISC_DIR)/low && echo "Dragon Ball Z: Budokai Tenkaichi 3 (Dreamcast port)" > $(DISC_DIR)/low/README.TXT
-	$(MKISOFS) -quiet -V BT3 -o $(DISC_DIR)/track01.iso $(DISC_DIR)/low && truncate -s 614400 $(DISC_DIR)/track01.iso
-	head -c $$((302 * 2352)) /dev/zero > $(DISC_DIR)/track02.raw
-	printf '3\n1 0 4 2048 track01.iso 0\n2 450 0 2352 track02.raw 0\n3 45000 4 2048 track03.iso 0\n' > $(DISC_DIR)/bt3.gdi
-	rm -rf $(DISC_FS) $(DISC_DIR)/low
-	@ls -l $(DISC_DIR)
+	ulimit -v 4194304 && TMPDIR=$(abspath $(DISC_DIR)/tmp) $(MKDCDISC) -e $(EXE) -D $(DISC_FS) -o $(DISC_DIR)/bt3.cdi -n "Budokai Tenkaichi 3" -N
+	rm -rf $(DISC_FS) $(DISC_DIR)/tmp
 
 clean:
 	rm -rf $(BUILD)
