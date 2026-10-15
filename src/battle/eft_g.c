@@ -751,27 +751,36 @@ void EftStorm_DrawRainLines(EftStormDrop *drop, s32 count, Vec4 *streak) {
         Vec4_Copy(&pos[0], &drop->pos);
         Vec4_Add(&pos[1], &drop->pos, streak);
         if (Vu0Cur_ProjectPoints(xyz, pos, 2) != 0 && EftScr_IsValid(&xyz[0]) && EftScr_IsValid(&xyz[1])) {
-        { u32 *cur = gOtCur; p = (EftLinePkt *)cur; cur += 16; gOtCur = cur; }
-        p->prim = 0x41;
-        p->tag = 0x20000003;
-        p->vif0 = 0x10000000;
-        p->vif1 = 0x50000003;
-        p->gif0 = 0x4400000000008001;
-        p->gif1 = 0x4410;
-        p->rgba[3] = 0x20;
-        p->q = 1.0f;
-        p->next = 0;
-        p->rgba[0] = 0x60;
-        p->rgba[1] = 0x60;
-        p->rgba[2] = 0x60;
-        p->xyz[0].x = xyz[0].x;
-        p->xyz[0].y = xyz[0].y;
-        p->xyz[0].z = xyz[0].z;
-        p->xyz[0].f = 0xFF;
-        p->xyz[1].x = xyz[1].x;
-        p->xyz[1].y = xyz[1].y;
-        p->xyz[1].z = xyz[1].z;
-        p->xyz[1].f = 0xFF;
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the line as a record, in the packet's place */
+            p = Ot_NewRec(0x41, 2);
+            Ot_RecVtx(p, 0, (u16)xyz[0].x, (u16)xyz[0].y, xyz[0].z & 0xFFFFFF, 0.0f, 0.0f, 1.0f, 0x20606060);
+            Ot_RecVtx(p, 1, (u16)xyz[1].x, (u16)xyz[1].y, xyz[1].z & 0xFFFFFF, 0.0f, 0.0f, 1.0f, 0x20606060);
+        } else
+#endif
+        {
+            { u32 *cur = gOtCur; p = (EftLinePkt *)cur; cur += 16; gOtCur = cur; }
+            p->prim = 0x41;
+            p->tag = 0x20000003;
+            p->vif0 = 0x10000000;
+            p->vif1 = 0x50000003;
+            p->gif0 = 0x4400000000008001;
+            p->gif1 = 0x4410;
+            p->rgba[3] = 0x20;
+            p->q = 1.0f;
+            p->next = 0;
+            p->rgba[0] = 0x60;
+            p->rgba[1] = 0x60;
+            p->rgba[2] = 0x60;
+            p->xyz[0].x = xyz[0].x;
+            p->xyz[0].y = xyz[0].y;
+            p->xyz[0].z = xyz[0].z;
+            p->xyz[0].f = 0xFF;
+            p->xyz[1].x = xyz[1].x;
+            p->xyz[1].y = xyz[1].y;
+            p->xyz[1].z = xyz[1].z;
+            p->xyz[1].f = 0xFF;
+        }
         EftOt_Add((OtPrim *)p, 0, 0);
         }
     }
