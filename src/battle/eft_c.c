@@ -8,6 +8,9 @@
 #include "sys/dma.h"
 #include "sys/gfx.h"
 #include "sys/gfx_ot.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Stage-attached effects, 0x136760..0x13A9D0. See include/battle/eft_c.h.
@@ -1414,6 +1417,20 @@ void EftSurf_PutTri(s32 *xyz0, s32 *xyz1, s32 *xyz2, Vec4 *st0, Vec4 *st1, Vec4 
                     Vec4 *rgba2, u64 tex0) {
     u64 *p;
 
+#ifdef PORT
+    {   /* the triangle as a record (include/port/rnd.h), under the state the display list has here */
+        RndPoly r;
+        memset(&r, 0, sizeof(r));
+        Rnd_Vtx(&r.v[0], 0, xyz0[0], xyz0[1], (u32)xyz0[2], st0->x, st0->y, st0->z, (u32)EFT_F2RGBA(rgba0));
+        Rnd_Vtx(&r.v[1], 0, xyz1[0], xyz1[1], (u32)xyz1[2], st1->x, st1->y, st1->z, (u32)EFT_F2RGBA(rgba1));
+        Rnd_Vtx(&r.v[2], 0, xyz2[0], xyz2[1], (u32)xyz2[2], st2->x, st2->y, st2->z, (u32)EFT_F2RGBA(rgba2));
+        r.n = 3;
+        r.gsTex0 = tex0;
+        if (Rnd_Draw(&r, 0, 1, 1)) {
+            return;
+        }
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 12);
     p[1] = 0xF52152152160;
