@@ -197,4 +197,25 @@ uint32_t Port_TexHandle(const void *entry);
 uint32_t Port_PalHandle(const void *pkt);
 uint32_t Port_PalSub(uint32_t pal, int k); /* palette k (0..3) of 16 in the blocks of a 256 one (the font's four) */
 
+/* port/src/rnd_fx.c: the frame-buffer effects (the glare, the blurs, the haze, the lens, the screen's warp, the
+   cross-fade) as records. They draw into a frame buffer by RndState.fbp, and read one as a record's texture. */
+int Rnd_FxOn(void); /* 0: no frame buffer but the picture is drawn or read (the Dreamcast; BT3_PVR_NO_RTT=1 on PC): an
+                       effect draws nothing then and sends no packet. Tested once at an effect's top. */
+/* A frame buffer as a record's texture (RndQuad / RndPoly tex, with pal 0): page fbp read as a w x h texture
+   (powers of two, as TEX0's TW / TH; texture coordinates are over that size as for any texture) of pixel format
+   psm (the GS's: 0 PSMCT32, 1 PSMCT24; the alpha is the buffer's either way). The renderer takes what the buffer
+   holds where the record is drawn. Nothing is drawn while the buffer has never been drawn into, nor by a record
+   drawn into the buffer it reads. */
+#define RND_TEX_TARGET 0x8000u    /* (a handle of Rnd_TargetTex: the bit no texture record's handle has) */
+#define RND_TEX_RGB 0x40000000u   /* or'd into it: the texture's alpha not used, the corners' instead (the GS's
+                                     TEX0.TCC 0; with RND_BLEND_ADD / NORMAL the GS's constant ALPHA.FIX as the
+                                     corners' alpha) */
+uint32_t Rnd_TargetTex(uint32_t fbp, int w, int h, int psm);
+/* A rectangle of pixels x0..x1, y0..y1 in one colour, under st (a clear of part of a buffer), as Port_Quad. */
+int Rnd_FillRect(const RndState *st, float x0, float y0, float x1, float y1, uint32_t rgba);
+/* A sprite under st: pixels x0..x1, y0..y1, texture tex from texel u0, v0 to u1, v1 (sixteenths), its colour
+   times rgba (0x80 = 1.0), as Port_Quad. */
+int Rnd_Blit(const RndState *st, uint32_t tex, float x0, float y0, float x1, float y1, int u0, int v0, int u1, int v1,
+             uint32_t rgba);
+
 #endif

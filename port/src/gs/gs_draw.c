@@ -1422,6 +1422,79 @@ static void rnd_put(const RndState *st, int n, const uint32_t *z, const float *x
     }
 }
 
+/* A record whose texture is a frame buffer (include/port/rnd.h Rnd_TargetTex), as draw_state takes one buffer drawn
+   into another: d (from rnd_draw_state) samples the buffer's colour as it is where the record is drawn, held inside
+   the record's w x h of it; the record's texture coordinates times ks, kt are the shared layer's (over GS_W x GS_H).
+   0 = nothing to draw: the buffer was never drawn into, holds what a dropped pass left (stale), is the one drawn
+   into, or is read in a format it was not drawn in. */
+static int rnd_target(GsDraw *d, uint32_t tex, float *ks, float *kt) {
+    int src = GsDraw_TargetGet(tex & 0x1FF, 0);
+    float w = (float)(1u << ((tex >> 16) & 15)), h = (float)(1u << ((tex >> 20) & 15));
+
+    if (src < 0 || !gsTargets[src].cleared || gsTargets[src].stale || src == d->target || ((tex >> 9) & 0x3F) > 1) {
+        return 0;
+    }
+    d->tex = sBackend->targetColor(src);
+    d->tex_is_target = 1;
+    d->mode[0] = 2;
+    d->mode[1] = 0;                      /* the texture's colour times the corners' */
+    d->mode[2] = !(tex & RND_TEX_RGB);   /* and its alpha, or the corners' alone */
+    d->rect[0] = 0.5f / (float)GS_W;
+    d->rect[1] = 0.5f / (float)GS_H;
+    d->rect[2] = (w - 0.5f) / (float)GS_W;
+    d->rect[3] = (h - 0.5f) / (float)GS_H;
+    *ks = w / (float)GS_W;
+    *kt = h / (float)GS_H;
+    return 1;
+}
+
+/* A quad whose texture is a frame buffer (rnd_target): as GsGpu_Quad, with what draw_prim does for a sprite that
+   draws one buffer from another (its texture coordinates half a pixel back; the user's switches and strength of the
+   passes that put a work buffer back over the picture). */
+static void rnd_target_quad(const RndQuad *q) {
+    GsDraw d;
+    float x[4], y[4], s[4], t[4], qd[4] = {1.0f, 1.0f, 1.0f, 1.0f}, ks, kt;
+    uint32_t z[4], rgba[4];
+    int i, shown;
+
+    if (!rnd_draw_state(&d, &q->st, 0, 0) || !rnd_target(&d, q->tex, &ks, &kt)) {
+        return;
+    }
+    shown = gsTargets[d.target].fbp == (uint32_t)gGsMainFbp;
+    if (shown && ((q->st.blend == RND_BLEND_ADD && (gsFxOff & 8)) ||
+                  (q->st.blend == RND_BLEND_NORMAL && (q->st.flags & RND_DEST_ALPHA) && (gsFxOff & 16)))) {
+        gsSkipped++;
+        return;
+    }
+    for (i = 0; i < 4; i++) {
+        x[i] = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f;
+        y[i] = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
+        s[i] = (float)q->uv[i][0] / 16.0f / (float)(1u << ((q->tex >> 16) & 15)) * ks;
+        t[i] = (float)q->uv[i][1] / 16.0f / (float)(1u << ((q->tex >> 20) & 15)) * kt;
+        z[i] = q->z;
+        rgba[i] = q->rgba[i];
+        if (shown && q->st.blend == RND_BLEND_ADD && gsGlowPercent != 100) {
+            uint32_t c = rgba[i], k, o = c & 0xFF000000u;
+            for (k = 0; k < 24; k += 8) {
+                uint32_t v = ((c >> k) & 0xFF) * (uint32_t)gsGlowPercent / 100;
+                o |= (v > 255 ? 255 : v) << k;
+            }
+            rgba[i] = o;
+        }
+    }
+    if (x[1] != x[0] && y[2] != y[0]) { /* (the GS's texture coordinates at whole pixels, a GPU's at their centres: draw_prim) */
+        float ds = 0.5f * (s[1] - s[0]) / (x[1] - x[0]), dt = 0.5f * (t[2] - t[0]) / (y[2] - y[0]);
+        for (i = 0; i < 4; i++) {
+            s[i] -= ds;
+            t[i] -= dt;
+        }
+    }
+    date_snapshot(&d);
+    d.first = gsVertCount;
+    rnd_put(&q->st, 4, z, x, y, s, t, qd, rgba);
+    draw_end(&d, 0, 0, (rgba[0] >> 24) != 0);
+}
+
 /* A quad the game handed over (include/port/rnd.h), from the queue (gs_core.c): recorded as a draw of the shared
    list straight from the state the record names, as two triangles of its strip. Nothing of the GS's registers is
    read or made, but for a texture only in GS memory (rnd_gs). */
@@ -1439,6 +1512,10 @@ void GsGpu_Quad(const RndQuad *q) {
         return;
     }
     rnd_check(&q->st, q->gsCtx, q->tex != 0 || q->gsTex0 != 0);
+    if (q->tex & RND_TEX_TARGET) {
+        rnd_target_quad(q);
+        return;
+    }
     if ((q->tex != 0 || q->gsTex0 != 0) && (g = rnd_tex(q->tex, q->pal, q->gsTex0, &tw, &th)) == 0) {
         GsVertex v[4];
         memset(v, 0, sizeof(v));
@@ -1458,6 +1535,9 @@ void GsGpu_Quad(const RndQuad *q) {
     }
     if (!rnd_draw_state(&d, &q->st, g, q->gsTex0)) {
         return;
+    }
+    if (g == 0) {
+        gsTargets[d.target].stale = 0; /* (filled by the game, as draw_state has it) */
     }
     for (i = 0; i < 4; i++) {
         x[i] = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
@@ -1484,9 +1564,9 @@ void GsGpu_Quad(const RndQuad *q) {
 void GsGpu_Poly(const RndPoly *p) {
     GsDraw d;
     GsTex g = 0;
-    float x[4], y[4], s[4], t[4], q[4];
+    float x[4], y[4], s[4], t[4], q[4], ks = 1.0f, kt = 1.0f;
     uint32_t tw = 1, th = 1, z[4], rgba[4];
-    int i, n = p->n == 4 ? 4 : 3;
+    int i, n = p->n == 4 ? 4 : 3, tgt = 0;
 
     if (GS_NO_PICTURE) {
         return;
@@ -1495,7 +1575,12 @@ void GsGpu_Poly(const RndPoly *p) {
         return;
     }
     rnd_check(&p->st, p->gsCtx, p->tex != 0 || p->gsTex0 != 0);
-    if ((p->tex != 0 || p->gsTex0 != 0) && (g = rnd_tex(p->tex, p->pal, p->gsTex0, &tw, &th)) == 0) {
+    if (p->tex & RND_TEX_TARGET) { /* a frame buffer (rnd_target) */
+        if (!rnd_draw_state(&d, &p->st, 0, 0) || !rnd_target(&d, p->tex, &ks, &kt)) {
+            return;
+        }
+        tgt = 1;
+    } else if ((p->tex != 0 || p->gsTex0 != 0) && (g = rnd_tex(p->tex, p->pal, p->gsTex0, &tw, &th)) == 0) {
         GsVertex v[4];
         memset(v, 0, sizeof(v));
         for (i = 0; i < n; i++) {
@@ -1514,15 +1599,15 @@ void GsGpu_Poly(const RndPoly *p) {
         rnd_gs(&p->st, p->tex, p->pal, p->gsTex0, v, n, 1);
         return;
     }
-    if (!rnd_draw_state(&d, &p->st, g, p->gsTex0)) {
+    if (!tgt && !rnd_draw_state(&d, &p->st, g, p->gsTex0)) {
         return;
     }
     for (i = 0; i < n; i++) {
         const RndVtx *c = &p->v[i];
         x[i] = (float)(int32_t)(c->x * 16.0f) / 16.0f;
         y[i] = (float)(int32_t)(c->y * 16.0f) / 16.0f;
-        s[i] = c->s;
-        t[i] = c->t;
+        s[i] = c->s * ks;
+        t[i] = c->t * kt;
         q[i] = c->q != 0.0f ? c->q : 1.0f;
         z[i] = c->z;
         rgba[i] = c->rgba;

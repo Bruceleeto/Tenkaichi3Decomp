@@ -32,6 +32,7 @@
 #include "../port_addr.h"
 #include "gs_draw.h"
 #include "ui.h"
+#include "../../../include/port/rnd.h" /* Rnd_FxOn */
 #ifndef __DREAMCAST__
 #include "pvr_host.h" /* gpu_pvr: the window the picture is shown in */
 #else
@@ -687,6 +688,7 @@ static void draw_one(uint32_t n, const PvrTex *t) {
         cxt.txr.uv_clamp = (pvr_uv_clamp_t)(((d->sampler & 2) ? PVR_UVCLAMP_U : 0) | ((d->sampler & 4) ? PVR_UVCLAMP_V : 0));
         tfx = d->mode[1];
         cxt.txr.env = tfx == 1 ? (d->mode[2] ? PVR_TXRENV_REPLACE : PVR_TXRENV_DECAL) : PVR_TXRENV_MODULATEALPHA;
+        if (d->mode[0] == 2 && !d->mode[2]) { cxt.txr.alpha = PVR_TXRALPHA_DISABLE; } /* (a frame buffer without its alpha: the corners') */
         if (d->mode[0] == 2) {
             sUs = (float)GS_W / (float)t->w;
             sVs = (float)GS_H / (float)t->h;
@@ -1004,13 +1006,7 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
    one left out). The Dreamcast's default while its 8 MB of PVR memory has no room for them (gpu_pvr has 16 for
    now: gpu_pvr/kos/arch/arch.h GPU_PVR_VRAM_MB). */
 static int no_rtt(void) {
-#ifdef __DREAMCAST__
-    return 1;
-#else
-    static int v = -1;
-    if (v < 0) { v = getenv("BT3_PVR_NO_RTT") != NULL; }
-    return v;
-#endif
+    return !Rnd_FxOn(); /* (port/src/rnd_fx.c: the effects as records ask the same) */
 }
 
 /* The run collected for buffer sRunTarget, rendered into its texture. */
