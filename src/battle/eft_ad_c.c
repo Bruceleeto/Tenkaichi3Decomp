@@ -141,6 +141,9 @@ void EftSpr_DrawFlat(s32 r, s32 g, s32 b, s32 a, f32 u0, f32 v0, f32 u1, f32 v1,
         xs[3] = scr.x + w;
         ys[3] = scr.y + h;
         gOtCur = (u8 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         c = ctx;
         p = EftSpr_Rec(((s64)(s8)c << 9) | (abe << 6) | 0x14, *tex0, (u8)r | (u8)g << 8 | (u8)b << 16 | (u32)(u8)a << 24, xs, ys,
                        scr.z, u0, v0, u1, v1);
@@ -305,6 +308,9 @@ void EftSpr_DrawRot(u8 r, u8 g, u8 b, u8 a, f32 x, f32 y, f32 z, f32 u0, f32 v0,
             ys[i] = scr.y + c[i].y;
         }
         gOtCur = (u8 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         cc = ctx;
         p = EftSpr_Rec(((s64)(s8)cc << 9) | (abe << 6) | 0x14, *tex0, r | g << 8 | b << 16 | (u32)a << 24, xs, ys, scr.z, u0,
                        v0, u1, v1);
