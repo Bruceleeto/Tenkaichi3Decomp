@@ -520,6 +520,7 @@ static void EftStorm_RecSprite(EftStormBolt *bolt, EftScrXyz *a, EftScrXyz *b, u
     void *r = Ot_NewRec(0x54, 4);
 
     Ot_RecTex0(r, tex0);
+    EftVram_PortRecTex(r, tex0);
     Ot_RecVtx(r, 0, a->x, a->y, a->z, 0.0f, 0.0f, 1.0f, rgba);
     Ot_RecVtx(r, 1, b->x, a->y, a->z, 1.0f, 0.0f, 1.0f, rgba);
     Ot_RecVtx(r, 2, a->x, b->y, a->z, 0.0f, 1.0f, 1.0f, rgba);
