@@ -118,11 +118,19 @@ int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
 int Port_ListRead(void);         /* 1: the display list is read for what only the PS2 needs (the PS2 reference): 0 = such
                                     packets need not be built (the Dreamcast; BT3_WALK=3 on PC) */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
-/* port/src/rnd_gs.c. The GS state the game sets, followed into gRndCtx from each packet the display list gets
-   (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them) where the list
-   is read (Port_ListRead); elsewhere only looked at (the state put back): the producers set it (Rnd_GsReg). */
-int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from); /* 1: the packet only sets state, all of it
-                                                                           followed; from: its producer (BT3_FOLLOW_LOG) */
+#ifdef PORT_GS_REF
+/* port/src/rnd_gs.c. The PS2 reference only (where the display list is read: Port_ListRead): the GS state the game
+   sets, followed into gRndCtx from each packet the list gets as well (src/sys/dma.c: DMA CNT tags and their VIF
+   DIRECT data, as Dma_AddData / Dma_EndDirect close them). Elsewhere the producers set it (Rnd_GsReg) and nothing
+   reads the packets. */
+void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from);
+/* BT3_FOLLOW_LOG=1 where the list is not read: what a packet would change of the state, not applied: its producer
+   (from) counted if anything (a producer that does not set all of its state directly) */
+void Rnd_GsFollowLog(const uint32_t *pkt, unsigned bytes, const void *from);
+#define PORT_FOLLOW_LOG(pkt, bytes, from) Rnd_GsFollowLog((const uint32_t *)(pkt), bytes, from)
+#else
+#define PORT_FOLLOW_LOG(pkt, bytes, from) ((void)0)
+#endif
 void Rnd_GsFollowFrame(void);
 /* A GS register's value as the game sets it (address of context 1's register, + 1 for context 2's; PRIM 0x00,
    RGBAQ 0x01, ST 0x02, UV 0x03 too), straight into the renderer's state: a producer's state without a packet. */

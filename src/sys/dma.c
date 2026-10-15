@@ -34,12 +34,14 @@ void Dma_InitBuffers(void) {
 /* Copies `size` bytes (whole quadwords) of ready-made packet data to the display list. */
 void Dma_AddData(void *src, s32 size) {
 #ifdef PORT
-    /* a packet of only GS state is not kept where nothing reads the list (Port_ListRead 0: the Dreamcast), its
-       producer having set that state directly (Rnd_GsReg); where the list is read the state is followed from it as
-       well (port/src/rnd_gs.c Rnd_GsFollow) */
-    if (Rnd_GsFollow(src, size, __builtin_return_address(0)) && !Port_ListRead()) {
+    if (!Port_ListRead()) { /* nothing reads the list (the Dreamcast; BT3_WALK=3): nothing kept, the producers having
+                               set the state directly (Rnd_GsReg) and queued their draws as records */
+        PORT_FOLLOW_LOG(src, size, __builtin_return_address(0));
         return;
     }
+#ifdef PORT_GS_REF
+    Rnd_GsFollow(src, size, __builtin_return_address(0)); /* (the PS2 reference reads it: the state followed as well) */
+#endif
 #endif
     memcpy(gDmaCur, src, size);
     gDmaCur = (u32 *)((u8 *)gDmaCur + size / 16 * 16);
@@ -127,9 +129,13 @@ void Dma_EndDirect(u64 *end) {
         tag[2] = VIF_FLUSHE;
         tag[3] = VIF_DIRECT | qwc;
 #ifdef PORT
-        if (Rnd_GsFollow(tag, (qwc + 1) << 4, __builtin_return_address(0)) && !Port_ListRead()) {
-            return; /* (only state: as Dma_AddData) */
+        if (!Port_ListRead()) { /* (nothing reads the list: as Dma_AddData) */
+            PORT_FOLLOW_LOG(tag, (qwc + 1) << 4, __builtin_return_address(0));
+            return;
         }
+#ifdef PORT_GS_REF
+        Rnd_GsFollow(tag, (qwc + 1) << 4, __builtin_return_address(0));
+#endif
 #endif
         FlushCache(0);
         gDmaCur = (u32 *)end;
