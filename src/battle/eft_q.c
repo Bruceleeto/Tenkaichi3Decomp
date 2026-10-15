@@ -1164,28 +1164,38 @@ void EftFlash_Draw(EftQTask *task) {
     OtEntry *e;
 
     Vec4_Lerp((Vec4 *)&col, (Vec4 *)&clear, (Vec4 *)&w->arg.color, w->fade);
-    p = (EftQSpritePkt *)gOtCur;
-    gOtCur = (u32 *)(p + 1);
-    p->dmaTag = 0x20000003;
-    p->vif1 = 0x50000003;
-    p->prim = 0x46;
-    p->vif0 = 0x10000000;
-    p->gifTag = 0x4400000000008001;
-    p->regs = 0x4410;
-    p->next = NULL;
-    p->rgbaq.r = col.x;
-    p->rgbaq.g = col.y;
-    p->rgbaq.b = col.z;
-    p->rgbaq.a = col.w;
-    p->xyz0.x = 0x7000;
-    p->xyz0.y = 0x7200;
-    p->xyz1.x = -0x7000;
-    p->xyz1.y = -0x7200;
-    p->xyz0.z = 0xFFFFFF;
-    p->xyz1.z = 0xFFFFFF;
-    p->rgbaq.q = 1.0f;
-    p->xyz0.f = 0xFF;
-    p->xyz1.f = 0xFF;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the sprite as a record, in the packet's place */
+        u32 rgba = (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)col.w << 24;
+        p = Ot_NewRec(0x46, 2);
+        Ot_RecVtx(p, 0, 0x7000, 0x7200, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 1, (u16)-0x7000, (u16)-0x7200, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
+    } else
+#endif
+    {
+        p = (EftQSpritePkt *)gOtCur;
+        gOtCur = (u32 *)(p + 1);
+        p->dmaTag = 0x20000003;
+        p->vif1 = 0x50000003;
+        p->prim = 0x46;
+        p->vif0 = 0x10000000;
+        p->gifTag = 0x4400000000008001;
+        p->regs = 0x4410;
+        p->next = NULL;
+        p->rgbaq.r = col.x;
+        p->rgbaq.g = col.y;
+        p->rgbaq.b = col.z;
+        p->rgbaq.a = col.w;
+        p->xyz0.x = 0x7000;
+        p->xyz0.y = 0x7200;
+        p->xyz1.x = -0x7000;
+        p->xyz1.y = -0x7200;
+        p->xyz0.z = 0xFFFFFF;
+        p->xyz1.z = 0xFFFFFF;
+        p->rgbaq.q = 1.0f;
+        p->xyz0.f = 0xFF;
+        p->xyz1.f = 0xFF;
+    }
     e = &gOtLast->layer[1];
     e->tail->next = (OtPrim *)p;
     e->tail = (OtPrim *)p;
