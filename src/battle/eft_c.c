@@ -10,6 +10,7 @@
 #include "sys/gfx_ot.h"
 #ifdef PORT
 #include "port/rnd.h"
+extern void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal); /* battle/eft_ae.h */
 #endif
 
 /*
@@ -1425,6 +1426,12 @@ void EftSurf_PutTri(s32 *xyz0, s32 *xyz1, s32 *xyz2, Vec4 *st0, Vec4 *st1, Vec4 
         Rnd_Vtx(&r.v[1], 0, xyz1[0], xyz1[1], (u32)xyz1[2], st1->x, st1->y, st1->z, (u32)EFT_F2RGBA(rgba1));
         Rnd_Vtx(&r.v[2], 0, xyz2[0], xyz2[1], (u32)xyz2[2], st2->x, st2->y, st2->z, (u32)EFT_F2RGBA(rgba2));
         r.n = 3;
+        {
+            u32 tex, pal;
+            EftVram_PortHandles(tex0, &tex, &pal); /* (by handles: what the TEX0 names among this frame's uploads) */
+            r.tex = tex;
+            r.pal = pal;
+        }
         r.gsTex0 = tex0;
         if (Rnd_Draw(&r, 0, 1, 1)) {
             return;
@@ -1764,6 +1771,7 @@ static inline void EftSurf_QueueTri(EftScreenPos *v0, EftScreenPos *v1, EftScree
     if (Port_TakesRecords()) { /* the triangle as a record */
         p = Ot_NewRec(((u64)abe << 6) | 0x1B, 3);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, v0->x, v0->y, v0->z, uv0->x, uv0->y, uv0->z, Ot_RecRgba(c0[0], c0[1], c0[2], c0[3]));
         Ot_RecVtx(p, 1, v1->x, v1->y, v1->z, uv1->x, uv1->y, uv1->z, Ot_RecRgba(c1[0], c1[1], c1[2], c1[3]));
         Ot_RecVtx(p, 2, v2->x, v2->y, v2->z, uv2->x, uv2->y, uv2->z, Ot_RecRgba(c2[0], c2[1], c2[2], c2[3]));
