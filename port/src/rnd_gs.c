@@ -305,7 +305,15 @@ static int walk(const uint64_t *d, unsigned qwc, int mode) {
                     case 0: gs_write(0, lo & 0x7FF, taken); break;
                     case 6: case 7: case 8: case 9: gs_write(r, lo, taken); break;
                     case 14: /* A+D */
-                        if ((hi & 0xFF) <= 0x05 || (hi & 0xFF) == 0x0C || (hi & 0xFF) == 0x0D) { /* (vertex registers by address) */
+                        if ((hi & 0xFF) == 0x00) { /* PRIM, RGBAQ, ST, UV by address: in their registers' format, as REGLIST */
+                            gs_write(0, lo & 0x7FF, taken);
+                        } else if ((hi & 0xFF) == 0x01) {
+                            sRgba = (uint32_t)lo; memcpy(&sQ, (const uint8_t *)&lo + 4, 4);
+                        } else if ((hi & 0xFF) == 0x02) {
+                            memcpy(&sS, &lo, 4); memcpy(&sT, (const uint8_t *)&lo + 4, 4);
+                        } else if ((hi & 0xFF) == 0x03) {
+                            sU = (int)(lo & 0x3FFF); sVv = (int)((lo >> 16) & 0x3FFF);
+                        } else if ((hi & 0xFF) <= 0x05 || (hi & 0xFF) == 0x0C || (hi & 0xFF) == 0x0D) { /* (vertex registers by address) */
                             ok = 0;
                         } else if (!gs_write((uint32_t)hi & 0xFF, lo, taken)) {
                             static int told;
@@ -329,21 +337,25 @@ static int walk(const uint64_t *d, unsigned qwc, int mode) {
     return ok ? kicks : -1;
 }
 
-void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes) {
+int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes) {
     const uint32_t *end = pkt + bytes / 4;
+    int only = 1;
     if (sInOt) {
-        return;
+        return 0;
     }
     while (pkt + 4 <= end) { /* DMA CNT tags, each with its VIF codes: the GIF data of a DIRECT */
         unsigned qwc = pkt[0] & 0xFFFF, id = (pkt[0] >> 28) & 7;
         if (id != 1 || pkt + 4 + qwc * 4 > end) {
-            return;
+            return 0;
         }
         if ((pkt[3] >> 24 & 0x7F) == 0x50 || (pkt[3] >> 24 & 0x7F) == 0x51) {
-            walk((const uint64_t *)(pkt + 4), qwc, FOLLOW);
+            only &= walk((const uint64_t *)(pkt + 4), qwc, FOLLOW) == 0; /* (no draw, no upload, every register followed) */
+        } else {
+            only = 0;
         }
         pkt += 4 + qwc * 4;
     }
+    return only && pkt == end;
 }
 
 void Rnd_OtBegin(void) {

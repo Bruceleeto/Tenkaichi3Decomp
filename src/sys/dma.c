@@ -34,7 +34,11 @@ void Dma_InitBuffers(void) {
 /* Copies `size` bytes (whole quadwords) of ready-made packet data to the display list. */
 void Dma_AddData(void *src, s32 size) {
 #ifdef PORT
-    Rnd_GsFollow(src, size); /* the GS state it sets, as the renderer's (port/src/rnd_gs.c) */
+    /* the GS state it sets, as the renderer's (port/src/rnd_gs.c); a packet of only that is not kept where nothing
+       reads the list (Port_ListRead 0: the Dreamcast) */
+    if (Rnd_GsFollow(src, size) && !Port_ListRead()) {
+        return;
+    }
 #endif
     memcpy(gDmaCur, src, size);
     gDmaCur = (u32 *)((u8 *)gDmaCur + size / 16 * 16);
@@ -122,7 +126,9 @@ void Dma_EndDirect(u64 *end) {
         tag[2] = VIF_FLUSHE;
         tag[3] = VIF_DIRECT | qwc;
 #ifdef PORT
-        Rnd_GsFollow(tag, (qwc + 1) << 4);
+        if (Rnd_GsFollow(tag, (qwc + 1) << 4) && !Port_ListRead()) {
+            return; /* (only state, followed: as Dma_AddData) */
+        }
 #endif
         FlushCache(0);
         gDmaCur = (u32 *)end;
