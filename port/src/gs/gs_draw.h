@@ -121,7 +121,7 @@ extern unsigned gsNative;       /* native effect markers seen this frame */
 extern unsigned gsSkipped;      /* primitives of PS2-only passes dropped this frame */
 extern unsigned gsRndFallback;  /* quads the game handed over drawn from GS memory (no handle that names anything) */
 extern unsigned gsRndByTex0, gsRndHandleMiss; /* records textured by TEX0 alone; with a handle that named nothing */
-extern int gGsMainFbp;          /* the frame buffer the game shows (gs_sony.c), -1 before the first swap */
+extern int gGsMainFbp;          /* the frame buffer the game shows (gs_walk.c, from sceGsSwapDBuff), -1 before the first swap */
 /* created / spent since the front end last cleared them (gs_core.c's slow-frame report) */
 extern unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes;
 extern unsigned gGpuTexReplaced; /* textures taken from a texture pack so far */

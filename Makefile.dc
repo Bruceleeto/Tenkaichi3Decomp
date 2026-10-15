@@ -53,7 +53,7 @@ PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/inc
 PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
 PC_HARD     := plat_libm plat_fastvec vu1_native
 
-# the PS2 reference is still linked (port/src/gs/gs_core.c, gs_vu1.c, gs_sony.c), until the walker takes its place
+# the PS2 reference is still linked (port/src/gs/gs_core.c, gs_vu1.c), until the walker takes its place
 GAME_CFLAGS += -DPORT_GS_REF
 GS_CFLAGS   += -DPORT_GS_REF
 PC_CFLAGS   += -DPORT_GS_REF
