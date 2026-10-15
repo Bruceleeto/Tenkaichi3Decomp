@@ -891,6 +891,7 @@ void EftChain_DrawStrand(EftArc *w, EftArc *w2, EftArcChain *ch) {
                     rgbaA = (u8)colA[0] | (u8)colA[1] << 8 | (u8)colA[2] << 16 | (u32)(u8)colA[3] << 24;
                     rgbaB = (u8)colB[0] | (u8)colB[1] << 8 | (u8)colB[2] << 16 | (u32)(u8)colB[3] << 24;
                     Ot_RecTex0(pkt, w2->tex0);
+                    EftVram_PortRecTex(pkt, w2->tex0);
                     for (j = 0; j < 4; j++) {
                         Ot_RecVtx(pkt, j, (u16)scr[j].x, (u16)scr[j].y, scr[j].z, st[j].x, st[j].y, st[j].z, j < 2 ? rgbaA : rgbaB);
                     }
@@ -2475,6 +2476,7 @@ void EftRay_DrawQuad2D(Vec4 *corner, s32 z, u8 r0, u8 g0, u8 b0, u8 a0, u8 r1, u
 
             q = Ot_NewRec(0x5C, 4);
             Ot_RecTex0(q, tex->tex0);
+            EftVram_PortRecTex(q, tex->tex0);
             for (i = 0; i < 4; i++) {
                 Ot_RecVtx(q, i, (u16)((u16)scr[i].x * 16 + 0x7000), (u16)((u16)scr[i].y * 16 + 0x7200), 0xFFFFFF, uv[i].x,
                           tv[i].y, 1.0f, i < 2 ? rgba0 : rgba1);
