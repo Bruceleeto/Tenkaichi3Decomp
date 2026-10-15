@@ -282,18 +282,23 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
     p += 2;
     p[0] = 0x44;
     p[1] = GS_ALPHA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000; /* alpha and depth tests always pass */
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = GS_FBA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = GFX_CLEAR_RGBAQ;
     p[1] = GS_RGBAQ;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x44; /* triangle strip, alpha blended */
     p[1] = GS_PRIM;
+    PORT_AD(p, 0);
     p += 2;
 #ifdef PORT
     Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
@@ -351,18 +356,22 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
     p += 2;
     p[0] = 0x44;
     p[1] = GS_ALPHA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000;
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = GS_FBA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x3F800000FF000000;
     p[1] = GS_RGBAQ;
     p += 2;
     p[0] = 0x44;
     p[1] = GS_PRIM;
+    PORT_AD(p, 0);
     p += 2;
 #ifdef PORT
     Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
@@ -410,9 +419,11 @@ void HudGfx_ClearAlpha(void) {
         p += 2;
         p[0] = GFX_CLEAR_RGBAQ;
         p[1] = GS_RGBAQ;
+        PORT_AD(p, 0);
         p += 2;
         p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
         p[1] = GS_ZBUF_1;
+        PORT_AD(p, 0);
         p += 2;
         Rnd_SetFlag(0, RND_ZWRITE, 1);
         HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p);
@@ -426,6 +437,7 @@ void HudGfx_ClearAlpha(void) {
         p += 2;
         p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
         p[1] = GS_ZBUF_1;
+        PORT_AD(p, 0);
         p += 2;
         Dma_EndDirect(p);
         return;
@@ -437,12 +449,15 @@ void HudGfx_ClearAlpha(void) {
     p += 2;
     p[0] = GFX_CLEAR_RGBAQ;
     p[1] = GS_RGBAQ;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
     p[1] = GS_ZBUF_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x46; /* sprite, alpha blended */
     p[1] = GS_PRIM;
+    PORT_AD(p, 0);
     p += 2;
     tag = p;
     p += 2;
@@ -463,6 +478,7 @@ void HudGfx_ClearAlpha(void) {
     p += 2;
     p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
     p[1] = GS_ZBUF_1;
+    PORT_AD(p, 0);
     p += 2;
     Dma_EndDirect(p);
 }
