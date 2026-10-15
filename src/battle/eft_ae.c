@@ -889,6 +889,34 @@ static inline void EftSprAnim_QueueTri(EftAeScr *v0, EftAeScr *v1, EftAeScr *v2,
     if (c0->w <= 0.0f && c1->w <= 0.0f && c2->w <= 0.0f) {
         return;
     }
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the triangle as a record between the packet's two CLAMP (0x08 + ctx) writes, kept as packets */
+        void *q;
+        u32 fz = mode != 0;
+        l = otLayer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        if (z < 0) {
+            e = &gOtZ[0].layer[l];
+        } else if (z >= 0x1000) {
+            e = &gOtZ[0xFFF].layer[l];
+        } else {
+            e = &gOtZ[z].layer[l];
+        }
+        q = Ot_NewAd(0x08 + ctx, 5);
+        Ot_Add(q, e);
+        q = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1B, 3);
+        Ot_RecTex0(q, tex0);
+        Ot_RecVtx(q, 0, v0->x, v0->y, fz ? 0xFFFFFF : v0->z, uv0->x, uv0->y, uv0->z, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
+        Ot_RecVtx(q, 1, v1->x, v1->y, fz ? 0xFFFFFF : v1->z, uv1->x, uv1->y, uv1->z, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
+        Ot_RecVtx(q, 2, v2->x, v2->y, fz ? 0xFFFFFF : v2->z, uv2->x, uv2->y, uv2->z, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
+        Ot_Add(q, e);
+        q = Ot_NewAd(0x08 + ctx, 0);
+        Ot_Add(q, e);
+        return;
+    }
+#endif
     p = (EftAeTriPkt *)gOtCur;
     gOtCur = (u32 *)(p + 1);
     p->prim = ((u64)abe << 6) | ((u64)ctx << 9) | 0x1B;
