@@ -154,6 +154,7 @@ void BtlText_PutScissor(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1) {
     *pkt += 2;
     (*pkt)[0] = (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48);
     (*pkt)[1] = 0x40;
+    PORT_AD((*pkt), 0);
     *pkt += 2;
 }
 
