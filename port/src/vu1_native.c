@@ -784,3 +784,88 @@ int Vu1Native_Prog6(const void *chain) {
     walk(chain, p6_batch, &wk);
     return 1;
 }
+
+/* ---------------------------------------------------------------------------------------------- program 7 */
+
+/* Program 7 draws the stage's debris (StgModel_DrawDebris): program 4's batches (the 3-quadword header, a corner
+   of position, colour, s t q) without the object header and without the clipper. Each mesh is called with its
+   own constants (Vu1Pkt_CallProg7): its matrix L (0..3), screen S (4..7), clip C (8..11), its alpha (12.w); the
+   program first makes S L and C L (a column of L at a time), w is taken as 1, the corners' alpha is the mesh's,
+   and a triangle is left out (ADC) when one of its corners is outside the clip volume or when its last corner's
+   flag (the low half of the position's w) is not 0 (the count plus the flag, as 16 bits, not 0). */
+#define P7_MAXV 84 /* corners of one batch (the output at TOP + 255 leaves room for 84) */
+
+typedef struct P7Walk {
+    int draw;
+    float sl[16], cl[16], alpha;
+} P7Walk;
+
+static int p7_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    static RndVtx out[P7_MAXV];
+    static uint8_t adc[P7_MAXV];
+    P7Walk *wk = (P7Walk *)arg;
+    uint32_t prim, n, i, k, flags[3] = {0, 0, 0};
+    uint64_t lo;
+    int ctx;
+
+    split(hdr, &nh, &vtx, &nv, 3);
+    memcpy(&lo, hdr, 8);
+    /* +0 a tag of one NOP register (its quadword +1 is thrown away by the GIF), +2 the strip's tag */
+    if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 15) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 ||
+        (hdr[2] & 15) != 15 || !tag_ok(hdr + 8, 4, 1)) {
+        return 0;
+    }
+    prim = tag_prim(hdr + 8);
+    n = hdr[8] & 0x7FFF;
+    ctx = (int)(prim >> 9) & 1;
+    if (n > P7_MAXV || n * 3 > nv) {
+        return 0;
+    }
+    if (!wk->draw) {
+        return gRndCtxBad[ctx] == 0;
+    }
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12); /* position (w: the flag), colour, s t q */
+        float s[4], c[4], q;
+        int32_t col[4];
+
+        mtx_apply(s, wk->sl, v[0], v[1], v[2], 1.0f);
+        mtx_apply(c, wk->cl, v[0], v[1], v[2], 1.0f);
+        q = vu_div(1.0f, s[3]);
+        for (k = 0; k < 4; k++) {
+            s[k] = vu_clamp(s[k] * q);
+            col[k] = vu_ftoi(k < 3 ? v[4 + k] : wk->alpha, 1.0f);
+        }
+        put_vtx(&out[i], ctx, s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col);
+        flags[0] = flags[1];
+        flags[1] = flags[2];
+        flags[2] = clip_flags(c);
+        adc[i] = (int16_t)(((flags[0] | flags[1] | flags[2]) != 0) + (int16_t)(vtx[i * 12 + 3] & 0xFFFF)) != 0;
+    }
+    put_strip(out, adc, n, prim, Rnd_Tex0(ctx), 0);
+    return 1;
+}
+
+int Vu1Native_Prog7(const void *chain, const void *consts) {
+    const float *k = (const float *)consts;
+    P7Walk wk;
+    int j;
+
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    memset(&wk, 0, sizeof(wk));
+    if (!walk(chain, p7_batch, &wk)) {
+        gVu1NativeStat[VU1N_P7][0]++;
+        return 0;
+    }
+    gVu1NativeStat[VU1N_P7][1]++;
+    for (j = 0; j < 4; j++) { /* S L, C L: S and C times each column of L */
+        mtx_apply(wk.sl + j * 4, k + 16, k[j * 4], k[j * 4 + 1], k[j * 4 + 2], k[j * 4 + 3]);
+        mtx_apply(wk.cl + j * 4, k + 32, k[j * 4], k[j * 4 + 1], k[j * 4 + 2], k[j * 4 + 3]);
+    }
+    wk.alpha = k[51];
+    wk.draw = 1;
+    walk(chain, p7_batch, &wk);
+    return 1;
+}

@@ -539,14 +539,14 @@ int main(int argc, char **argv) {
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
-    if (prog < 0 || (prog > 4 && prog != 6)) {
+    if (prog < 0 || prog == 5 || prog > 7) {
         fprintf(stderr, "program %d: not here\n", prog);
         return 2;
     }
     if (getenv("VU1_PRMODE") != NULL) {
         sPrmode = (uint32_t)strtoul(getenv("VU1_PRMODE"), NULL, 0);
     }
-    hdrSize = prog == 4 || (prog == 6 && part != 3) ? 1 : 5;
+    hdrSize = prog == 4 || (prog == 6 && part != 3) ? 1 : prog == 7 ? 3 : 5;
     f = fopen(blobPath, "rb");
     if (f == NULL) { perror(blobPath); return 2; }
     fseek(f, 0, SEEK_END);
@@ -556,10 +556,20 @@ int main(int argc, char **argv) {
     if (fread(sBlob, 1, sBlobSize, f) != sBlobSize) { return 2; }
     fclose(f);
     b = read_part(argv[2], part, &size);
+    if (prog == 7) { /* only a stage's part (one with the stage's chains, those with the object header) */
+        size_t n4 = 0;
+        for (off = 0; off + 16 <= size && n4 == 0; off += 16) {
+            n4 += is_chain((const uint32_t *)(b + off), (const uint32_t *)(b + size), 1);
+        }
+        if (n4 == 0) {
+            printf("program 7: 0 chains (not a stage)\n");
+            return 0;
+        }
+    }
     for (off = 0; off + 16 <= size; off += 16) {
         const uint32_t *t = (const uint32_t *)(b + off);
         if (is_chain(t, (const uint32_t *)(b + size), (int)hdrSize)) {
-            bounds(t, hdrSize == 1 ? 3 : 5, lo, hi);
+            bounds(t, hdrSize == 5 ? 5 : 3, lo, hi);
             chains++;
             off += (t[0] & 0xFFFF) * 16;
         }
@@ -641,6 +651,26 @@ int main(int argc, char **argv) {
                 run_chain(pkt);
                 Vu1Native_SetProg6(k6);
                 if (!Vu1Native_Prog6(pkt)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                }
+            } else if (prog == 7) {
+                /* Vu1Pkt_LoadProg7, then Vu1Pkt_CallProg7 (13 quadwords: a mesh matrix, screen, clip, the alpha) and
+                   the chain; the chains of the stage without the object header (the debris') */
+                static float k7[13 * 4] __attribute__((aligned(16)));
+                rot_mtx(k7, 0.36, 0.48, 0.8, 0.3 * cam - 0.5, span * 0.01, -span * 0.02, span * 0.005);
+                memcpy(k7 + 16, consts, 32 * sizeof(float));
+                k7[48] = 1.0f; k7[49] = 2.0f; k7[50] = 3.0f;
+                k7[51] = 40.0f + 31.7f * cam;
+                load_program(0x2C2D30 - 0x2BF6B0, 0x2C3080 - 0x2C2D30);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 13, 0, (const uint32_t *)k7);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0xD);
+                GsVu1_SetOffset(0x1F9);
+                gs.tex0[0] = STAGE_TEX0;
+                run_chain(t);
+                if (!Vu1Native_Prog7(t, k7)) {
                     printf("chain at +0x%zX: not taken\n", off);
                     sBad++;
                 }

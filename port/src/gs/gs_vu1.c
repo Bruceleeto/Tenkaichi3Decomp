@@ -788,7 +788,7 @@ void GsVu1_FrameEnd(void) {
     int k, i;
 
     if (getenv("BT3_GS_VERBOSE") != NULL && (gGsFrame < 4 || gGsFrame % 60 == 0)) {
-        static const char *const names[VU1N_STATS] = {"0", "1", "4", "2a", "2b", "6"};
+        static const char *const names[VU1N_STATS] = {"0", "1", "4", "2a", "2b", "6", "7"};
         fprintf(stderr, "vu1: frame %u: %u interpreted runs, %u instructions, %u kicks; %u calls served by shaders; as records "
                 "(packets / records): program", gGsFrame, sStatRuns, sStatInstr, sStatKicks, sHle);
         for (k = 0; k < VU1N_STATS; k++) {

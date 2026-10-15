@@ -47,6 +47,20 @@ extern void Vu0Screen_StoreMtx(void *m);                     /* m = vf24-27 */
 
 /* Program 7 draw: current matrix, the two camera matrices and w, then the caller's vertex chain. */
 u32 *Vu1Pkt_CallProg7(u32 chain, f32 w) {
+#ifdef PORT
+    {
+        /* the mesh as records (port/include/vu1_native.h), with the constants the packet would carry */
+        static u32 k[0x34] __attribute__((aligned(16)));
+
+        Vu0Cur_StoreMtx(k);
+        Vu0Screen_StoreMtx(k + 0x10);
+        Vu0Clip_StoreMtx(k + 0x20);
+        ((f32 *)k)[0x33] = w;
+        if (Vu1Native_Prog7((void *)(chain & VU1_ADDR_MASK), k)) {
+            return NULL;
+        }
+    }
+#endif
     u32 *p = Dma_Alloc(0xF0);
 
     Vu0Cur_StoreMtx(p + 4);

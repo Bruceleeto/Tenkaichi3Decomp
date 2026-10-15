@@ -36,8 +36,12 @@ void Vu1Native_SetProg2(int alt, const void *consts);
 void Vu1Native_SetProg6(const void *consts);
 int Vu1Native_Prog6(const void *chain);
 
+/* Program 7 (the stage's debris): a mesh's chain drawn with the 13 quadwords Vu1Pkt_CallProg7 would put at VU
+   address 0 (its matrix, screen, clip, its alpha in 12.w); 1 = taken. */
+int Vu1Native_Prog7(const void *chain, const void *consts);
+
 /* The calls of each program sent as packets [0] and drawn as records [1] (BT3_GS_VERBOSE). */
-enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_P6, VU1N_STATS };
+enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_P6, VU1N_P7, VU1N_STATS };
 extern unsigned gVu1NativeStat[VU1N_STATS][2];
 
 #endif
