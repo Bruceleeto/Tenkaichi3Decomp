@@ -870,81 +870,109 @@ void EftChain_DrawStrand(EftArc *w, EftArc *w2, EftArcChain *ch) {
                 if (pkt == NULL) {
                     return;
                 }
-                if (p->layer < 2) {
-                    pkt->prim = 0x5C;
-                    pkt->tag = 0x20000008;
-                    pkt->vif0 = 0x10000000;
-                    pkt->vif1 = 0x50000008;
-                    pkt->gif0 = 0xE400000000008001;
-                    pkt->gif1 = 0x42142142142160;
-                    pkt->next = 0;
-                } else {
-                    pkt->prim = 0x25C;
-                    pkt->tag = 0x20000008;
-                    pkt->vif0 = 0x10000000;
-                    pkt->vif1 = 0x50000008;
-                    pkt->gif0 = 0xE400000000008001;
-                    pkt->gif1 = 0x42142142142170;
-                    pkt->next = 0;
-                }
-                for (j = 0; j < 4; j++) {
-                    f32 q = 1.0f / (f32)scr[j].w;
+#ifdef PORT
+                if (Port_TakesRecords()) { /* the strip as a record, in the packet's place (context 2 from layer 2 on) */
+                    u32 rgbaA, rgbaB;
+                    gOtCur = (u32 *)pkt;
+                    pkt = Ot_NewRec(p->layer < 2 ? 0x5C : 0x25C, 4);
+                    for (j = 0; j < 4; j++) {
+                        f32 q = 1.0f / (f32)scr[j].w;
 
-                    Vec3_Scale(V(&st[j]), V(&uv[j]), q);
-                }
-                Vec4_ToInt(colA, V(&n->color));
-                Vec4_ToInt(colB, V(&next->color));
-                z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
-                if (w2->flags & EFT_ARC_WHITE) {
-                    for (j = 3; j >= 0; j--) {
-                        scr[j].z = 0xFFFFFF;
+                        Vec3_Scale(V(&st[j]), V(&uv[j]), q);
                     }
+                    Vec4_ToInt(colA, V(&n->color));
+                    Vec4_ToInt(colB, V(&next->color));
+                    z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
+                    if (w2->flags & EFT_ARC_WHITE) {
+                        for (j = 3; j >= 0; j--) {
+                            scr[j].z = 0xFFFFFF;
+                        }
+                    }
+                    rgbaA = (u8)colA[0] | (u8)colA[1] << 8 | (u8)colA[2] << 16 | (u32)(u8)colA[3] << 24;
+                    rgbaB = (u8)colB[0] | (u8)colB[1] << 8 | (u8)colB[2] << 16 | (u32)(u8)colB[3] << 24;
+                    Ot_RecTex0(pkt, w2->tex0);
+                    for (j = 0; j < 4; j++) {
+                        Ot_RecVtx(pkt, j, (u16)scr[j].x, (u16)scr[j].y, scr[j].z, st[j].x, st[j].y, st[j].z, j < 2 ? rgbaA : rgbaB);
+                    }
+                } else
+#endif
+                {
+                    if (p->layer < 2) {
+                        pkt->prim = 0x5C;
+                        pkt->tag = 0x20000008;
+                        pkt->vif0 = 0x10000000;
+                        pkt->vif1 = 0x50000008;
+                        pkt->gif0 = 0xE400000000008001;
+                        pkt->gif1 = 0x42142142142160;
+                        pkt->next = 0;
+                    } else {
+                        pkt->prim = 0x25C;
+                        pkt->tag = 0x20000008;
+                        pkt->vif0 = 0x10000000;
+                        pkt->vif1 = 0x50000008;
+                        pkt->gif0 = 0xE400000000008001;
+                        pkt->gif1 = 0x42142142142170;
+                        pkt->next = 0;
+                    }
+                    for (j = 0; j < 4; j++) {
+                        f32 q = 1.0f / (f32)scr[j].w;
+
+                        Vec3_Scale(V(&st[j]), V(&uv[j]), q);
+                    }
+                    Vec4_ToInt(colA, V(&n->color));
+                    Vec4_ToInt(colB, V(&next->color));
+                    z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
+                    if (w2->flags & EFT_ARC_WHITE) {
+                        for (j = 3; j >= 0; j--) {
+                            scr[j].z = 0xFFFFFF;
+                        }
+                    }
+                    pkt->v[0].rgba[0] = colA[0];
+                    pkt->v[0].rgba[1] = colA[1];
+                    pkt->v[0].rgba[2] = colA[2];
+                    pkt->v[0].rgba[3] = colA[3];
+                    pkt->v[0].q = st[0].z;
+                    pkt->v[1].rgba[0] = colA[0];
+                    pkt->v[1].rgba[1] = colA[1];
+                    pkt->v[1].rgba[2] = colA[2];
+                    pkt->v[1].rgba[3] = colA[3];
+                    pkt->v[1].q = st[1].z;
+                    pkt->v[2].rgba[0] = colB[0];
+                    pkt->v[2].rgba[1] = colB[1];
+                    pkt->v[2].rgba[2] = colB[2];
+                    pkt->v[2].rgba[3] = colB[3];
+                    pkt->v[2].q = st[2].z;
+                    pkt->v[3].rgba[0] = colB[0];
+                    pkt->v[3].rgba[1] = colB[1];
+                    pkt->v[3].rgba[2] = colB[2];
+                    pkt->v[3].rgba[3] = colB[3];
+                    pkt->v[3].q = st[3].z;
+                    pkt->v[0].s = st[0].x;
+                    pkt->v[0].t = st[0].y;
+                    pkt->v[1].s = st[1].x;
+                    pkt->v[1].t = st[1].y;
+                    pkt->v[2].s = st[2].x;
+                    pkt->v[2].t = st[2].y;
+                    pkt->v[3].s = st[3].x;
+                    pkt->v[3].t = st[3].y;
+                    pkt->v[0].xyz.x = scr[0].x;
+                    pkt->v[0].xyz.y = scr[0].y;
+                    pkt->v[0].xyz.z = scr[0].z;
+                    pkt->v[0].xyz.f = 0xFF;
+                    pkt->v[1].xyz.x = scr[1].x;
+                    pkt->v[1].xyz.y = scr[1].y;
+                    pkt->v[1].xyz.z = scr[1].z;
+                    pkt->v[1].xyz.f = 0xFF;
+                    pkt->v[2].xyz.x = scr[2].x;
+                    pkt->v[2].xyz.y = scr[2].y;
+                    pkt->v[2].xyz.z = scr[2].z;
+                    pkt->v[2].xyz.f = 0xFF;
+                    pkt->v[3].xyz.x = scr[3].x;
+                    pkt->v[3].xyz.y = scr[3].y;
+                    pkt->v[3].xyz.z = scr[3].z;
+                    pkt->v[3].xyz.f = 0xFF;
+                    pkt->tex0 = w2->tex0;
                 }
-                pkt->v[0].rgba[0] = colA[0];
-                pkt->v[0].rgba[1] = colA[1];
-                pkt->v[0].rgba[2] = colA[2];
-                pkt->v[0].rgba[3] = colA[3];
-                pkt->v[0].q = st[0].z;
-                pkt->v[1].rgba[0] = colA[0];
-                pkt->v[1].rgba[1] = colA[1];
-                pkt->v[1].rgba[2] = colA[2];
-                pkt->v[1].rgba[3] = colA[3];
-                pkt->v[1].q = st[1].z;
-                pkt->v[2].rgba[0] = colB[0];
-                pkt->v[2].rgba[1] = colB[1];
-                pkt->v[2].rgba[2] = colB[2];
-                pkt->v[2].rgba[3] = colB[3];
-                pkt->v[2].q = st[2].z;
-                pkt->v[3].rgba[0] = colB[0];
-                pkt->v[3].rgba[1] = colB[1];
-                pkt->v[3].rgba[2] = colB[2];
-                pkt->v[3].rgba[3] = colB[3];
-                pkt->v[3].q = st[3].z;
-                pkt->v[0].s = st[0].x;
-                pkt->v[0].t = st[0].y;
-                pkt->v[1].s = st[1].x;
-                pkt->v[1].t = st[1].y;
-                pkt->v[2].s = st[2].x;
-                pkt->v[2].t = st[2].y;
-                pkt->v[3].s = st[3].x;
-                pkt->v[3].t = st[3].y;
-                pkt->v[0].xyz.x = scr[0].x;
-                pkt->v[0].xyz.y = scr[0].y;
-                pkt->v[0].xyz.z = scr[0].z;
-                pkt->v[0].xyz.f = 0xFF;
-                pkt->v[1].xyz.x = scr[1].x;
-                pkt->v[1].xyz.y = scr[1].y;
-                pkt->v[1].xyz.z = scr[1].z;
-                pkt->v[1].xyz.f = 0xFF;
-                pkt->v[2].xyz.x = scr[2].x;
-                pkt->v[2].xyz.y = scr[2].y;
-                pkt->v[2].xyz.z = scr[2].z;
-                pkt->v[2].xyz.f = 0xFF;
-                pkt->v[3].xyz.x = scr[3].x;
-                pkt->v[3].xyz.y = scr[3].y;
-                pkt->v[3].xyz.z = scr[3].z;
-                pkt->v[3].xyz.f = 0xFF;
-                pkt->tex0 = w2->tex0;
                 EftChain_OtAdd((OtPrim *)pkt, z, p->layer);
             }
         }
