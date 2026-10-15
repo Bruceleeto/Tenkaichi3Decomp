@@ -975,6 +975,19 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
     }
 }
 
+/* BT3_PVR_NO_RTT=1: nothing rendered to a texture (the draws into the other frame buffers and those that sample
+   one left out). The Dreamcast's default while its 8 MB of PVR memory has no room for them (gpu_pvr has 16 for
+   now, kos_pvr.cpp VRAM_SIZE). */
+static int no_rtt(void) {
+#ifdef __DREAMCAST__
+    return 1;
+#else
+    static int v = -1;
+    if (v < 0) { v = getenv("BT3_PVR_NO_RTT") != NULL; }
+    return v;
+#endif
+}
+
 /* The run collected for buffer sRunTarget, rendered into its texture. */
 static void run_flush(void) {
     int tg = sRunTarget;
@@ -983,7 +996,7 @@ static void run_flush(void) {
 
     if (tg < 0) { return; }
     sRunTarget = -1;
-    sRunCount = 0; return; /* TODO: render to texture off for now (PVR memory); its readers are left out */
+    if (no_rtt()) { sRunCount = 0; return; }
     cur = sTgVer[tg];
     if (sRunBad) { /* left out: what it would make is wrong (the buffer is marked so its readers are left out too) */
         if (cur == NULL && (cur = sTgVer[tg] = ver_new(32, 32)) == NULL) { sRunCount = 0; return; }
@@ -1019,7 +1032,6 @@ static void run_flush(void) {
 
 /* The shown buffer's draws so far into the capture (going on from the last one of this frame). */
 static void capture_update(void) {
-    return; /* TODO: render to texture off for now (PVR memory) */
     if (sCapValid && sShownCapped == sShownCount) { return; }
     if (sCap == NULL && (sCap = ver_new(512, 512)) == NULL) { return; }
     if (sCap->final) { /* (the shown buffer's capture is only read by runs, never by the final render) */
@@ -1062,14 +1074,12 @@ static void frame_render(int shown) {
            work buffers made from those, and their drawing back (marked alphaBad along the way). */
         if (d->native == 3 && d->target == shown && d->pipeline >= 0 && d->pipeline < sPipeCount && (sPipeKey[d->pipeline] >> 16 & 8)) { tableAlpha = 1; }
         if (!draw_kept(d, n)) { continue; }
+        if (no_rtt() && (d->mode[0] == 2 || d->target != shown)) { continue; }
         if (d->target == shown) {
             uint32_t key = sPipeKey[d->pipeline];
             if ((key >> 16 & 7) == 0) { tableAlpha = 0; } /* the alpha written anew (the secondary buffer, draw_one) */
             if (tableAlpha && (key & 1) && ((key >> 7) & 3) == 1) { continue; } /* blended by that alpha */
         }
-        /* TODO: render to texture left out for now (its PVR memory: a full-screen buffer is 1 MB of the 3.3 MB left
-           for textures): neither the draws into the other frame buffers nor those that sample one are drawn. */
-        if (d->mode[0] == 2 || d->target != shown) { continue; }
         if (d->mode[0] == 2) { /* a frame buffer as its texture: the version of it there is now */
             int s = (int)((const PvrTex *)d->tex - sTgCol);
             TgVer *v;
