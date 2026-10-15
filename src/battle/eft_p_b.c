@@ -1068,10 +1068,13 @@ void EftGlow_DrawParts(EftPGlow *e, s32 objId, f32 alpha) {
             pkt = Ot_NewRec(0x5C, 4);
             if (p->flags & 0x20) {
                 Ot_RecTex0(pkt, *pairTex);
+                EftVram_PortRecTex(pkt, *pairTex);
             } else if (e->flags & 0x20) {
                 Ot_RecTex0(pkt, e->tex[1 + p->tex]);
+                EftVram_PortRecTex(pkt, e->tex[1 + p->tex]);
             } else {
                 Ot_RecTex0(pkt, e->tex[0]);
+                EftVram_PortRecTex(pkt, e->tex[0]);
             }
             for (i = 0; i < 4; i++) {
                 Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, uv[i].x, uv[i].y, uv[i].z, rgba);
