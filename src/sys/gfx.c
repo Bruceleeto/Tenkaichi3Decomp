@@ -261,56 +261,31 @@ void Gfx_AddDefaultEnv(void) {
 
 /* Writes the 13 quadwords that put GS context 1 back to the default full-screen drawing state. */
 void Gfx_PutDefaultEnv(GsQword **pp) {
-    (*pp)->d[0] = GIF_TAG(12, 1, 1);
-    (*pp)->d[1] = GIF_REG_AD;
+    PORT_PKT((*pp)->d, 0, GIF_TAG(12, 1, 1), GIF_REG_AD);
     (*pp)++;
-    (*pp)->d[0] = 0x8000000000; /* TA1 = 0x80 */
-    (*pp)->d[1] = GS_TEXA;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_TEXA, 0x8000000000); /* TA1 = 0x80 */
     (*pp)++;
-    (*pp)->d[0] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
-    (*pp)->d[1] = GS_XYOFFSET_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_XYOFFSET_1, GS_SET_XYOFFSET(GFX_OFX, GFX_OFY));
     (*pp)++;
-    (*pp)->d[0] = GS_SET_SCISSOR(0, GFX_WIDTH - 1, 0, GFX_HEIGHT - 1);
-    (*pp)->d[1] = GS_SCISSOR_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, GFX_WIDTH - 1, 0, GFX_HEIGHT - 1));
     (*pp)++;
-    (*pp)->d[0] = GFX_FRAME_REG();
-    (*pp)->d[1] = GS_FRAME_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_FRAME_1, GFX_FRAME_REG());
     (*pp)++;
-    (*pp)->d[0] = 0x50000; /* depth test on, pass when Z >= buffer; no alpha test */
-    (*pp)->d[1] = GS_TEST_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_TEST_1, 0x50000); /* depth test on, pass when Z >= buffer; no alpha test */
     (*pp)++;
-    (*pp)->d[0] = 0;
-    (*pp)->d[1] = GS_FBA_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_FBA_1, 0);
     (*pp)++;
-    (*pp)->d[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
-    (*pp)->d[1] = GS_ZBUF_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0));
     (*pp)++;
-    (*pp)->d[0] = 0x44; /* (Cs - Cd) * As + Cd */
-    (*pp)->d[1] = GS_ALPHA_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_ALPHA_1, 0x44); /* (Cs - Cd) * As + Cd */
     (*pp)++;
-    (*pp)->d[0] = GS_SET_CLAMP(1, 1, 0, 0, 0, 0);
-    (*pp)->d[1] = GS_CLAMP_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_CLAMP_1, GS_SET_CLAMP(1, 1, 0, 0, 0, 0));
     (*pp)++;
-    (*pp)->d[0] = 1;
-    (*pp)->d[1] = GS_PRMODECONT;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_PRMODECONT, 1);
     (*pp)++;
-    (*pp)->d[0] = 1;
-    (*pp)->d[1] = GS_COLCLAMP;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_COLCLAMP, 1);
     (*pp)++;
-    (*pp)->d[0] = 0x60; /* bilinear magnify and minify, no mipmaps */
-    (*pp)->d[1] = GS_TEX1_1;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_TEX1_1, 0x60); /* bilinear magnify and minify, no mipmaps */
     (*pp)++;
 #ifdef PORT
     Rnd_DefaultEnv((u32)(GFX_FRAME_REG() & 0x1FF));
