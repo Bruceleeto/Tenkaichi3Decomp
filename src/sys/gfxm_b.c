@@ -368,6 +368,87 @@ void GfxLens_SetPos(u32 slot, Vec4 *pos) {
     }
 }
 
+#ifdef PORT
+/* A sprite of the lens as a record: pixels x0..x1, y0..y1 (either way round), texels u0..u1, v0..v1 in sixteenths,
+   texture by handle tex or by where it was uploaded (tex0). */
+static void GfxLens_PortSprite(const RndState *st, u32 tex, u64 tex0, f32 x0, f32 y0, f32 x1, f32 y1, s32 u0,
+                               s32 v0, s32 u1, s32 v1, u32 rgba) {
+    RndQuad r;
+    s32 i;
+
+    memset(&r, 0, sizeof(r));
+    r.st = *st;
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = (i & 1) ? x1 : x0;
+        r.xy[i][1] = (i & 2) ? y1 : y0;
+        r.uv[i][0] = (s16)((i & 1) ? u1 : u0);
+        r.uv[i][1] = (s16)((i & 2) ? v1 : v0);
+        r.rgba[i] = rgba;
+    }
+    r.tex = tex;
+    r.gsTex0 = tex0;
+    Port_Quad(&r);
+}
+
+/* GfxLens_DrawOne as records, the same order: the frame's alpha cleared to 0 (its colour kept); the four mirrored
+   quarters of the lens texture (uploaded at 0x2F00, palette 0x2E00) write their alpha, times 0x20, into it (colour
+   kept); the capture (0x150, its colour) stretched over the lens, blended by that alpha (blend 0 normal, 1 added,
+   2 subtracted), drawn where the depth is 0 or more as with the default state's depth test. Then the state its
+   packet leaves. */
+static void GfxLens_PortOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
+    static const u8 sBlend[3] = { RND_BLEND_NORMAL, RND_BLEND_ADD, RND_BLEND_SUB };
+    RndState st;
+    u64 tex0 = gGfxLens.tex->entries->tex0 | 0x5C00400002F00;
+    f32 x[7];
+    f32 y[7];
+    f32 s[2];
+    f32 t[2];
+    s32 i;
+    u64 *p;
+
+    for (i = 0; i < 7; i++) {
+        x[i] = (f32)(pt[i].x - GFX_OFX) * 0.0625f;
+        y[i] = (f32)(pt[i].y - GFX_OFY) * 0.0625f;
+    }
+    for (i = 0; i < 2; i++) {
+        s[i] = (f32)(pt[5 + i].x - GFX_OFX) * (1.0f / 512.0f) * 0.0625f;
+        t[i] = (f32)(pt[5 + i].y - GFX_OFY) * (1.0f / 448.0f) * 0.0625f;
+        if (split != 0) {
+            s[i] += s[i];
+            if (side != 0) {
+                s[i] -= 1.0f;
+            }
+        }
+    }
+    Rnd_StateInit(&st, GFX_FRAME_FBP());
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_NO_COLOUR;
+    Rnd_FillRect(&st, 0.0f, 0.0f, 512.0f, 448.0f, 0);
+    st.flags = RND_NO_COLOUR | RND_SMOOTH;
+    for (i = 0; i < 4; i++) {
+        GfxLens_PortSprite(&st, 0, tex0, x[i], y[i], x[4], y[4], 0, 0, 0xFF0, 0xFF0, 0x20808080);
+    }
+    Rnd_StateInit(&st, GFX_FRAME_FBP());
+    st.blend = sBlend[(u32)blend < 3 ? blend : 0];
+    st.flags = RND_DEST_ALPHA | RND_SMOOTH;
+    st.ztest = RND_Z_GEQUAL;
+    GfxLens_PortSprite(&st, Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB, 0, x[0], y[0], x[3], y[3],
+                       (s32)(s[0] * 4096.0f), (s32)(t[0] * 4096.0f), (s32)(s[1] * 4096.0f), (s32)(t[1] * 4096.0f),
+                       rgba);
+    Gfx_AddDefaultEnv();
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(3, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = blend == 1 ? 0x58 : blend == 2 ? 0x52 : 0x54;
+    p[3] = GS_ALPHA_1;
+    p[4] = 0x56;
+    p[5] = GS_PRIM;
+    p[6] = (u64)rgba | 0x3F80000000000000;
+    p[7] = GS_RGBAQ;
+    Dma_EndDirect(p + 8);
+}
+#endif
+
 /* Draws one lens from its seven projected points: a black screen wipe in the chosen blend, the four mirrored
    quarters of the lens texture, then the captured screen stretched over the lens. */
 void GfxLens_DrawOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
@@ -376,6 +457,14 @@ void GfxLens_DrawOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
     f32 s;
     f32 t;
 
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        if (Rnd_FxOn()) {
+            GfxLens_PortOne(pt, split, side, rgba, blend);
+        }
+        return;
+    }
+#endif
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(1, 1, 1);
@@ -702,6 +791,68 @@ u64 *GfxLens_PutCapture(u64 *p, s32 split, s32 side) {
 }
 
 
+#ifdef PORT
+/* GfxLens_Draw's capture as a record: the view's part of the frame (512 x 448, or one half in split screen) copied
+   into 0x150 (256 x 256, filtered, its alpha too). Then one packet with the state GfxLens_PutCapture and
+   GfxLens_Draw leave. */
+static void GfxLens_PortCapture(s32 split, s32 side) {
+    RndState st;
+    s32 u0 = split != 0 && side == 1 ? 0x100 : 0;
+    s32 u1 = split != 0 ? u0 + 0x100 : 0x200;
+    u64 *p;
+    s32 n = 0;
+
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = 0xFF;
+    st.scissor[3] = 0xFF;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0), 0.0f, 0.0f, 256.0f, 256.0f, u0 << 4, 0, u1 << 4,
+             0x1C0 << 4, 0x80808080);
+    p = Dma_BeginDirect();
+    p[n++] = GIF_TAG(17, 1, 1);
+    p[n++] = GIF_REG_AD;
+    p[n++] = 1;
+    p[n++] = GS_COLCLAMP;
+    p[n++] = 0;
+    p[n++] = GS_FBA_1;
+    p[n++] = 0;
+    p[n++] = GS_FBA_2;
+    p[n++] = 0x60;
+    p[n++] = GS_TEX1_1;
+    p[n++] = 0x116;
+    p[n++] = GS_PRIM;
+    p[n++] = GFX_RGBAQ_NEUTRAL;
+    p[n++] = GS_RGBAQ;
+    p[n++] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
+    p[n++] = GS_FRAME_1;
+    p[n++] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
+    p[n++] = GS_XYOFFSET_1;
+    p[n++] = split == 0 ? GS_SET_SCISSOR(0, 511, 0, 447) : side == 0 ? GS_SET_SCISSOR(0, 256, 0, 447)
+                                                                     : GS_SET_SCISSOR(256, 511, 0, 447);
+    p[n++] = GS_SCISSOR_1;
+    p[n++] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
+    p[n++] = GS_ZBUF_1;
+    p[n++] = 0x54;
+    p[n++] = GS_ALPHA_1;
+    p[n++] = 0x4A;
+    p[n++] = GS_ALPHA_2;
+    p[n++] = 0x2000C;
+    p[n++] = GS_TEST_1;
+    p[n++] = 0x2000C;
+    p[n++] = GS_TEST_2;
+    p[n++] = 5;
+    p[n++] = GS_CLAMP_1;
+    p[n++] = 5;
+    p[n++] = GS_CLAMP_2;
+    p[n++] = ((s64)8 << 26) | ((s64)8 << 30) | 0x12A00;
+    p[n++] = GS_TEX0_1;
+    p[n++] = gGfxLens.tex->entries->tex0 | 0x5C00400002F00;
+    p[n++] = GS_TEX0_1 + 1;
+    Dma_EndDirect(p + n);
+}
+#endif
+
 /* Draws the lenses of one view: uploads the lens texture, captures the screen and draws every live lens. */
 void GfxLens_Draw(s32 split, s32 side) {
     u64 *p;
@@ -720,6 +871,18 @@ void GfxLens_Draw(s32 split, s32 side) {
     if (i == 8) {
         return;
     }
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing drawn or sent; the lenses still age) */
+        if (Rnd_FxOn()) {
+            TexFile_UploadPacked(gGfxLens.tex, 0x2F00, 0x2E00);
+            Dma_AddTexFlush();
+            Gfx_AddDefaultEnv();
+            GfxLens_PortCapture(split, side);
+        }
+        GfxLens_DrawAll(gBtlCam->view, split, side);
+        return;
+    }
+#endif
     TexFile_UploadPacked(gGfxLens.tex, 0x2F00, 0x2E00);
     Dma_AddTexFlush();
     ent = gGfxLens.tex->entries;
