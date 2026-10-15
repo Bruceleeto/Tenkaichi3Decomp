@@ -1766,13 +1766,31 @@ void StgGlare_Term(void) {
 
 /* The sky glare: clears the frame's alpha, writes the CLUT alpha by depth, then the glow pass. */
 void StgGlare_Draw(void) {
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers, no depth texture: nothing; the level still steps) */
+        return;
+    }
+#endif
     if (gStgGlare.enabled != 0) {
         Gfx_AddDefaultEnv();
         Dma_AddData(gStgGlare.tex.upload, 0x10);
         Dma_AddTexFlush();
         Dma_AddZbuf(0xE0, 1);
         Dma_AddFrame((gGfx.frame & 1) ? 0 : 0x70, 8, 0xFFFFFF);
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the frame's alpha cleared as a record (colour kept) */
+            RndState st;
+
+            Rnd_StateInit(&st, GFX_FRAME_FBP());
+            st.blend = RND_BLEND_NONE;
+            st.flags = RND_NO_COLOUR;
+            Rnd_FillRect(&st, 0.0f, 0.0f, 512.0f, 448.0f, 0);
+        } else {
+            Dma_AddFillRect(0x700, 0x720, 0x200, 0x1C0, 0);
+        }
+#else
         Dma_AddFillRect(0x700, 0x720, 0x200, 0x1C0, 0);
+#endif
         Dma_AddFrame((gGfx.frame & 1) ? 0 : 0x70, 8, 0xFFFFFF);
         GfxPost_DrawDepthClut(0, GFXPOST_DEPTH_TBP, gStgGlare.tex.cbp, 0x44);
         Dma_AddTexFlush();
