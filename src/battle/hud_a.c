@@ -570,7 +570,12 @@ void Hud_Draw(void) {
 #ifdef PORT
     Port_GsMarker(PORT_2D_CENTER);
 #endif
+#ifdef PORT
+    extern int Port_TestDemoHud(void); /* port/src/plat_stages.c: BT3_TEST_DEMO_HUD=1 (testing) */
+    if (Battle_GetMode() == 7 && !Port_TestDemoHud()) {
+#else
     if (Battle_GetMode() == 7) {
+#endif
         HudNode_Update(gHud->caption);
         HudNode_Draw(gHud->caption, 0);
     } else if (BtlGame_IsReplay()) {

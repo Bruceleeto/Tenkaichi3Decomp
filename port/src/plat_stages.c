@@ -255,3 +255,11 @@ int Port_TestScreen(void) {
     const char *e = getenv("BT3_TEST_SCREEN");
     return e != NULL ? (int)strtol(e, NULL, 0) : -1;
 }
+
+/* BT3_TEST_DEMO_HUD=1: the attract demo's battle draws the whole HUD (gauges, timer), as a fight does: the HUD
+   looked at without going through the menus. */
+int Port_TestDemoHud(void) {
+    static int on = -1;
+    if (on < 0) { on = getenv("BT3_TEST_DEMO_HUD") != NULL && atoi(getenv("BT3_TEST_DEMO_HUD")) != 0; }
+    return on;
+}
