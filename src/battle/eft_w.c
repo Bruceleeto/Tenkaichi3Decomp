@@ -875,49 +875,70 @@ void EftLink_DrawBillboard(Vec4 *pos, f32 w, f32 h, Vec4 *color, s32 offX, s32 o
     if (p == NULL) {
         return;
     }
-    ctx = layer >= 2;
-    p->prim = ((u64)abe << 6) | ((u64)ctx << 9) | 0x14;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = 0xF42424242160 + (ctx << 4);
-    p->next = NULL;
-    p->rgbaq.r = color->x;
-    p->rgbaq.g = color->y;
-    p->rgbaq.b = color->z;
-    alpha = color->w;
-    p->xyz0.x = x0;
-    p->xyz0.y = y0;
-    l = layer;
-    p->xyz1.x = x1;
-    p->xyz1.y = y1;
-    p->xyz2.x = x2;
-    p->xyz2.y = y2;
-    p->xyz3.x = x3;
-    p->xyz3.y = y3;
-    p->xyz0.z = zz;
-    p->xyz1.z = zz;
-    p->xyz2.z = zz;
-    p->xyz3.z = zz;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the flat strip as a record, in the packet's place */
+        u32 rgba = (u8)(u32)color->x | (u8)(u32)color->y << 8 | (u8)(u32)color->z << 16 |
+                   (u32)(u8)(u32)color->w << 24;
+
+        gOtCur = (u32 *)p;
+        ctx = layer >= 2;
+        p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x14, 4);
+        Ot_RecTex0(p, tex0);
+        Ot_RecVtx(p, 0, (u16)x0, (u16)y0, zz & 0xFFFFFF, u0, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 1, (u16)x1, (u16)y1, zz & 0xFFFFFF, u0, v1, 1.0f, rgba);
+        Ot_RecVtx(p, 2, (u16)x2, (u16)y2, zz & 0xFFFFFF, u1, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 3, (u16)x3, (u16)y3, zz & 0xFFFFFF, u1, v1, 1.0f, rgba);
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+    } else
+#endif
+    {
+        ctx = layer >= 2;
+        p->prim = ((u64)abe << 6) | ((u64)ctx << 9) | 0x14;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = 0xF42424242160 + (ctx << 4);
+        p->next = NULL;
+        p->rgbaq.r = color->x;
+        p->rgbaq.g = color->y;
+        p->rgbaq.b = color->z;
+        alpha = color->w;
+        p->xyz0.x = x0;
+        p->xyz0.y = y0;
+        l = layer;
+        p->xyz1.x = x1;
+        p->xyz1.y = y1;
+        p->xyz2.x = x2;
+        p->xyz2.y = y2;
+        p->xyz3.x = x3;
+        p->xyz3.y = y3;
+        p->xyz0.z = zz;
+        p->xyz1.z = zz;
+        p->xyz2.z = zz;
+        p->xyz3.z = zz;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->rgbaq.a = alpha;
+        p->rgbaq.q = 1.0f;
+        p->st0.s = u0;
+        p->st0.t = v0;
+        p->st1.s = u0;
+        p->st1.t = v1;
+        p->st2.s = u1;
+        p->st2.t = v0;
+        p->st3.s = u1;
+        p->st3.t = v1;
+        p->xyz0.f = 0xFF;
+        p->xyz1.f = 0xFF;
+        p->xyz2.f = 0xFF;
+        p->xyz3.f = 0xFF;
+        p->tex0 = tex0;
     }
-    p->rgbaq.a = alpha;
-    p->rgbaq.q = 1.0f;
-    p->st0.s = u0;
-    p->st0.t = v0;
-    p->st1.s = u0;
-    p->st1.t = v1;
-    p->st2.s = u1;
-    p->st2.t = v0;
-    p->st3.s = u1;
-    p->st3.t = v1;
-    p->xyz0.f = 0xFF;
-    p->xyz1.f = 0xFF;
-    p->xyz2.f = 0xFF;
-    p->xyz3.f = 0xFF;
-    p->tex0 = tex0;
     if (z < 0) {
         e = &gOtZ[0].layer[l];
     } else if (z >= 0x1000) {
