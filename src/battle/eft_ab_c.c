@@ -2263,6 +2263,9 @@ void EftZap_DrawQuad(EftAcVec *pos, EftAcVec color, f32 u0, f32 v0, f32 u1, f32 
         u32 rgba = (u8)icol.x | (u8)icol.y << 8 | (u8)icol.z << 16 | (u32)(u8)icol.w << 24;
         s32 i;
         gOtCur = (u8 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
         Ot_RecTex0(p, *t);
         EftVram_PortRecTex(p, *t);
