@@ -789,7 +789,7 @@ static void draw_one(uint32_t n, const PvrTex *t) {
         }
         for (k = 0; k + 2 < d->count; k += 3) {
             ClipV a[12];
-            int j;
+            int j, inside = 1;
             for (j = 0; j < 3; j++) {
                 const Vtx *v = &gsVerts[d->first + k + j];
                 float q = v->q != 0.0f ? v->q : 1.0f;
@@ -802,9 +802,34 @@ static void draw_one(uint32_t n, const PvrTex *t) {
                 a[j].c[1] = (float)gs_unit(v->g);
                 a[j].c[2] = (float)gs_unit(v->b);
                 a[j].c[3] = sFixA >= 0.0f ? sFixA * 255.0f : (float)gs_unit(v->a);
+                if (a[j].x < x0 || a[j].x > x1 || a[j].y < y0 || a[j].y > y1) { inside = 0; }
+            }
+            /* A triangle that needs no clipping and starts with the last two corners of the one before (a strip
+               the game drew, handed on as triangles: the records of the vertex programs) continues the PVR's
+               strip, one vertex instead of three. */
+            if (inside && sStrip.n > 0 && k >= 3 && !memcmp(&gsVerts[d->first + k], &gsVerts[d->first + k - 2], sizeof(Vtx)) &&
+                !memcmp(&gsVerts[d->first + k + 1], &gsVerts[d->first + k - 1], sizeof(Vtx))) {
+                if (sSent + sizeof(pvr_vertex_t) <= SCENE_BUDGET) {
+                    strip_add(&a[2]);
+                    sSent += sizeof(pvr_vertex_t);
+                    sTris++;
+                } else {
+                    sDropped++;
+                }
+                continue;
+            }
+            strip_end();
+            if (inside && sSent + 3 * sizeof(pvr_vertex_t) <= SCENE_BUDGET) {
+                strip_add(&a[0]);
+                strip_add(&a[1]);
+                strip_add(&a[2]);
+                sSent += 3 * sizeof(pvr_vertex_t);
+                sTris++;
+                continue;
             }
             emit_poly(a, 3, x0, y0, x1, y1);
         }
+        strip_end();
     }
 }
 
