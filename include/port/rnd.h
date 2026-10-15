@@ -115,6 +115,8 @@ typedef struct RndPoly {
 int Port_Quad(const RndQuad *q); /* queues the quad at the display list's cursor; 0 = not taken (the software renderer,
                                     which draws only GS packets: the caller sends its packet as before) */
 int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
+int Port_ListRead(void);         /* 1: the display list is read for what only the PS2 needs (the PS2 reference): 0 = such
+                                    packets need not be built (the Dreamcast; BT3_WALK=3 on PC) */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
 /* port/src/rnd_gs.c. The GS state the game sets, followed into gRndCtx from each packet the display list gets
    (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them). */

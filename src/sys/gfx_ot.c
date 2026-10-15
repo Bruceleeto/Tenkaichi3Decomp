@@ -214,8 +214,12 @@ s32 Ot_Send(void) {
                 Rnd_OtRec(OT_REC(prim));
                 dst = (u8 *)Dma_BeginDirect();
             } else {
+                u8 *at = dst;
                 dst = (u8 *)Rnd_OtState((u64 *)dst);
                 dst = (u8 *)Rnd_OtRecPacket(OT_REC(prim), (u64 *)dst);
+                if (!Port_ListRead()) {
+                    dst = at; /* (its writes followed; nothing reads the list for the packet) */
+                }
             }
             continue;
         }
@@ -225,13 +229,18 @@ s32 Ot_Send(void) {
             dst = (u8 *)Dma_BeginDirect();
             continue;
         }
+        if (!Port_ListRead()) { /* (its state followed by Rnd_OtTake; nothing reads the list for the rest) */
+            continue;
+        }
         dst = (u8 *)Rnd_OtState((u64 *)dst); /* what the GS would hold after those, for the packets */
 #endif
         memcpy(dst, prim + 1, prim->qwc << 4);
         dst += prim->qwc << 4;
     }
 #ifdef PORT
-    dst = (u8 *)Rnd_OtState((u64 *)dst);
+    if (Port_ListRead()) {
+        dst = (u8 *)Rnd_OtState((u64 *)dst);
+    }
     Dma_EndDirect((u64 *)dst);
     Rnd_OtEnd();
 #else
