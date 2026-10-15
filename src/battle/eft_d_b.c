@@ -176,15 +176,19 @@ void EftBurst_DrawQuad(EftBurstPtcl *p) {
         pkt += 2;
         pkt[0] = 0x1310000E0;
         pkt[1] = 0x4E; /* ZBUF_1: no depth writes */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x48;
         pkt[1] = 0x42; /* ALPHA_1: additive */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = p->tex->tex0 | 0x5400400002D00;
         pkt[1] = 6; /* TEX0_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x73003;
         pkt[1] = 0x47; /* TEST_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
 #ifdef PORT
         if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
@@ -291,21 +295,26 @@ void EftBurst_DrawQuadRot(EftBurstPtcl *p) {
         pkt += 2;
         pkt[0] = 0x1310000E0;
         pkt[1] = 0x4E; /* ZBUF_1: no depth writes */
+        PORT_AD(pkt, 0);
         pkt += 2;
         if (p->flags & EFT_BURST_F_ADD) {
             pkt[0] = 0x44;
             pkt[1] = 0x42; /* ALPHA_1 */
+            PORT_AD(pkt, 0);
             pkt += 2;
         } else {
             pkt[0] = 0x48;
             pkt[1] = 0x42;
+            PORT_AD(pkt, 0);
             pkt += 2;
         }
         pkt[0] = p->tex->tex0 | 0x5400400002D00;
         pkt[1] = 6; /* TEX0_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x73003;
         pkt[1] = 0x47; /* TEST_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
 #ifdef PORT
         if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
@@ -382,25 +391,31 @@ void EftBurst_DrawSprite(EftBurstPtcl *p) {
         pkt += 2;
         pkt[0] = 0x1310000E0;
         pkt[1] = 0x4E; /* ZBUF_1: no depth writes */
+        PORT_AD(pkt, 0);
         pkt += 2;
         if (flags & EFT_BURST_F_ADD) {
             pkt[0] = 0x44;
             pkt[1] = 0x42; /* ALPHA_1 */
+            PORT_AD(pkt, 0);
             pkt += 2;
         } else if (flags & EFT_BURST_F_SUB) {
             pkt[0] = 0x42;
             pkt[1] = 0x42;
+            PORT_AD(pkt, 0);
             pkt += 2;
         } else {
             pkt[0] = 0x48;
             pkt[1] = 0x42;
+            PORT_AD(pkt, 0);
             pkt += 2;
         }
         pkt[0] = p->tex->tex0 | 0x5400400002D00;
         pkt[1] = 6; /* TEX0_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x33003;
         pkt[1] = 0x47; /* TEST_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
 #ifdef PORT
         if (EftBurst_PortQuad(&pkt, p->tex, p->tex->tex0 | 0x5400400002D00,
@@ -466,42 +481,54 @@ u64 *EftBurst_PutModelEnv(u64 *p) {
     p += 2;
     p[0] = 0x60;
     p[1] = 0x14; /* TEX1_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x5000D;
     p[1] = 0x47; /* TEST_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x310000E0;
     p[1] = 0x4E; /* ZBUF_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x44;
     p[1] = 0x42; /* ALPHA_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 1;
     p[1] = 0x46; /* COLCLAMP */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = !(gGfx.frame & 1) ? 0xFF00000000080070 : 0xFF00000000080000;
     p[1] = 0x4C; /* FRAME_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x1000000000008006;
     p[1] = 0xE;
     p += 2;
     p[0] = 0x60;
     p[1] = 0x15; /* TEX1_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x5000D;
     p[1] = 0x48; /* TEST_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x310000E0;
     p[1] = 0x4F; /* ZBUF_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x44;
     p[1] = 0x43; /* ALPHA_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 1;
     p[1] = 0x46; /* COLCLAMP */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
     p[1] = 0x4D; /* FRAME_2 */
+    PORT_AD(p, 0);
     p += 2;
     return p;
 }
@@ -513,18 +540,23 @@ u64 *EftBurst_PutModelEnvEnd(u64 *p) {
     p += 2;
     p[0] = 0;
     p[1] = 0x14; /* TEX1_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000;
     p[1] = 0x47; /* TEST_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x310000E0;
     p[1] = 0x4E; /* ZBUF_1 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 1;
     p[1] = 0x46; /* COLCLAMP */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
     p[1] = 0x4C; /* FRAME_1 */
+    PORT_AD(p, 0);
     p += 2;
     return p;
 }
@@ -538,30 +570,39 @@ void EftBurst_ClearAlphaPlane(void) {
     p += 2;
     p[0] = 0x44;
     p[1] = 0x43; /* ALPHA_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x60;
     p[1] = 0x15; /* TEX1_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = 0x4B; /* FBA_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000;
     p[1] = 0x48; /* TEST_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 5;
     p[1] = 9; /* CLAMP_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x1310000E0;
     p[1] = 0x4F; /* ZBUF_2: no depth writes */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = !(gGfx.frame & 1) ? 0xFFFFFF00080070 : 0xFFFFFF00080000;
     p[1] = 0x4D; /* FRAME_2: alpha only */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x720000007000;
     p[1] = 0x19; /* XYOFFSET_2 */
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x1BF000001FF0000;
     p[1] = 0x41; /* SCISSOR_2 */
+    PORT_AD(p, 0);
     p += 2;
 #ifdef PORT
     if (Port_TakesRecords()) { /* the sprite as a record, under the state just set (followed) */
@@ -726,15 +767,19 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
         pkt += 2;
         pkt[0] = 0;
         pkt[1] = 8; /* CLAMP_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0;
         pkt[1] = 9; /* CLAMP_2 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x44;
         pkt[1] = 0x42; /* ALPHA_1 */
+        PORT_AD(pkt, 0);
         pkt += 2;
         pkt[0] = 0x44;
         pkt[1] = 0x43; /* ALPHA_2 */
+        PORT_AD(pkt, 0);
         pkt += 2;
 #ifdef PORT
         if (Port_TakesRecords()) { /* (the state followed before the records) */
@@ -818,9 +863,11 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
                 pkt += 2;
                 pkt[0] = tex->tex0 | 0x5400400002D00;
                 pkt[1] = 6; /* TEX0_1 */
+                PORT_AD(pkt, 0);
                 pkt += 2;
                 pkt[0] = 0x5B; /* PRIM: blended, textured, gouraud triangle */
                 pkt[1] = 0;
+                PORT_AD(pkt, 0);
                 pkt += 2;
                 pkt[0] = 0x3400000000008003;
                 pkt[1] = 0x521; /* RGBAQ, ST, XYZ2 */
@@ -846,9 +893,11 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
                     pkt += 2;
                     pkt[0] = envTex->tex0 | (((u64)(u32)envTex->vramY << 37) | (u64)(u32)envTex->vramX | 0x400000000);
                     pkt[1] = 7; /* TEX0_2 */
+                    PORT_AD(pkt, 0);
                     pkt += 2;
                     pkt[0] = 0x25B; /* the same PRIM through context 2 */
                     pkt[1] = 0;
+                    PORT_AD(pkt, 0);
                     pkt += 2;
                     pkt[0] = 0x3400000000008003;
                     pkt[1] = 0x521;
