@@ -13,22 +13,33 @@
  * A producer, where Port_TakesRecords(): first Ot_RecRoom(the bytes of all the draw's nodes: Ot_RecBytes, Ot_AdBytes),
  * the draw skipped when it is 0; node = Ot_NewRec(the packet's PRIM, corners), NULL when there is no (room in the)
  * packet memory; Ot_RecTex0 if the packet writes TEX0 (and Ot_RecTexHandles: the texture's handles); Ot_RecVtx for each corner in the packet's order; then the
- * node linked where the packet would have been. State the packet set by A+D around its draw (CLAMP, TEST) stays
- * a packet: Ot_NewAd nodes linked in the same order around the record.
+ * node linked where the packet would have been. State the packet set by A+D around its draw (CLAMP, TEST): a
+ * register node (Ot_NewAd, Ot_NewAd2: tagId OT_AD_TAG, the registers and values themselves) linked in the same order
+ * around the record, which Ot_Send writes into the renderer's state (Rnd_GsReg) in its place: no packet is read for
+ * it (where the display list is read, the PS2 reference, its A+D packet is written there too).
  */
 
 #include "types.h"
 #include "port/rnd.h"
 
 #define OT_REC_TAG 0x03FF
+#define OT_AD_TAG 0x03FE
+typedef struct OtAd {
+    u32 n;       /* registers: 1 or 2 */
+    u32 addr[2]; /* each one's GS address (+ 1: context 2) */
+    u32 pad;
+    u64 data[2]; /* its value */
+} OtAd; /* 0x20 */
+#define OT_AD(prim) ((OtAd *)((OtPrim *)(prim) + 1))
 #define OT_REC_HEAD 24 /* the bytes of an OtRec in front of its corners: a node holds only the corners it has */
 typedef RndOtRec OtRec;
 
 s32 Ot_RecRoom(u32 bytes); /* 1 if that many bytes fit in the packet memory, else 0 (counted) */
 u32 Ot_RecBytes(s32 n);    /* the bytes of a record of n corners */
-u32 Ot_AdBytes(void);      /* the bytes of an A+D node */
+u32 Ot_AdBytes(void);      /* the bytes of a register node (one or two registers) */
 void *Ot_NewRec(u64 prim, s32 n);
-void *Ot_NewAd(u32 addr, u64 data); /* a packet node that writes one GS register (A+D) */
+void *Ot_NewAd(u32 addr, u64 data); /* a register node: one GS register written in its place; NULL: no room */
+void *Ot_NewAd2(u32 addr0, u64 data0, u32 addr1, u64 data1); /* the same, two registers in that order */
 /* Corner i: x, y in sixteenths of a pixel (XYOFFSET in), the 24-bit depth, s t q (with fst: U, V in sixteenths of
    a texel), r g b a (r in the low byte), as the packet holds them. */
 void Ot_RecTexHandles(void *node, u32 tex, u32 pal); /* with Ot_RecTex0: the handles of the texture that TEX0 names */

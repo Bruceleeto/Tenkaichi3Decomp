@@ -208,6 +208,26 @@ s32 Ot_Send(void) {
     dst = (u8 *)Dma_BeginDirect();
     for (prim = gOtHead; prim != NULL; prim = prim->next) {
 #ifdef PORT
+        if (prim->qwc == 0 && prim->tagId == OT_AD_TAG) { /* register writes: into the renderer's state */
+            OtAd *a = OT_AD(prim);
+            u32 i;
+
+            for (i = 0; i < a->n; i++) {
+                Rnd_GsReg(a->addr[i], a->data[i]);
+            }
+            if (Port_ListRead()) { /* (the PS2 reference: their A+D packet, after what records changed) */
+                u64 *d = Rnd_OtState((u64 *)dst);
+
+                d[0] = GIF_TAG(a->n, 1, 1);
+                d[1] = GIF_REG_AD;
+                for (i = 0; i < a->n; i++) {
+                    d[2 + i * 2] = a->data[i];
+                    d[3 + i * 2] = a->addr[i];
+                }
+                dst = (u8 *)(d + 2 + a->n * 2);
+            }
+            continue;
+        }
         if (prim->qwc == 0 && prim->tagId == OT_REC_TAG) { /* a draw as it is: polygons, or else its packet */
             if (Rnd_OtRecTakes(OT_REC(prim))) {
                 Dma_EndDirect((u64 *)dst);
@@ -449,9 +469,9 @@ u32 Ot_RecBytes(s32 n) {
     return sizeof(OtPrim) + ((OT_REC_HEAD + n * sizeof(RndOtVtx) + 15) & ~15);
 }
 
-/* The bytes an A+D node (Ot_NewAd) takes: its header, a GIF tag and one register. */
+/* The bytes a register node (Ot_NewAd, Ot_NewAd2) takes: its header and its registers (OtAd). */
 u32 Ot_AdBytes(void) {
-    return sizeof(OtPrim) + 0x20;
+    return sizeof(OtPrim) + sizeof(OtAd);
 }
 
 /* 1 if `bytes` more fit in the packet memory at the cursor, else 0 (and the record is counted, told by
@@ -532,26 +552,35 @@ void Ot_RecClamp(void *node) {
     OT_REC(node)->setTex0 |= RND_OTREC_CLAMP;
 }
 
-/* A packet node that writes one GS register (A+D): the state a producer's packet set around its draw, kept as a
-   packet beside the record (followed as such). */
-void *Ot_NewAd(u32 addr, u64 data) {
+/* A register node: the state a producer's packet set by A+D around its draws (CLAMP, TEST), as the registers and
+   values themselves; Ot_Send writes them into the renderer's state in the node's place (port/ot_rec.h). */
+void *Ot_NewAd2(u32 addr0, u64 data0, u32 addr1, u64 data1) {
     OtPrim *node = (OtPrim *)gOtCur;
-    u64 *d;
+    OtAd *a;
 
     if (node == NULL || !Ot_RecRoom(Ot_AdBytes())) {
         return NULL;
     }
     gOtCur = (u32 *)((u8 *)node + Ot_AdBytes());
-    node->qwc = 2;
-    node->tagId = DMA_TAG_NEXT >> 16;
+    node->qwc = 0;
+    node->tagId = OT_AD_TAG;
     node->next = NULL;
-    node->vif[0] = VIF_FLUSHE;
-    node->vif[1] = VIF_DIRECT | 2;
-    d = (u64 *)(node + 1);
-    d[0] = GIF_TAG(1, 1, 1);
-    d[1] = GIF_REG_AD;
-    d[2] = data;
-    d[3] = addr;
+    node->vif[0] = node->vif[1] = 0;
+    a = OT_AD(node);
+    a->n = 2;
+    a->addr[0] = addr0;
+    a->data[0] = data0;
+    a->addr[1] = addr1;
+    a->data[1] = data1;
+    return node;
+}
+
+void *Ot_NewAd(u32 addr, u64 data) {
+    OtPrim *node = Ot_NewAd2(addr, data, 0, 0);
+
+    if (node != NULL) {
+        OT_AD(node)->n = 1;
+    }
     return node;
 }
 
