@@ -537,6 +537,9 @@ void EftSteam_DrawQuad(EftEVec *color, EftEVec *pos, f32 w, f32 h, f32 u0, f32 v
 #ifdef PORT
     if (Port_TakesRecords()) { /* the flat strip as a record */
         u32 rgba = (u8)(u32)(color->x * tint) | (u8)(u32)(color->y * tint) << 8 | (u8)(u32)(color->z * tint) << 16 | (u32)(u8)(u32)color->w << 24;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(prim, 4);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
@@ -2653,6 +2656,9 @@ void EftWater_DrawBillboard(EftWaterVec *pos, EftWaterMtx *world2screen, f32 siz
     if (Port_TakesRecords()) { /* the flat strip as a record, in the packet's place (the TEST packets around it stay) */
         u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
         gOtCur = (u32 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4) + (alphaRef != 0 ? 2 * sizeof(EftWaterRegPkt) : 0))) {
+            return; /* (no room left in the packet memory for the record and its TEST packets: not drawn) */
+        }
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, *tex);
         EftVram_PortRecTex(p, *tex);
@@ -2842,6 +2848,12 @@ void EftWater_DrawSprayQuad(EftWaterVec *pos, EftWaterMtx *orient, EftWaterMtx *
     } else {
         z += 500;
     }
+#ifdef PORT
+    /* The two TEST packets and the record together or neither: with no room left in the packet memory, not drawn. */
+    if (Port_TakesRecords() && !Ot_RecRoom(2 * sizeof(EftWaterRegPkt) + Ot_RecBytes(4))) {
+        return;
+    }
+#endif
     EFT_WATER_QUEUE_TEST(((u64)alphaRef << 4) | 0x5000D, z, layer);
     p = (EftWaterQuadPkt *)gOtCur;
     gOtCur = (u32 *)(p + 1);
@@ -2979,6 +2991,9 @@ static inline void EftWater_QueueTri(EftWaterScr4 *p0, EftWaterScr4 *p1, EftWate
 
 #ifdef PORT
     if (Port_TakesRecords()) { /* the triangle as a record */
+        if (!Ot_RecRoom(Ot_RecBytes(3))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x5B, 3);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
