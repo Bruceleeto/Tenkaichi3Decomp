@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/eft_ad.h"
+#ifdef PORT
+#include "port/ot_rec.h"
+#endif
 
 /*
  * 0x1A9D90..0x1AA7E8: two camera-facing sprites written straight into the order table. This is the head of the
@@ -72,6 +75,21 @@ extern s32 EftSpr_IsOffScreen(s32 x, s32 y, s32 z);                /* 1 = outsid
 /* Queues an upright camera-facing sprite at pos: w x h (half sizes, in screen units at the reference depth,
    scaled by 4096 * view scale / depth), one colour, uv rectangle (u0, v0)-(u1, v1). Dropped when smaller than
    two units or when any corner is off screen. */
+#ifdef PORT
+/* The flat strip of EftSpr_DrawFlat / EftSpr_DrawRot as a record: its PRIM, TEX0, colour (q 1) and four corners
+   (x, y), texture coordinates (u0, v0), (u0, v1), (u1, v0), (u1, v1), all at depth z. */
+static void *EftSpr_Rec(s64 prim, u64 tex0, u32 rgba, s32 *x, s32 *y, s32 z, f32 u0, f32 v0, f32 u1, f32 v1) {
+    void *p = Ot_NewRec(prim, 4);
+
+    Ot_RecTex0(p, tex0);
+    Ot_RecVtx(p, 0, x[0], y[0], z, u0, v0, 1.0f, rgba);
+    Ot_RecVtx(p, 1, x[1], y[1], z, u0, v1, 1.0f, rgba);
+    Ot_RecVtx(p, 2, x[2], y[2], z, u1, v0, 1.0f, rgba);
+    Ot_RecVtx(p, 3, x[3], y[3], z, u1, v1, 1.0f, rgba);
+    return p;
+}
+#endif
+
 /* r, g, b, a and ctx arrive as ints; ctx goes through an s8 local before it is widened, and the blend bit is a
    64-bit local (abe = 1) so that 0x40 and 0x14 stay two separate ORs as in the original. */
 void EftSpr_DrawFlat(s32 r, s32 g, s32 b, s32 a, f32 u0, f32 v0, f32 u1, f32 v1, Vec4 *pos, u32 w, u32 h, s32 ctx,
@@ -110,48 +128,71 @@ void EftSpr_DrawFlat(s32 r, s32 g, s32 b, s32 a, f32 u0, f32 v0, f32 u1, f32 v1,
     }
     p = (EftSprPkt *)gOtCur;
     gOtCur = (u8 *)(p + 1);
-    c = ctx;
-    p->prim = ((s64)(s8)c << 9) | (abe << 6) | 0x14;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = (s64)(c << 4) + 0xF42424242160;
-    p->next = NULL;
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        s32 xs[4], ys[4];
+        xs[0] = scr.x - w;
+        ys[0] = scr.y - h;
+        xs[1] = scr.x + w;
+        ys[1] = scr.y - h;
+        xs[2] = scr.x - w;
+        ys[2] = scr.y + h;
+        xs[3] = scr.x + w;
+        ys[3] = scr.y + h;
+        gOtCur = (u8 *)p;
+        c = ctx;
+        p = EftSpr_Rec(((s64)(s8)c << 9) | (abe << 6) | 0x14, *tex0, (u8)r | (u8)g << 8 | (u8)b << 16 | (u32)(u8)a << 24, xs, ys,
+                       scr.z, u0, v0, u1, v1);
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+    } else
+#endif
+    {
+        c = ctx;
+        p->prim = ((s64)(s8)c << 9) | (abe << 6) | 0x14;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = (s64)(c << 4) + 0xF42424242160;
+        p->next = NULL;
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->tex0 = *tex0;
+        p->r = r;
+        p->g = g;
+        p->b = b;
+        p->a = a;
+        p->q = 1.0f;
+        p->v[0].s = u0;
+        p->v[0].t = v0;
+        p->v[1].s = u0;
+        p->v[1].t = v1;
+        p->v[2].s = u1;
+        p->v[2].t = v0;
+        p->v[3].s = u1;
+        p->v[3].t = v1;
+        p->v[0].xyz.x = scr.x - w;
+        p->v[0].xyz.y = scr.y - h;
+        p->v[0].xyz.z = scr.z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr.x + w;
+        p->v[1].xyz.y = scr.y - h;
+        p->v[1].xyz.z = scr.z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr.x - w;
+        p->v[2].xyz.y = scr.y + h;
+        p->v[2].xyz.z = scr.z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr.x + w;
+        p->v[3].xyz.y = scr.y + h;
+        p->v[3].xyz.z = scr.z;
+        p->v[3].xyz.f = 0xFF;
     }
-    p->tex0 = *tex0;
-    p->r = r;
-    p->g = g;
-    p->b = b;
-    p->a = a;
-    p->q = 1.0f;
-    p->v[0].s = u0;
-    p->v[0].t = v0;
-    p->v[1].s = u0;
-    p->v[1].t = v1;
-    p->v[2].s = u1;
-    p->v[2].t = v0;
-    p->v[3].s = u1;
-    p->v[3].t = v1;
-    p->v[0].xyz.x = scr.x - w;
-    p->v[0].xyz.y = scr.y - h;
-    p->v[0].xyz.z = scr.z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr.x + w;
-    p->v[1].xyz.y = scr.y - h;
-    p->v[1].xyz.z = scr.z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr.x - w;
-    p->v[2].xyz.y = scr.y + h;
-    p->v[2].xyz.z = scr.z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr.x + w;
-    p->v[3].xyz.y = scr.y + h;
-    p->v[3].xyz.z = scr.z;
-    p->v[3].xyz.f = 0xFF;
     z = scr.z >> 8;
     if (z < 0) {
         e = &gOtZ[0].layer[l];
@@ -255,48 +296,67 @@ void EftSpr_DrawRot(u8 r, u8 g, u8 b, u8 a, f32 x, f32 y, f32 z, f32 u0, f32 v0,
     }
     p = (EftSprPkt *)gOtCur;
     gOtCur = (u8 *)(p + 1);
-    cc = ctx;
-    p->prim = ((s64)(s8)cc << 9) | (abe << 6) | 0x14;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = (s64)(cc << 4) + 0xF42424242160;
-    p->next = NULL;
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        s32 xs[4], ys[4];
+        for (i = 0; i < 4; i++) {
+            xs[i] = scr.x + c[i].x;
+            ys[i] = scr.y + c[i].y;
+        }
+        gOtCur = (u8 *)p;
+        cc = ctx;
+        p = EftSpr_Rec(((s64)(s8)cc << 9) | (abe << 6) | 0x14, *tex0, r | g << 8 | b << 16 | (u32)a << 24, xs, ys, scr.z, u0,
+                       v0, u1, v1);
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+    } else
+#endif
+    {
+        cc = ctx;
+        p->prim = ((s64)(s8)cc << 9) | (abe << 6) | 0x14;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = (s64)(cc << 4) + 0xF42424242160;
+        p->next = NULL;
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->tex0 = *tex0;
+        p->r = r;
+        p->g = g;
+        p->b = b;
+        p->a = a;
+        p->q = 1.0f;
+        p->v[0].s = u0;
+        p->v[0].t = v0;
+        p->v[1].s = u0;
+        p->v[1].t = v1;
+        p->v[2].s = u1;
+        p->v[2].t = v0;
+        p->v[3].s = u1;
+        p->v[3].t = v1;
+        p->v[0].xyz.x = scr.x + c[0].x;
+        p->v[0].xyz.y = scr.y + c[0].y;
+        p->v[0].xyz.z = scr.z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr.x + c[1].x;
+        p->v[1].xyz.y = scr.y + c[1].y;
+        p->v[1].xyz.z = scr.z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr.x + c[2].x;
+        p->v[2].xyz.y = scr.y + c[2].y;
+        p->v[2].xyz.z = scr.z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr.x + c[3].x;
+        p->v[3].xyz.y = scr.y + c[3].y;
+        p->v[3].xyz.z = scr.z;
+        p->v[3].xyz.f = 0xFF;
     }
-    p->tex0 = *tex0;
-    p->r = r;
-    p->g = g;
-    p->b = b;
-    p->a = a;
-    p->q = 1.0f;
-    p->v[0].s = u0;
-    p->v[0].t = v0;
-    p->v[1].s = u0;
-    p->v[1].t = v1;
-    p->v[2].s = u1;
-    p->v[2].t = v0;
-    p->v[3].s = u1;
-    p->v[3].t = v1;
-    p->v[0].xyz.x = scr.x + c[0].x;
-    p->v[0].xyz.y = scr.y + c[0].y;
-    p->v[0].xyz.z = scr.z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr.x + c[1].x;
-    p->v[1].xyz.y = scr.y + c[1].y;
-    p->v[1].xyz.z = scr.z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr.x + c[2].x;
-    p->v[2].xyz.y = scr.y + c[2].y;
-    p->v[2].xyz.z = scr.z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr.x + c[3].x;
-    p->v[3].xyz.y = scr.y + c[3].y;
-    p->v[3].xyz.z = scr.z;
-    p->v[3].xyz.f = 0xFF;
     sz = scr.z >> 8;
     if (sz < 0) {
         e = &gOtZ[0].layer[l];
