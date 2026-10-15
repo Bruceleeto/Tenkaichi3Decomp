@@ -502,6 +502,9 @@ void EftGndDust_DrawQuad(Vec4 *pos, Vec4 *color, Mtx44 *mtx, u64 tex0, f32 scale
     if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
         u32 rgba;
         gOtCur = (u8 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x5C, 4);
         rgba = Ot_RecRgba(color->x, color->y, color->z, color->w);
         Ot_RecTex0(p, tex0);
@@ -1156,6 +1159,9 @@ void EftBlade_Draw(EftAaTask *task) {
             if (Port_TakesRecords()) { /* the triangle as a record, in the packet's place */
                 s32 j;
                 gOtCur = (u8 *)p;
+                if (!Ot_RecRoom(Ot_RecBytes(3))) {
+                    continue; /* (no room left in the packet memory: this triangle not drawn) */
+                }
                 layer = def->layer;
                 p = Ot_NewRec(EftBlade_MakePrim(0xB, abe, layer >= 2), 3);
                 for (j = 0; j < 3; j++) {
@@ -1407,6 +1413,9 @@ void EftBlind_DrawOverlay(s32 view, s32 full, f32 alpha) {
 #ifdef PORT
     if (Port_TakesRecords()) { /* the sprite as a record */
         u32 rgba = Ot_RecRgba(c.x, c.y, c.z, c.w);
+        if (!Ot_RecRoom(Ot_RecBytes(2))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x46, 2);
         if (full == 0) {
             if (view == 0) {
