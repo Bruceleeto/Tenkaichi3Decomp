@@ -140,21 +140,15 @@ void BtlText_PutScissor(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1) {
     if (gRndSprites) { /* (the sprites are records: the register in a packet of its own) */
         u64 *p = Dma_BeginDirect();
 
-        p[0] = 0x1000000000008001;
-        p[1] = 0xE;
-        p[2] = (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48);
-        p[3] = 0x40;
-        PORT_AD(p, 2);
+        PORT_PKT(p, 0, 0x1000000000008001, 0xE);
+        PORT_REG(p, 2, 0x40, (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48));
         Dma_EndDirect(p + 4);
         return;
     }
 #endif
-    (*pkt)[0] = 0x1000000000008001;
-    (*pkt)[1] = 0xE;
+    PORT_PKT((*pkt), 0, 0x1000000000008001, 0xE);
     *pkt += 2;
-    (*pkt)[0] = (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48);
-    (*pkt)[1] = 0x40;
-    PORT_AD((*pkt), 0);
+    PORT_REG((*pkt), 0, 0x40, (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48));
     *pkt += 2;
 }
 
