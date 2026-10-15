@@ -409,6 +409,94 @@ void StgHaze_Step(StgHaze *haze, s32 split, s32 view) {
     haze->frame++;
 }
 
+#ifdef PORT
+/* StgHaze_Draw on the records path: the table pass as StgHaze_BeginDraw sends it (a packet: the depth through the
+   haze table into the frame's alpha, drawn natively by the GPU renderer), then as records the view (x0, width wide,
+   448 high) copied at half height into 0x150 and drawn back over it in rows of quads with the jittered texels,
+   blended by the frame's alpha; then the state StgHaze_BeginDraw's packet leaves. */
+static void StgHaze_PortDraw(StgHaze *haze, s32 x0, s32 x1, s32 width, s32 widthPx, s32 cols, s32 rows) {
+    RndState st;
+    RndPoly r;
+    GsQword *q;
+    u64 *p;
+    s32 row;
+    s32 col;
+    s32 i;
+
+    Dma_AddData(haze->upload, 0x10);
+    Dma_AddTexFlush();
+    Dma_AddFrame((gGfx.frame & 1) ? 0 : 0x70, 8, 0xFFFFFF);
+    Dma_AddZbuf(0xE0, 1);
+    GfxPost_DrawDepthClut(0, 0x1C00, haze->clutBase, 0x44);
+    Dma_AddZbuf(0xE0, 0);
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = widthPx - 1;
+    st.scissor[3] = 0xDF;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)widthPx, 224.0f,
+             x0 << 4, 0, (x0 + width) << 4, 0x1C0 << 4, 0x80808080);
+    memset(&r, 0, sizeof(r));
+    Rnd_StateInit(&r.st, GFX_FRAME_FBP());
+    r.st.flags = RND_SMOOTH | RND_DEST_ALPHA;
+    r.st.scissor[0] = x0;
+    r.st.scissor[2] = x1 - 1;
+    r.tex = Rnd_TargetTex(0x150, 0x200, 0x200, 0) | RND_TEX_RGB;
+    r.n = 4;
+    for (row = 0; row < rows - 1; row++) {
+        s32 y0 = (0xE0 * row / (rows - 1)) << 4;
+        s32 y1 = (0xE0 * (row + 1) / (rows - 1)) << 4;
+        s32 v0 = 0x1C0 * row / (rows - 1);
+        s32 v1 = 0x1C0 * (row + 1) / (rows - 1);
+        s8 *cx = haze->curX[row];
+        s8 *cy = haze->curY[row];
+
+        for (col = 0; col + 1 < cols; col++) {
+            for (i = 0; i < 4; i++) { /* top, bottom of column col, then of col + 1 */
+                s32 c = col + (i >> 1);
+                s32 px = (c * widthPx / (cols - 1)) << 4;
+                s32 x = px + cx[c + (i & 1)];
+                s32 y = ((i & 1) ? y1 : y0) + cy[c + (i & 1)];
+
+                x = (x < 0) ? 0 : ((x > widthPx << 4) ? widthPx << 4 : x);
+                y = (y < 0) ? 0 : ((y > 0xE0 << 4) ? 0xE0 << 4 : y);
+                r.v[i].x = (f32)(c * width / (cols - 1) + x0);
+                r.v[i].y = (f32)((i & 1) ? v1 : v0);
+                r.v[i].s = (f32)(x + 8) / (16.0f * 512.0f);
+                r.v[i].t = (f32)(y + 8) / (16.0f * 512.0f);
+                r.v[i].q = 1.0f;
+                r.v[i].rgba = haze->color;
+            }
+            Port_Poly(&r);
+        }
+    }
+    q = (GsQword *)Dma_BeginDirect();
+    Gfx_PutDefaultEnv(&q);
+    p = (u64 *)q;
+    p[0] = GIF_TAG(9, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = 0x30000;
+    p[3] = GS_TEST_1;
+    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[5] = GS_ZBUF_1;
+    p[6] = 0x264022A00;
+    p[7] = GS_TEX0_1;
+    p[8] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
+    p[9] = GS_FRAME_1;
+    p[10] = GS_SET_SCISSOR(x0, x1 - 1, 0, 0x1C0 - 1);
+    p[11] = GS_SCISSOR_1;
+    p[12] = GS_SET_CLAMP(2, 2, 0, widthPx - 1, 0, 0xE0 - 1);
+    p[13] = GS_CLAMP_1;
+    p[14] = 0x54;
+    p[15] = GS_ALPHA_1;
+    p[16] = 0x154;
+    p[17] = GS_PRIM;
+    p[18] = (u64)haze->color | ((u64)0x3F800000 << 32);
+    p[19] = GS_RGBAQ;
+    Dma_EndDirect(p + 20);
+}
+#endif
+
 /*
  * Redraws the frame as rows - 1 triangle strips of cols * 2 vertices. Strip `row` spans the lines
  * row * 448 / (rows - 1) .. (row + 1) * 448 / (rows - 1) of the source (v) and half of that on the
@@ -462,6 +550,14 @@ void StgHaze_Draw(StgHaze *haze, s32 split, s32 view) {
         cols /= 2;
         widthPx = 0x100;
     }
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing drawn or sent; the jitter still steps) */
+        if (Rnd_FxOn()) {
+            StgHaze_PortDraw(haze, xOffset, x1, width, widthPx, cols, rows);
+        }
+        return;
+    }
+#endif
     StgHaze_BeginDraw(&d, haze, xOffset, x1, width, srcH, widthPx, h);
     for (row = 0; row < rows - 1; row++) {
         StgHaze_PutStripTag(&d, haze, cols * 2);
