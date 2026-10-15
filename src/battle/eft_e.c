@@ -2648,49 +2648,69 @@ void EftWater_DrawBillboard(EftWaterVec *pos, EftWaterMtx *world2screen, f32 siz
     if (p == NULL) {
         return;
     }
-    p->h.tag = 0x20000007;
-    p->prim = 0x54;
-    p->h.vif1 = 0x50000007;
-    p->h.gif0 = 0xC400000000008001;
-    p->h.gif1 = 0xF42424242160;
-    p->h.next = 0;
-    p->h.vif0 = 0x10000000;
-    p->rgba[0] = r;
-    p->rgba[1] = g;
-    p->rgba[2] = b;
-    p->rgba[3] = a;
-    p->q = 1.0f;
-    p->v[0].s = 0.0f;
-    p->v[0].t = 0.0f;
-    p->v[1].s = 1.0f;
-    p->v[1].t = 0.0f;
-    p->v[2].s = 0.0f;
-    p->v[2].t = 1.0f;
-    p->v[3].s = 1.0f;
-    p->v[3].t = 1.0f;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
-    z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
-    if (EftUtil_IsCamUnderWater()) {
-        z -= 500;
-    } else {
-        z += 500;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the flat strip as a record, in the packet's place (the TEST packets around it stay) */
+        u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
+        gOtCur = (u32 *)p;
+        p = Ot_NewRec(0x54, 4);
+        Ot_RecTex0(p, *tex);
+        Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, 0.0f, 0.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, 1.0f, 0.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, 0.0f, 1.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 3, scr[3].x, scr[3].y, scr[3].z, 1.0f, 1.0f, 1.0f, rgba);
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+        if (EftUtil_IsCamUnderWater()) {
+            z -= 500;
+        } else {
+            z += 500;
+        }
+    } else
+#endif
+    {
+        p->h.tag = 0x20000007;
+        p->prim = 0x54;
+        p->h.vif1 = 0x50000007;
+        p->h.gif0 = 0xC400000000008001;
+        p->h.gif1 = 0xF42424242160;
+        p->h.next = 0;
+        p->h.vif0 = 0x10000000;
+        p->rgba[0] = r;
+        p->rgba[1] = g;
+        p->rgba[2] = b;
+        p->rgba[3] = a;
+        p->q = 1.0f;
+        p->v[0].s = 0.0f;
+        p->v[0].t = 0.0f;
+        p->v[1].s = 1.0f;
+        p->v[1].t = 0.0f;
+        p->v[2].s = 0.0f;
+        p->v[2].t = 1.0f;
+        p->v[3].s = 1.0f;
+        p->v[3].t = 1.0f;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+        z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+        if (EftUtil_IsCamUnderWater()) {
+            z -= 500;
+        } else {
+            z += 500;
+        }
+        p->tex0 = *tex;
     }
-    p->tex0 = *tex;
     if (alphaRef != 0) {
         EFT_WATER_QUEUE_TEST(((u64)alphaRef << 4) | 0x5000D, z, layer);
     }
