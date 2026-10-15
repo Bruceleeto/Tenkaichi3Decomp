@@ -836,6 +836,12 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
         layer = 0;
         abe = 0;
     }
+#ifdef PORT
+    /* The CLAMP packet and the record together or neither: with no room left in the packet memory, not drawn. */
+    if (Port_TakesRecords() && !Ot_RecRoom((repeat ? sizeof(EftMeshClampPkt) : 0) + Ot_RecBytes(3))) {
+        return;
+    }
+#endif
     if (repeat) {
         EftMeshClampPkt *p;
         s32 l;
