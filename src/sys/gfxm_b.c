@@ -1000,6 +1000,9 @@ extern void Port_GsMarker(s32 effect);
 /* Uploads the CLUT and draws the depth buffer's spare byte through it over the screen. */
 void GfxAlphaKey_Draw(void) {
 #ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no depth texture: nothing) */
+        return;
+    }
     Port_GsMarker(PORT_FX_ALPHA_KEY); /* the GPU renderer draws the tint natively here and drops the pass below */
 #endif
     Dma_AddData(gGfxAlphaKey->ref, 0x10);
