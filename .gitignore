@@ -36,3 +36,5 @@ port/build_release/
 /stages/
 /songs/
 /textures/
+/port/ps2_*.txt
+/port/work
