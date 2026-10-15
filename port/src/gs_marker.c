@@ -26,7 +26,7 @@ void Port_GsMarker(int effect) {
 #include "port_addr.h"
 
 extern int Gs_TakesRecords(void);                                       /* gs/gs_core.c */
-extern int Gs_RecordPush(const RndQuad *q, uint32_t list, uint32_t at); /* gs/gs_core.c */
+extern int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at); /* gs/gs_core.c */
 extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
 extern uint32_t gDmaBuf[2];   /* its two buffers (game addresses) */
 extern int gDmaBufIdx;        /* the one being built */
@@ -38,7 +38,14 @@ int Port_Quad(const RndQuad *q) {
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    return Gs_RecordPush(q, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+    return Gs_RecordPush(q, 0, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+}
+
+int Port_Poly(const RndPoly *p) {
+    if (!Gs_TakesRecords()) {
+        return 0;
+    }
+    return Gs_RecordPush(p, 1, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
 }
 
 int Port_TakesRecords(void) {

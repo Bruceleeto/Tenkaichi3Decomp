@@ -75,7 +75,9 @@ void GsGpu_DrawVu6(int ctx, const float *vertices, uint32_t count, const float *
 void Gs_RegWrite(uint32_t addr, uint64_t d);
 void GsGpu_Native(int effect); /* marker register 0x7F: a native effect goes here */
 struct RndQuad;
+struct RndPoly;
 void GsGpu_Quad(const struct RndQuad *q); /* a quad the game handed over (include/port/rnd.h), from the queue (gs_core.c) */
+void GsGpu_Poly(const struct RndPoly *p); /* a polygon, the same */
 void GsGpu_FrameEnd(void);
 /* The game is re-running frames it has already shown (online play after a late input; the save / restore test):
    nothing of them is to be seen or heard. The frame's list is still walked, because it also carries the texture

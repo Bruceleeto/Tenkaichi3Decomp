@@ -241,7 +241,8 @@ int Gs_TakesRecords(void) {
    fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
 typedef struct RndCmd {
     uint32_t list, at; /* the display list's first address; the address in it */
-    RndQuad q;
+    uint32_t kind;     /* 0 RndQuad, 1 RndPoly */
+    union { RndQuad q; RndPoly p; } r;
 } RndCmd;
 typedef struct RndQueue {
     RndCmd *cmd;
@@ -250,8 +251,9 @@ typedef struct RndQueue {
 static RndQueue sRndFill, sRndWalk;
 static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
 
-/* port/src/gs_marker.c Port_Quad: q at address `at` of the list that starts at `list`. 0 = not taken. */
-int Gs_RecordPush(const RndQuad *q, uint32_t list, uint32_t at) {
+/* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
+   that starts at `list`. 0 = not taken. */
+int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
     RndQueue *f = &sRndFill;
     if (f->n != 0 && f->cmd[f->n - 1].list == list && at < f->cmd[f->n - 1].at) {
         /* the list was started again without being handed over (src/sys/dma.c Dma_ResetBuffers): its records go */
@@ -270,7 +272,8 @@ int Gs_RecordPush(const RndQuad *q, uint32_t list, uint32_t at) {
     }
     f->cmd[f->n].list = list;
     f->cmd[f->n].at = at;
-    f->cmd[f->n].q = *q;
+    f->cmd[f->n].kind = (uint32_t)kind;
+    if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
     f->n++;
     return 1;
 }
@@ -296,11 +299,15 @@ static void rnd_take(uint32_t tadr) {
     f->n = keep;
 }
 
+static void rnd_draw(const RndCmd *c) {
+    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else { GsGpu_Poly(&c->r.p); }
+}
+
 /* The walk is at the DMA tag at tadr: the records queued in front of it. */
 static void rnd_drain(uint32_t tadr) {
     RndQueue *w = &sRndWalk;
     while (w->next < w->n && w->cmd[w->next].at == tadr) {
-        GsGpu_Quad(&w->cmd[w->next++].q);
+        rnd_draw(&w->cmd[w->next++]);
     }
 }
 
@@ -308,7 +315,7 @@ static void rnd_drain(uint32_t tadr) {
 static void rnd_rest(void) {
     RndQueue *w = &sRndWalk;
     while (w->next < w->n) {
-        GsGpu_Quad(&w->cmd[w->next++].q);
+        rnd_draw(&w->cmd[w->next++]);
         sRndLate++;
     }
     w->n = w->next = 0;

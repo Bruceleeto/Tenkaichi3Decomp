@@ -1264,24 +1264,24 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
 /* BT3_RND_CHECK=1: a record's state against the GS context it would have been drawn through (the state packets are
    still sent, include/port/rnd.h), in the GS's terms: each register that differs, once per register and pair of
    values. (A check only: the record is drawn from its own state.) */
-static void rnd_check(const RndQuad *q) {
+static const uint64_t sRndAlpha[5] = {0x44, 0x48, 0x42, 0x49, 0x44}; /* RND_BLEND_ as the GS's ALPHA (NONE: not used) */
+static const uint8_t sRndAtst[8] = {1, 0, 2, 3, 4, 5, 6, 7};         /* RND_ATEST_ -> the GS's ATST */
+
+static void rnd_check(const RndState *st, uint32_t gsCtx, int textured) {
     static int on = -1, seen;
     static uint64_t told[64][3];
     static const char *names[] = {"FRAME", "ALPHA", "TEST", "FBA", "TEX1", "CLAMP", "SCISSOR", "ZBUF"};
-    static const uint64_t blend[3] = {0x44, 0x48, 0x42};
-    static const uint8_t atst[8] = {1, 0, 2, 3, 4, 5, 6, 7};
-    const RndState *st = &q->st;
-    int ctx = (int)q->gsCtx, textured = q->tex != 0 || q->gsTex0 != 0, i, k;
+    int ctx = (int)gsCtx, i, k;
     uint64_t want[8], have[8], t;
 
     if (on < 0) { on = getenv("BT3_RND_CHECK") != NULL && atoi(getenv("BT3_RND_CHECK")) != 0; }
     if (!on || ctx < 0 || ctx > 1) { return; }
     want[0] = (st->fbp & 0x1FF) | (st->flags & RND_NO_COLOUR ? 0x00FFFFFFull << 32 : 0) | (st->flags & RND_NO_ALPHA ? 0xFF000000ull << 32 : 0);
     have[0] = gGs.frame[ctx] & 0xFFFFFFFF000001FFull;
-    want[1] = blend[st->blend < 3 ? st->blend : 0] | (st->flags & RND_DEST_ALPHA ? 0x10 : 0);
-    have[1] = gGs.alpha[ctx] & 0xFF;
+    want[1] = st->blend == RND_BLEND_NONE ? 0 : sRndAlpha[st->blend < 4 ? st->blend : 0] | (st->flags & RND_DEST_ALPHA ? 0x10 : 0);
+    have[1] = st->blend == RND_BLEND_NONE ? 0 : gGs.alpha[ctx] & 0xFF;
     for (k = 0; k < 2; k++) { /* (the same tests written two ways: no depth test, and an alpha test that always passes) */
-        t = k ? gGs.test[ctx] : (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)atst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
+        t = k ? gGs.test[ctx] : (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
                                 (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
                                 1ull << 16 | (uint64_t)(st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1) << 17;
         if (!((t >> 16) & 1)) { t = (t & ~(7ull << 16)) | 1ull << 16 | 1ull << 17; }
@@ -1306,67 +1306,128 @@ static void rnd_check(const RndQuad *q) {
     }
 }
 
-/* Quads drawn from GS memory this frame (no handle, or one that names nothing now): what is left of the GS in 2D. */
+/* Records drawn from GS memory this frame (no handle, nor a native texture where TEX0 says): what is left of the
+   GS in 2D. */
 unsigned gsRndFallback;
 
-/* A quad whose texture is only in GS memory: drawn as the GS would draw it, through its registers (draw_prim). */
-static void rnd_gs(const RndQuad *q) {
-    static const uint64_t blend[3] = {0x44, 0x48, 0x42}; /* (Cs - Cd) * A + Cd, Cs * A + Cd, Cd - Cs * A */
-    static const uint8_t atst[8] = {1, 0, 2, 3, 4, 5, 6, 7}; /* RND_ATEST_ -> the GS's ATST */
-    const RndState *st = &q->st;
+/* A record whose texture is only in GS memory: drawn as the GS would draw it, through its registers (draw_prim).
+   v: n corners as a strip; stq: their texture coordinates as s, t, q (else u, v in sixteenths of a texel). */
+static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, GsVertex *v, int n, int stq) {
+    const uint64_t alpha = sRndAlpha[st->blend < 4 ? st->blend : 0];
     GsRegs r;
-    GsVertex v[4];
-    int i;
     static int log = -1;
 
     if (log < 0) { log = getenv("BT3_TEX_LOG") != NULL; }
-    if (log) { fprintf(stderr, "rnd: frame %u: a quad from GS memory (handles %08X %08X, TEX0 %016llX)\n", gGsFrame, q->tex, q->pal, (unsigned long long)q->gsTex0); }
+    if (log) { fprintf(stderr, "rnd: frame %u: a record from GS memory (handles %08X %08X, TEX0 %016llX)\n", gGsFrame, tex, pal, (unsigned long long)t0); }
     gsRndFallback++;
     memset(&r, 0, sizeof(r));
-    r.tex0 = q->gsTex0;
-    r.prim = 4 | 1 << 6 | (st->flags & RND_GOURAUD ? 1 << 3 : 0) | (r.tex0 != 0 ? 1 << 4 | 1 << 8 : 0);
+    r.tex0 = t0;
+    r.prim = 4 | (st->blend != RND_BLEND_NONE ? 1 << 6 : 0) | (st->flags & RND_GOURAUD ? 1 << 3 : 0) | (t0 != 0 ? 1 << 4 | (stq ? 0 : 1 << 8) : 0);
     r.texa = 0x80ull << 32;
     r.tex1 = st->flags & RND_SMOOTH ? 0x60 : 0;
     r.clamp = st->flags & RND_REPEAT ? 0 : 5;
     r.scissor = (uint64_t)(uint16_t)st->scissor[0] | (uint64_t)(uint16_t)st->scissor[2] << 16 |
                 (uint64_t)(uint16_t)st->scissor[1] << 32 | (uint64_t)(uint16_t)st->scissor[3] << 48;
-    r.alpha = blend[st->blend < 3 ? st->blend : 0] | (st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by Ad instead of As) */
-    r.test = (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)atst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
+    r.alpha = alpha | (st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by Ad instead of As) */
+    r.test = (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
              (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
              1ull << 16 | (uint64_t)(st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1) << 17;
     r.frame = (st->fbp & 0x1FF) | (st->flags & RND_NO_COLOUR ? 0x00FFFFFFull << 32 : 0) | (st->flags & RND_NO_ALPHA ? 0xFF000000ull << 32 : 0);
     r.fba = st->flags & RND_MARK ? 1 : 0;
     r.zbuf = 0xE0 | 0x31ull << 24 | (st->flags & RND_ZWRITE ? 0 : 1ull << 32); /* the game's depth page (24-bit) */
-    memset(v, 0, sizeof(v));
-    for (i = 0; i < 4; i++) {
-        v[i].x = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
-        v[i].y = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
-        v[i].z = q->z;
-        v[i].u = q->uv[i][0];
-        v[i].v = q->uv[i][1];
-        v[i].r = (uint8_t)q->rgba[i];
-        v[i].g = (uint8_t)(q->rgba[i] >> 8);
-        v[i].b = (uint8_t)(q->rgba[i] >> 16);
-        v[i].a = (uint8_t)(q->rgba[i] >> 24);
-    }
     draw_prim(3, &r, &v[0]);
-    draw_prim(3, &r, &v[1]);
+    if (n == 4) {
+        draw_prim(3, &r, &v[1]);
+    }
+}
+
+/* The texture a record names: by its handles, or the native one uploaded where TEX0 says (the block map of the
+   PVR layer, gGsNat / gGsPal: no GS memory read); its size. 0 = none (rnd_gs then). */
+static GsTex rnd_tex(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
+    GsTex g;
+    if (tex != 0 && sBackend->texHandle != NULL && (g = sBackend->texHandle(tex, pal, tw, th)) != 0) {
+        return g;
+    }
+#ifdef BT3_PVR
+    if (t0 != 0 && sBackend == &sPvrBackend) {
+        uint32_t tbp = t0 & 0x3FFF, psm = (t0 >> 20) & 0x3F, cbp = (t0 >> 37) & 0x3FFF, cpsm = (t0 >> 51) & 15;
+        uint32_t bits = (uint32_t)Gs_PsmBits(psm), palKey = bits > 8 ? 0 : GsPvr_PalKey(cbp);
+        *tw = 1u << ((t0 >> 26) & 15);
+        *th = 1u << ((t0 >> 30) & 15);
+        if (bits > 8 || palKey != 0) { /* (a palette in GS memory: rnd_gs) */
+            return GsPvr_Native(tbp, psm, *tw, *th, cbp, cpsm, palKey);
+        }
+    }
+#endif
+    return 0;
+}
+
+/* The draw of a record of state st with texture g (0: none) and gsTex0 t0 (its palette's tint): all but the
+   vertices. 0 = not drawn. */
+static int rnd_draw_state(GsDraw *d, const RndState *st, GsTex g, uint64_t t0) {
+    /* the pipeline key's factors of the source and of the destination (blend_key: 0 none, 1 one, 2 A, 3 -A, 4 1 - A,
+       5 1 + A) */
+    static const uint8_t factor[4][2] = {{2, 4}, {2, 1}, {3, 1}, {0, 5}}; /* normal, add, subtract, destination */
+    static const uint8_t test[8] = {2, 1, 3, 4, 5, 6, 7, 8};             /* RND_ATEST_ -> d.mode[3] (gs.frag: ATST + 1) */
+    uint32_t b = st->blend;
+
+    memset(d, 0, sizeof(*d));
+    d->target = GsDraw_TargetGet(st->fbp & 0x1FF, 1);
+    if (d->target < 0) {
+        return 0;
+    }
+    d->tex = g != 0 ? g : gsWhite;
+    if (g != 0 && t0 != 0) {   /* a palette texture: its palette's tint, if the game tints the palettes there (gs_pvr.c Port_ClutTint) */
+        uint32_t psm = (uint32_t)(t0 >> 20) & 0x3F;
+        if (psm == 0x13 || psm == 0x14 || psm == 0x1B || psm == 0x24 || psm == 0x2C) { d->tint = gGsTint[(uint32_t)(t0 >> 42) & 511]; }
+    }
+    d->sampler = (st->flags & RND_SMOOTH ? 1 : 0) | (st->flags & RND_REPEAT ? 0 : 2 | 4);
+    d->pipeline = pipeline_key(b >= 4 ? 0 : 1u | (uint32_t)factor[b][0] << 1 | (uint32_t)factor[b][1] << 4 | (st->flags & RND_DEST_ALPHA ? 1u << 7 : 0),
+                               st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1, (st->flags & RND_ZWRITE) != 0, 0,
+                               (st->flags & RND_NO_COLOUR ? 0 : GS_CC_R | GS_CC_G | GS_CC_B) | (st->flags & RND_NO_ALPHA ? 0 : GS_CC_A), 0);
+    d->mode[0] = g != 0;
+    d->mode[1] = t0 != 0 ? (int32_t)((t0 >> 35) & 3) : 0; /* as TEX0 says (TFX, TCC); else the texture's colour times */
+    d->mode[2] = t0 != 0 ? (int32_t)((t0 >> 34) & 1) : 1; /* the vertex colour, and the texture's alpha */
+    /* (a test with another "fail" than "nothing" passes everything, as draw_state has it) */
+    d->mode[3] = st->atest != RND_ATEST_ALWAYS && st->afail == RND_AFAIL_NOTHING ? test[st->atest & 7] : 0;
+    d->misc[0] = (float)st->aref;
+    d->misc[1] = st->mask == RND_IF_UNMARKED ? 1.0f : st->mask == RND_IF_MARKED ? 2.0f : 0.0f;
+    d->misc[2] = st->flags & RND_MARK ? 1.0f : 0.0f;
+    d->scissor[0] = st->scissor[0] * SCALE;
+    d->scissor[1] = st->scissor[1] * SCALE;
+    d->scissor[2] = (st->scissor[2] + 1) * SCALE - d->scissor[0];
+    d->scissor[3] = (st->scissor[3] + 1) * SCALE - d->scissor[1];
+    return 1;
+}
+
+/* Corners k of a strip as triangles (0 1 2, 1 2 3), each corner's colour or (without RND_GOURAUD) each triangle's
+   last corner's. */
+static void rnd_put(const RndState *st, int n, const uint32_t *z, const float *x, const float *y, const float *s,
+                    const float *t, const float *q, const uint32_t *rgba) {
+    static const int tri[2][3] = {{0, 1, 2}, {1, 2, 3}};
+    GsVertex v;
+    int i, k;
+    memset(&v, 0, sizeof(v));
+    for (k = 0; k < (n == 4 ? 2 : 1); k++) {
+        uint32_t flat = rgba[tri[k][2]];
+        for (i = 0; i < 3; i++) {
+            int c = tri[k][i];
+            uint32_t col = st->flags & RND_GOURAUD ? rgba[c] : flat;
+            v.z = z[c];
+            put(&v, x[c], y[c], s[c], t[c], q[c], (uint8_t)col, (uint8_t)(col >> 8), (uint8_t)(col >> 16), (uint8_t)(col >> 24), 16777215.0f);
+        }
+    }
 }
 
 /* A quad the game handed over (include/port/rnd.h), from the queue (gs_core.c): recorded as a draw of the shared
    list straight from the state the record names, as two triangles of its strip. Nothing of the GS's registers is
-   read or made, but for a texture without handles (rnd_gs). */
+   read or made, but for a texture only in GS memory (rnd_gs). */
 void GsGpu_Quad(const RndQuad *q) {
-    /* the pipeline key's factors of the source and of the destination (blend_key: 1 one, 2 A, 3 -A, 4 1 - A) */
-    static const uint8_t factor[3][2] = {{2, 4}, {2, 1}, {3, 1}}; /* normal, add, subtract */
-    static const uint8_t test[8] = {2, 1, 3, 4, 5, 6, 7, 8};    /* RND_ATEST_ -> d.mode[3] (gs.frag: the GS's ATST + 1) */
-    const RndState *st = &q->st;
     GsDraw d;
-    GsVertex v;
-    float tw = 1.0f, th = 1.0f, x[4], y[4], s[4], t[4], qd[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    uint32_t w = 0, h = 0, b = st->blend < 3 ? st->blend : 0;
-    int i, k, textured = 0;
-    static const int tri[2][3] = {{0, 1, 2}, {1, 2, 3}};
+    GsTex g = 0;
+    float x[4], y[4], s[4], t[4], qd[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    uint32_t tw = 1, th = 1, z[4];
+    int i;
 
     if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
@@ -1374,63 +1435,99 @@ void GsGpu_Quad(const RndQuad *q) {
     if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
         return;
     }
-    rnd_check(q);
-    memset(&d, 0, sizeof(d));
-    d.target = GsDraw_TargetGet(st->fbp & 0x1FF, 1);
-    if (d.target < 0) {
+    rnd_check(&q->st, q->gsCtx, q->tex != 0 || q->gsTex0 != 0);
+    if ((q->tex != 0 || q->gsTex0 != 0) && (g = rnd_tex(q->tex, q->pal, q->gsTex0, &tw, &th)) == 0) {
+        GsVertex v[4];
+        memset(v, 0, sizeof(v));
+        for (i = 0; i < 4; i++) {
+            v[i].x = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
+            v[i].y = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
+            v[i].z = q->z;
+            v[i].u = q->uv[i][0];
+            v[i].v = q->uv[i][1];
+            v[i].r = (uint8_t)q->rgba[i];
+            v[i].g = (uint8_t)(q->rgba[i] >> 8);
+            v[i].b = (uint8_t)(q->rgba[i] >> 16);
+            v[i].a = (uint8_t)(q->rgba[i] >> 24);
+        }
+        rnd_gs(&q->st, q->tex, q->pal, q->gsTex0, v, 4, 0);
         return;
     }
-    d.tex = gsWhite;
-    if (q->tex != 0 && sBackend->texHandle != NULL && (d.tex = sBackend->texHandle(q->tex, q->pal, &w, &h)) != 0) {
-        tw = (float)w;
-        th = (float)h;
-        textured = 1;
-    } else if (q->tex != 0 || q->gsTex0 != 0) {
-        rnd_gs(q); /* no handle, or one that names nothing now: the texture is where TEX0 says in GS memory */
+    if (!rnd_draw_state(&d, &q->st, g, q->gsTex0)) {
         return;
     }
-    d.sampler |= (st->flags & RND_SMOOTH ? 1 : 0) | (st->flags & RND_REPEAT ? 0 : 2 | 4);
-    d.pipeline = pipeline_key(1u | (uint32_t)factor[b][0] << 1 | (uint32_t)factor[b][1] << 4 | (st->flags & RND_DEST_ALPHA ? 1u << 7 : 0),
-                              st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1, (st->flags & RND_ZWRITE) != 0, 0,
-                              (st->flags & RND_NO_COLOUR ? 0 : GS_CC_R | GS_CC_G | GS_CC_B) | (st->flags & RND_NO_ALPHA ? 0 : GS_CC_A), 0);
-    d.mode[0] = textured;
-    d.mode[1] = 0; /* the texture's colour times the vertex colour */
-    d.mode[2] = 1; /* the texture's alpha */
-    /* (a test with another "fail" than "nothing" passes everything, as draw_state has it) */
-    d.mode[3] = st->atest != RND_ATEST_ALWAYS && st->afail == RND_AFAIL_NOTHING ? test[st->atest & 7] : 0;
-    d.misc[0] = (float)st->aref;
-    d.misc[1] = st->mask == RND_IF_UNMARKED ? 1.0f : st->mask == RND_IF_MARKED ? 2.0f : 0.0f;
-    d.misc[2] = st->flags & RND_MARK ? 1.0f : 0.0f;
-    d.scissor[0] = st->scissor[0] * SCALE;
-    d.scissor[1] = st->scissor[1] * SCALE;
-    d.scissor[2] = (st->scissor[2] + 1) * SCALE - d.scissor[0];
-    d.scissor[3] = (st->scissor[3] + 1) * SCALE - d.scissor[1];
     for (i = 0; i < 4; i++) {
         x[i] = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
         y[i] = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
-        s[i] = (float)q->uv[i][0] / 16.0f / tw;
-        t[i] = (float)q->uv[i][1] / 16.0f / th;
+        s[i] = (float)q->uv[i][0] / 16.0f / (float)tw;
+        t[i] = (float)q->uv[i][1] / 16.0f / (float)th;
+        z[i] = q->z;
     }
     /* 2D art: texture coordinates per GS pixel (gs.frag), or with "2D filtering" per output pixel inside its
        rectangle of the sheet (draw_prim) */
-    if (textured && sSmooth2d) {
-        rect_2d(&d, 4, x, y, s, t, qd, tw, th);
-    } else if (textured) {
+    if (g != 0 && sSmooth2d) {
+        rect_2d(&d, 4, x, y, s, t, qd, (float)tw, (float)th);
+    } else if (g != 0) {
         d.misc[3] = (float)SCALE;
     }
     date_snapshot(&d);
     d.first = gsVertCount;
-    memset(&v, 0, sizeof(v));
-    v.z = q->z;
-    for (k = 0; k < 2; k++) {
-        uint32_t flat = q->rgba[tri[k][2]]; /* without RND_GOURAUD a triangle has its last corner's colour */
-        for (i = 0; i < 3; i++) {
-            int c = tri[k][i];
-            uint32_t rgba = st->flags & RND_GOURAUD ? q->rgba[c] : flat;
-            put(&v, x[c], y[c], s[c], t[c], 1.0f, (uint8_t)rgba, (uint8_t)(rgba >> 8), (uint8_t)(rgba >> 16), (uint8_t)(rgba >> 24), 16777215.0f);
-        }
+    rnd_put(&q->st, 4, z, x, y, s, t, qd, q->rgba);
+    draw_end(&d, g != 0, 0, (q->rgba[0] >> 24) != 0); /* (2D art: textured by texel coordinates) */
+}
+
+/* A polygon the game handed over (include/port/rnd.h), as GsGpu_Quad: in perspective (each corner's depth and
+   s, t, q), not 2D art. */
+void GsGpu_Poly(const RndPoly *p) {
+    GsDraw d;
+    GsTex g = 0;
+    float x[4], y[4], s[4], t[4], q[4];
+    uint32_t tw = 1, th = 1, z[4], rgba[4];
+    int i, n = p->n == 4 ? 4 : 3;
+
+    if (GS_NO_PICTURE) {
+        return;
     }
-    draw_end(&d, textured, 0, (q->rgba[0] >> 24) != 0); /* (2D art: textured by texel coordinates) */
+    if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
+        return;
+    }
+    rnd_check(&p->st, p->gsCtx, p->tex != 0 || p->gsTex0 != 0);
+    if ((p->tex != 0 || p->gsTex0 != 0) && (g = rnd_tex(p->tex, p->pal, p->gsTex0, &tw, &th)) == 0) {
+        GsVertex v[4];
+        memset(v, 0, sizeof(v));
+        for (i = 0; i < n; i++) {
+            const RndVtx *c = &p->v[i];
+            v[i].x = (float)(int32_t)(c->x * 16.0f) / 16.0f;
+            v[i].y = (float)(int32_t)(c->y * 16.0f) / 16.0f;
+            v[i].z = c->z;
+            v[i].s = c->s;
+            v[i].t = c->t;
+            v[i].q = c->q;
+            v[i].r = (uint8_t)c->rgba;
+            v[i].g = (uint8_t)(c->rgba >> 8);
+            v[i].b = (uint8_t)(c->rgba >> 16);
+            v[i].a = (uint8_t)(c->rgba >> 24);
+        }
+        rnd_gs(&p->st, p->tex, p->pal, p->gsTex0, v, n, 1);
+        return;
+    }
+    if (!rnd_draw_state(&d, &p->st, g, p->gsTex0)) {
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        const RndVtx *c = &p->v[i];
+        x[i] = (float)(int32_t)(c->x * 16.0f) / 16.0f;
+        y[i] = (float)(int32_t)(c->y * 16.0f) / 16.0f;
+        s[i] = c->s;
+        t[i] = c->t;
+        q[i] = c->q != 0.0f ? c->q : 1.0f;
+        z[i] = c->z;
+        rgba[i] = c->rgba;
+    }
+    date_snapshot(&d);
+    d.first = gsVertCount;
+    rnd_put(&p->st, n, z, x, y, s, t, q, rgba);
+    draw_end(&d, 0, 0, (rgba[0] >> 24) != 0);
 }
 
 /* Vertex program 6 as a shader: one strip of the ground under a fighter, textured with the shadow page (see

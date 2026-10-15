@@ -2,6 +2,9 @@
 #include "sys/gfx.h"
 #include "sys/gfx_ot.h"
 #include "sys/heap.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Ordering table for depth-sorted primitives (0x102458..0x102F28). Lives for the length of a battle.
@@ -182,11 +185,26 @@ s32 Ot_Send(void) {
         return 0;
     }
     Ot_AddEnv(0);
+#ifdef PORT
+    Rnd_OtBegin(GFX_FRAME_REG(), GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+#endif
     dst = (u8 *)Dma_BeginDirect();
     for (prim = gOtHead; prim != NULL; prim = prim->next) {
+#ifdef PORT
+        if (Rnd_OtTake((const u64 *)(prim + 1), prim->qwc)) { /* its polygons handed to the renderer (port/src/rnd_ot.c) */
+            Dma_EndDirect((u64 *)dst);
+            Rnd_OtDraw((const u64 *)(prim + 1), prim->qwc);
+            dst = (u8 *)Dma_BeginDirect();
+            continue;
+        }
+        dst = (u8 *)Rnd_OtState((u64 *)dst); /* what the GS would hold after those, for the packets */
+#endif
         memcpy(dst, prim + 1, prim->qwc << 4);
         dst += prim->qwc << 4;
     }
+#ifdef PORT
+    dst = (u8 *)Rnd_OtState((u64 *)dst);
+#endif
     Dma_EndDirect((u64 *)dst);
     Ot_AddRestoreEnv();
     return 1;

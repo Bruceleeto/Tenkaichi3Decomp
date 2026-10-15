@@ -15,7 +15,8 @@
  *
  * Users: the Flash player's quads (src/sys/gfxm_c.c FlashDraw_Quad), the battle HUD's sprites (src/battle/hud_c_c.c),
  * the screen clear and the fades (src/sys/gfx.c Gfx_ClearScreen, src/sys/fade.c Fade_DrawRect), the text and its
- * icons (src/battle/col_c.c, col_c_b.c), the battle menu (src/battle/hud_0_b.c, hud_0_c.c).
+ * icons (src/battle/col_c.c, col_c_b.c), the battle menu (src/battle/hud_0_b.c, hud_0_c.c); as polygons (RndPoly,
+ * GsGpu_Poly), the effects' draws of the ordering table (src/sys/gfx_ot.c Ot_Send, port/src/rnd_ot.c).
  */
 
 #include <stdint.h>
@@ -23,6 +24,8 @@
 #define RND_BLEND_NORMAL 0 /* Cs * A + Cd * (1 - A); alpha 0x80 = 1 (A: the source's alpha, or RND_DEST_ALPHA's) */
 #define RND_BLEND_ADD 1    /* Cs * A + Cd */
 #define RND_BLEND_SUB 2    /* Cd - Cs * A */
+#define RND_BLEND_DEST 3   /* Cd * A + Cd (the destination brightened by itself) */
+#define RND_BLEND_NONE 4   /* Cs: not blended */
 
 /* RndState.flags */
 #define RND_REPEAT 0x01     /* the texture wraps (else it is clamped at its edges) */
@@ -83,10 +86,39 @@ typedef struct RndQuad {
     uint32_t pad;
 } RndQuad; /* 112 bytes */
 
+/* A polygon seen in perspective (the effects, src/battle/eft_*.c): each corner its own depth, texture coordinates
+   and colour. */
+typedef struct RndVtx {
+    float x, y;        /* pixels of the 512 x 448 picture */
+    uint32_t z;        /* depth, in the 24-bit buffer's steps (bigger is nearer) */
+    float s, t, q;     /* texture coordinates times q (0..1 across the texture), and q (1 / w) */
+    uint32_t rgba;     /* as RndQuad's */
+} RndVtx; /* 28 bytes */
+
+typedef struct RndPoly {
+    RndVtx v[4];       /* a triangle (n 3), or a strip of two (n 4: 0 1 2, 1 2 3) */
+    uint32_t n;
+    uint32_t tex, pal; /* as RndQuad's */
+    uint32_t gsCtx;
+    uint64_t gsTex0;   /* as RndQuad's; and with tex 0, the native texture uploaded there */
+    RndState st;
+    uint32_t pad;
+} RndPoly; /* 160 bytes */
+
 /* port/src/gs_marker.c */
 int Port_Quad(const RndQuad *q); /* queues the quad at the display list's cursor; 0 = not taken (the software renderer,
                                     which draws only GS packets: the caller sends its packet as before) */
 int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
+int Port_Poly(const RndPoly *p); /* as Port_Quad */
+/* The ordering table's packets as polygons (port/src/rnd_ot.c, from src/sys/gfx_ot.c Ot_Send): the state of the
+   sorted pass to start from (FRAME, SCISSOR as Ot_AddEnv sets them); whether a packet is a draw taken (1) or one
+   kept (0: its register writes are followed); its polygons to the queue; the registers the GS would hold after
+   those taken, written as A+D at dst (the new end) before a packet that is kept. */
+void Rnd_OtBegin(uint64_t frame, uint64_t scissor);
+int Rnd_OtTake(const uint64_t *pkt, unsigned qwc);
+void Rnd_OtDraw(const uint64_t *pkt, unsigned qwc);
+uint64_t *Rnd_OtState(uint64_t *dst);
+extern unsigned gRndOtStat[2]; /* the ordering table's draws sent as packets, as polygons (BT3_GS_VERBOSE) */
 void Rnd_StateInit(RndState *s, uint32_t fbp); /* the whole picture, blended normally, no test, nothing else */
 int Rnd_Fill(const RndState *st, uint32_t rgba); /* the whole picture in one colour, as Port_Quad */
 
