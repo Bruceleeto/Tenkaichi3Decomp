@@ -16,8 +16,9 @@
  * The 32-, 24- and 16-bit textures too, as 16-bit PVR texels in twiddled order (bits 16, psm the entry's | the PVR
  * format << 6: 0 ARGB1555, 1 RGB565, 2 ARGB4444), keyed by the upload's hash ^ KEY_DIRECT: the 24- and 16-bit ones
  * opaque (the game's TEXA, gfxm_e.c: 0x80 both), a 32-bit one 1555 when its alpha is only none or all. One that
- * fits in a GS page also as 8-bit indices read from where it lies (key ^ KEY_T8; bits 8, w x h the page's blocks it
- * covers, in rows): the game draws its light (btl_obj.c, block 0x3D40) as an 8-bit texture.
+ * is no bigger than a GS page also as 8-bit indices read from where it lies (key ^ KEY_T8; bits 8, w x h from the
+ * corner to the last texel of a block it wrote, read with twice its TBW): the game draws its light (btl_obj.c,
+ * block 0x3D40: 128 x 2 of 32 bits on two pages, 256 x 16 of indices) as an 8-bit texture.
  * Run it again whenever this changes; nothing else depends on its output.
  *
  *     dc_tex OUT.pak DIR...
@@ -59,6 +60,8 @@ static void tables_init(void) {
     }
 }
 
+static uint8_t sBlkW[16384]; /* the blocks an upload wrote (cleared with sVram) */
+
 /* The pixel (x, y) of a buffer at block bp, width bw (in 64s), format psm: read (write = 0) or written. */
 static uint32_t vram_rw(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, int write, uint32_t v) {
     uint32_t a, *w;
@@ -67,21 +70,22 @@ static uint32_t vram_rw(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint
     case 0x02: case 0x0A:
         a = ((bp + ((y >> 1) & ~0x1Fu) * bw + ((x >> 1) & ~0x1Fu) + kBlock16[(y >> 3) & 7][(x >> 4) & 3]) << 7) + kCol16[y & 7][x & 15];
         w = &sVram[(a >> 1) & 0xFFFFF];
-        if (write) { *w = (*w & ~(0xFFFFu << ((a & 1) * 16))) | (v & 0xFFFF) << ((a & 1) * 16); return 0; }
+        if (write) { sBlkW[(a >> 7) & 16383] = 1; *w = (*w & ~(0xFFFFu << ((a & 1) * 16))) | (v & 0xFFFF) << ((a & 1) * 16); return 0; }
         return (*w >> ((a & 1) * 16)) & 0xFFFF;
     case 0x13:
         a = ((bp + ((y >> 1) & ~0x1Fu) * (bw >> 1) + ((x >> 2) & ~0x1Fu) + kBlock32[(y >> 4) & 3][(x >> 4) & 7]) << 8) + sCol8[y & 15][x & 15];
         w = &sVram[(a >> 2) & 0xFFFFF];
-        if (write) { *w = (*w & ~(0xFFu << ((a & 3) * 8))) | (v & 0xFF) << ((a & 3) * 8); return 0; }
+        if (write) { sBlkW[(a >> 8) & 16383] = 1; *w = (*w & ~(0xFFu << ((a & 3) * 8))) | (v & 0xFF) << ((a & 3) * 8); return 0; }
         return (*w >> ((a & 3) * 8)) & 0xFF;
     case 0x14:
         a = ((bp + ((y >> 2) & ~0x1Fu) * (bw >> 1) + ((x >> 2) & ~0x1Fu) + kBlock16[(y >> 4) & 7][(x >> 5) & 3]) << 9) + sCol4[y & 15][x & 31];
         w = &sVram[(a >> 3) & 0xFFFFF];
-        if (write) { *w = (*w & ~(0xFu << ((a & 7) * 4))) | (v & 0xF) << ((a & 7) * 4); return 0; }
+        if (write) { sBlkW[(a >> 9) & 16383] = 1; *w = (*w & ~(0xFu << ((a & 7) * 4))) | (v & 0xF) << ((a & 7) * 4); return 0; }
         return (*w >> ((a & 7) * 4)) & 0xF;
     default:
         a = ((bp + (y & ~0x1Fu) * bw + ((x >> 1) & ~0x1Fu) + kBlock32[(y >> 3) & 3][(x >> 3) & 7]) << 6) + kCol32[y & 7][x & 7];
         w = &sVram[a & 0xFFFFF];
+        if (write) { sBlkW[(a >> 6) & 16383] = 1; }
         switch (psm) {
         case 0x01: if (write) { *w = (*w & 0xFF000000u) | (v & 0xFFFFFF); return 0; } return *w & 0xFFFFFF;
         case 0x1B: if (write) { *w = (*w & 0x00FFFFFFu) | v << 24; return 0; } return *w >> 24;
@@ -228,16 +232,17 @@ static void emit_direct(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, u
     out_add(key ^ KEY_DIRECT, w, h, 16, psm | fmt << 6, buf, w * h * 2);
     free(buf);
     bytes = tw * th * (uint32_t)psm_bits(psm) / 8;
-    if (bytes <= 8192) { /* the 8-bit view: the blocks it covers (256 bytes each), placed as an 8-bit page places them */
-        uint32_t n = (bytes + 255) / 256, b, vw = 16, vh = 16;
+    if (bytes <= 8192) { /* the 8-bit view: the blocks the upload wrote, read as 8-bit indices of a buffer of the same pages
+                            per row (TBW twice the upload's: an 8-bit page is 128 wide), from its corner to the last
+                            texel of a written block (the light: 128 x 2 of 32 bits on two pages, 256 x 16 of indices) */
+        uint32_t bw8 = (tbw ? tbw : 1) * 2, vw = 16, vh = 16, b;
         uint8_t *v8;
-        for (b = 0; b < 32; b++) { /* (kBlock32 is also the 8-bit page's: 8 x 4 blocks of 16 x 16) */
-            for (y = 0; y < 4; y++) {
-                for (x = 0; x < 8; x++) {
-                    if (kBlock32[y][x] == b && b < n) {
-                        if ((x + 1) * 16 > vw) { vw = (x + 1) * 16; }
-                        if ((y + 1) * 16 > vh) { vh = (y + 1) * 16; }
-                    }
+        for (y = 0; y < 128; y++) {
+            for (x = 0; x < bw8 * 64; x++) {
+                b = ((y >> 1) & ~0x1Fu) * (bw8 >> 1) + ((x >> 2) & ~0x1Fu) + kBlock32[(y >> 4) & 3][(x >> 4) & 7];
+                if (b < 16384 && sBlkW[b]) {
+                    if (x + 1 > vw) { vw = x + 1; }
+                    if (y + 1 > vh) { vh = y + 1; }
                 }
             }
         }
@@ -245,7 +250,7 @@ static void emit_direct(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, u
         while (vh & (vh - 1)) { vh += vh & -vh; }
         v8 = malloc(vw * vh);
         for (y = 0; y < vh; y++) {
-            for (x = 0; x < vw; x++) { v8[y * vw + x] = (uint8_t)vram_rw(0, 2, 0x13, x, y, 0, 0); }
+            for (x = 0; x < vw; x++) { v8[y * vw + x] = (uint8_t)vram_rw(0, bw8, 0x13, x, y, 0, 0); }
         }
         out_add(key ^ KEY_T8, vw, vh, 8, 0x13, v8, vw * vh);
         free(v8);
@@ -545,6 +550,7 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
             pal_emit(b + pix, size, rd32(e + 0x18)); /* (it may be a palette kept as an entry of its own) */
             if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) {
                 memset(sVram, 0, sizeof(sVram));
+                memset(sBlkW, 0, sizeof(sBlkW));
                 if (upload(b + pix, size, rd32(e + 0x18), 0, 1)) {
                     emit_direct(KEY_SHAPE(sKey, t0), psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
                 }
