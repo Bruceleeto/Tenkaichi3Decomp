@@ -450,22 +450,6 @@ uint32_t Gs_Expand(uint32_t c, uint32_t psm) {
     }
 }
 
-#ifndef PORT_GS_REF
-/* GS memory, which the Dreamcast does not have: nothing was ever uploaded to it (what the game's textures and
-   palettes are, gs_pvr.c knows from tex.pak and the markers). */
-uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y) {
-    return 0;
-}
-
-int Gs_SrcRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t *v) {
-    return 0; /* (no upload's data) */
-}
-
-uint32_t Gs_PageHash(uint32_t page) {
-    return 0; /* (every page as empty as the next) */
-}
-#endif
-
 /* ---- the walk ----
    The frame's list as the Dreamcast takes it (and the PC with BT3_WALK=1, in place of the reference's run_chain): the
    DMA chain is followed only to find where the queued records go, and the port's markers in its GIF packets (GS
@@ -672,6 +656,7 @@ static void walk_report(void) {
                     k ? "GIF channel since the last list" : "list", c[W_UPLOAD], c[W_IMAGE_QW], c[W_DRAW], c[W_VERTS], c[W_STATE],
                     c[W_VU1_CALL], c[W_VU1_QW], c[W_MPG], c[W_MARK]);
         }
+        fprintf(stderr, "walk: frame %u: %u textures drawn white (not in tex.pak, no GS memory)\n", sFrame, GsDraw_TexMisses());
     }
     memset(sW, 0, sizeof(sW));
 }

@@ -148,6 +148,10 @@ static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     uint32_t g0 = gGsPageGen[(cbp / 32) & 511], g1 = gGsPageGen[(cbp / 32 + 1) & 511];
 
     if ((h = GsPvr_PalKey(cbp)) != 0) { return h; } /* (a palette of tex.pak) */
+#ifndef PORT_GS_REF
+    (void)memo; (void)slot; (void)g0; (void)g1; (void)i;
+    return 1; /* (no GS memory to hash it from: a palette tex.pak does not have, which gs_pvr.c then does not draw) */
+#else
     h = 2166136261u;
     if (memo[slot].key == key + 1 && memo[slot].gen0 == g0 && memo[slot].gen1 == g1) {
         return memo[slot].hash;
@@ -160,6 +164,7 @@ static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     memo[slot].gen1 = g1;
     memo[slot].hash = h;
     return h;
+#endif
 }
 
 /* Drops the cached textures not used since frame `keep` (the back end's copies with them) and rebuilds the lookup. */
@@ -205,6 +210,9 @@ static const GsRegs *regs_of(int ctx) {
     return &r;
 }
 
+static unsigned sTexNoSource; /* textures the PVR could not draw from tex.pak and had no GS memory to make from */
+unsigned GsDraw_TexMisses(void) { unsigned n = sTexNoSource; sTexNoSource = 0; return n; }
+
 static GsTex texture_get(const GsRegs *r) {
     uint64_t t0 = r->tex0 & 0x1FFFFFFFFFFFFFFFull, texa = r->texa;
     uint32_t tbp = t0 & 0x3FFF, tbw = (t0 >> 14) & 0x3F, psm = (t0 >> 20) & 0x3F, tw = 1u << ((t0 >> 26) & 15), th = 1u << ((t0 >> 30) & 15);
@@ -227,6 +235,13 @@ static GsTex texture_get(const GsRegs *r) {
         if (nat != 0) { return nat; }
     }
 #endif
+#ifndef PORT_GS_REF
+    /* a texture tex.pak does not have: without GS memory there is nothing to make it from (counted: GsDraw_TexMisses) */
+    (void)texa; (void)gen; (void)pages; (void)i; (void)x; (void)y; (void)px; (void)t; (void)pal; (void)tex_t0; (void)pack;
+    (void)packMaxAlpha; (void)packFormat; (void)replaced; (void)menuText; (void)sharedText; (void)rw; (void)rh;
+    sTexNoSource++;
+    return gsWhite;
+#else
     pages = ((tbw ? tbw : 1) * 64 * th * (bits == 24 ? 32 : bits) / 8 + 8191) / 8192;
     /* `gen` identifies the CONTENT: a hash over the pages the texture and its palette occupy */
     for (i = 0; i <= pages; i++) {
@@ -431,6 +446,7 @@ static GsTex texture_get(const GsRegs *r) {
     t->rh = rh;
     t->amax = replaced ? packMaxAlpha : 255u;
     return t->tex;
+#endif
 }
 
 /* A 256-colour table at `cbp` (32-bit, the GS's index order undone) as a 256 x 1 texture; alpha as stored. */
@@ -444,7 +460,13 @@ static GsTex clut_texture(uint32_t cbp) {
 
     for (i = 0; i < 256; i++) {
         uint32_t n = (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1);
+#ifdef PORT_GS_REF
         px[i] = pal != NULL ? pal[i] : Gs_VramRead(cbp, 1, 0, n & 15, n >> 4);
+#else
+        if (pal == NULL) { return gsWhite; } /* (no GS memory to read the table from; the table passes are off there) */
+        px[i] = pal[i];
+        (void)n;
+#endif
         hash = (hash ^ px[i]) * 16777619u;
     }
     for (k = 0; k < MAX_CLUTS; k++) {

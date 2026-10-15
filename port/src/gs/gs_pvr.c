@@ -1917,6 +1917,10 @@ static GsTex nat_resolve(NatTex *n, uint32_t tbp, uint32_t psm, uint32_t tw, uin
     if (n->direct || n->psm != psm || n->tw != tw || n->th != th) { sNatMiss[2]++; return 0; }
     n->drawn = gGsFrame;
     if (n->t.mem == NULL && !nat_reload(n)) { return 0; }
+#ifndef PORT_GS_REF
+    if (pal == NULL || pal->addr == 0 || pal->n != (n->bits == 8 ? 256u : 16u)) { sPalMade[1]++; return 0; } /* (a palette tex.pak
+                                                                         does not have: no GS memory to read it from) */
+#endif
     if (n->bits == 4 && n->bank >= 0 && sBank[n->bank].key == palKey && sBank[n->bank].used) { /* the common case */
         sBank[n->bank].last = gGsFrame;
         return (GsTex)&n->t;
@@ -1939,7 +1943,12 @@ static GsTex nat_resolve(NatTex *n, uint32_t tbp, uint32_t psm, uint32_t tw, uin
     for (i = 0; i < (n->bits == 8 ? 256u : 16u); i++) { /* the palette, in the order the indices count: the pack's, or
                                                          read out of GS memory (as gs_draw.c) */
         uint32_t c = n->bits == 8 ? (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1) : i;
+#ifdef PORT_GS_REF
         col[i] = argb4444(Gs_Expand(pal != NULL ? pal->col[i] : n->bits == 8 ? Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4) : Gs_VramRead(cbp, 1, cpsm, c & 7, c >> 3), cpsm));
+#else
+        col[i] = argb4444(Gs_Expand(pal->col[i], cpsm));
+        (void)c; (void)cbp;
+#endif
     }
     n->palKey = palKey;
     n->palOk = 1;
