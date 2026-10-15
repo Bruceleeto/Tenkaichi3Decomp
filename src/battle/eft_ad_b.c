@@ -2,6 +2,7 @@
 #include "battle/eft_ad.h"
 #ifdef PORT
 #include "port/rnd.h"
+#include "port/ot_rec.h"
 #endif
 
 /*
@@ -872,49 +873,62 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
         EftAdOtEntry *e;
 
         gOtCur = (u8 *)(p + 1);
-        ctx = layer >= 2;
-        p->prim = ((s64)abe << 6) | ((s64)ctx << 9) | 0x1B;
-        p->dmaTag = 0x20000007;
-        p->vif0 = 0x10000000;
-        p->vif1 = 0x50000007;
-        p->gifTag = 0xC400000000008001;
-        p->regs = (s64)(ctx << 4) + 0xF42142142160;
-        p->next = NULL;
-        p->nop = 0;
-        p->v[0].rgbaq.r = c0->x;
-        p->v[0].rgbaq.g = c0->y;
-        p->v[0].rgbaq.b = c0->z;
-        p->v[0].rgbaq.a = c0->w;
-        p->v[0].rgbaq.q = t0->z;
-        p->v[1].rgbaq.r = c1->x;
-        p->v[1].rgbaq.g = c1->y;
-        p->v[1].rgbaq.b = c1->z;
-        p->v[1].rgbaq.a = c1->w;
-        p->v[1].rgbaq.q = t1->z;
-        p->v[2].rgbaq.r = c2->x;
-        p->v[2].rgbaq.g = c2->y;
-        p->v[2].rgbaq.b = c2->z;
-        p->v[2].rgbaq.a = c2->w;
-        p->v[2].rgbaq.q = t2->z;
-        p->tex0 = tex0;
-        p->v[0].st.s = t0->x;
-        p->v[0].st.t = t0->y;
-        p->v[1].st.s = t1->x;
-        p->v[1].st.t = t1->y;
-        p->v[2].st.s = t2->x;
-        p->v[2].st.t = t2->y;
-        p->v[0].xyz.x = p0->x;
-        p->v[0].xyz.y = p0->y;
-        p->v[0].xyz.z = p0->z;
-        p->v[0].xyz.f = 0xFF;
-        p->v[1].xyz.x = p1->x;
-        p->v[1].xyz.y = p1->y;
-        p->v[1].xyz.z = p1->z;
-        p->v[1].xyz.f = 0xFF;
-        p->v[2].xyz.x = p2->x;
-        p->v[2].xyz.y = p2->y;
-        p->v[2].xyz.z = p2->z;
-        p->v[2].xyz.f = 0xFF;
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the triangle as a record, in the packet's place */
+            gOtCur = (u8 *)p;
+            ctx = layer >= 2;
+            p = Ot_NewRec(((s64)abe << 6) | ((s64)ctx << 9) | 0x1B, 3);
+            Ot_RecTex0(p, tex0);
+            Ot_RecVtx(p, 0, p0->x, p0->y, p0->z, t0->x, t0->y, t0->z, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
+            Ot_RecVtx(p, 1, p1->x, p1->y, p1->z, t1->x, t1->y, t1->z, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
+            Ot_RecVtx(p, 2, p2->x, p2->y, p2->z, t2->x, t2->y, t2->z, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
+        } else
+#endif
+        {
+            ctx = layer >= 2;
+            p->prim = ((s64)abe << 6) | ((s64)ctx << 9) | 0x1B;
+            p->dmaTag = 0x20000007;
+            p->vif0 = 0x10000000;
+            p->vif1 = 0x50000007;
+            p->gifTag = 0xC400000000008001;
+            p->regs = (s64)(ctx << 4) + 0xF42142142160;
+            p->next = NULL;
+            p->nop = 0;
+            p->v[0].rgbaq.r = c0->x;
+            p->v[0].rgbaq.g = c0->y;
+            p->v[0].rgbaq.b = c0->z;
+            p->v[0].rgbaq.a = c0->w;
+            p->v[0].rgbaq.q = t0->z;
+            p->v[1].rgbaq.r = c1->x;
+            p->v[1].rgbaq.g = c1->y;
+            p->v[1].rgbaq.b = c1->z;
+            p->v[1].rgbaq.a = c1->w;
+            p->v[1].rgbaq.q = t1->z;
+            p->v[2].rgbaq.r = c2->x;
+            p->v[2].rgbaq.g = c2->y;
+            p->v[2].rgbaq.b = c2->z;
+            p->v[2].rgbaq.a = c2->w;
+            p->v[2].rgbaq.q = t2->z;
+            p->tex0 = tex0;
+            p->v[0].st.s = t0->x;
+            p->v[0].st.t = t0->y;
+            p->v[1].st.s = t1->x;
+            p->v[1].st.t = t1->y;
+            p->v[2].st.s = t2->x;
+            p->v[2].st.t = t2->y;
+            p->v[0].xyz.x = p0->x;
+            p->v[0].xyz.y = p0->y;
+            p->v[0].xyz.z = p0->z;
+            p->v[0].xyz.f = 0xFF;
+            p->v[1].xyz.x = p1->x;
+            p->v[1].xyz.y = p1->y;
+            p->v[1].xyz.z = p1->z;
+            p->v[1].xyz.f = 0xFF;
+            p->v[2].xyz.x = p2->x;
+            p->v[2].xyz.y = p2->y;
+            p->v[2].xyz.z = p2->z;
+            p->v[2].xyz.f = 0xFF;
+        }
         l = layer;
         if (l >= 2) {
             l -= 2;
@@ -934,40 +948,51 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
         EftAdOtEntry *e;
 
         gOtCur = (u8 *)(p + 1);
-        p->prim = ((s64)abe << 6) | 0xB;
-        p->dmaTag = 0x20000005;
-        p->vif0 = 0x10000000;
-        p->vif1 = 0x50000005;
-        p->gifTag = 0x8400000000008001;
-        p->regs = 0xF4141410;
-        p->next = NULL;
-        p->v[0].rgbaq.r = c0->x;
-        p->v[0].rgbaq.g = c0->y;
-        p->v[0].rgbaq.b = c0->z;
-        p->v[0].rgbaq.a = c0->w;
-        p->v[0].rgbaq.q = 1.0f;
-        p->v[1].rgbaq.r = c1->x;
-        p->v[1].rgbaq.g = c1->y;
-        p->v[1].rgbaq.b = c1->z;
-        p->v[1].rgbaq.a = c1->w;
-        p->v[1].rgbaq.q = 1.0f;
-        p->v[2].rgbaq.r = c2->x;
-        p->v[2].rgbaq.g = c2->y;
-        p->v[2].rgbaq.b = c2->z;
-        p->v[2].rgbaq.a = c2->w;
-        p->v[2].rgbaq.q = 1.0f;
-        p->v[0].xyz.x = p0->x;
-        p->v[0].xyz.y = p0->y;
-        p->v[0].xyz.z = p0->z;
-        p->v[0].xyz.f = 0xFF;
-        p->v[1].xyz.x = p1->x;
-        p->v[1].xyz.y = p1->y;
-        p->v[1].xyz.z = p1->z;
-        p->v[1].xyz.f = 0xFF;
-        p->v[2].xyz.x = p2->x;
-        p->v[2].xyz.y = p2->y;
-        p->v[2].xyz.z = p2->z;
-        p->v[2].xyz.f = 0xFF;
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the triangle as a record, in the packet's place (context 1 whatever the layer, as the packet) */
+            gOtCur = (u8 *)p;
+            p = Ot_NewRec(((s64)abe << 6) | 0xB, 3);
+            Ot_RecVtx(p, 0, p0->x, p0->y, p0->z, 0.0f, 0.0f, 1.0f, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
+            Ot_RecVtx(p, 1, p1->x, p1->y, p1->z, 0.0f, 0.0f, 1.0f, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
+            Ot_RecVtx(p, 2, p2->x, p2->y, p2->z, 0.0f, 0.0f, 1.0f, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
+        } else
+#endif
+        {
+            p->prim = ((s64)abe << 6) | 0xB;
+            p->dmaTag = 0x20000005;
+            p->vif0 = 0x10000000;
+            p->vif1 = 0x50000005;
+            p->gifTag = 0x8400000000008001;
+            p->regs = 0xF4141410;
+            p->next = NULL;
+            p->v[0].rgbaq.r = c0->x;
+            p->v[0].rgbaq.g = c0->y;
+            p->v[0].rgbaq.b = c0->z;
+            p->v[0].rgbaq.a = c0->w;
+            p->v[0].rgbaq.q = 1.0f;
+            p->v[1].rgbaq.r = c1->x;
+            p->v[1].rgbaq.g = c1->y;
+            p->v[1].rgbaq.b = c1->z;
+            p->v[1].rgbaq.a = c1->w;
+            p->v[1].rgbaq.q = 1.0f;
+            p->v[2].rgbaq.r = c2->x;
+            p->v[2].rgbaq.g = c2->y;
+            p->v[2].rgbaq.b = c2->z;
+            p->v[2].rgbaq.a = c2->w;
+            p->v[2].rgbaq.q = 1.0f;
+            p->v[0].xyz.x = p0->x;
+            p->v[0].xyz.y = p0->y;
+            p->v[0].xyz.z = p0->z;
+            p->v[0].xyz.f = 0xFF;
+            p->v[1].xyz.x = p1->x;
+            p->v[1].xyz.y = p1->y;
+            p->v[1].xyz.z = p1->z;
+            p->v[1].xyz.f = 0xFF;
+            p->v[2].xyz.x = p2->x;
+            p->v[2].xyz.y = p2->y;
+            p->v[2].xyz.z = p2->z;
+            p->v[2].xyz.f = 0xFF;
+        }
         l = layer;
         if (l >= 2) {
             l -= 2;
