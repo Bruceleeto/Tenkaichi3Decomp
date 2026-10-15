@@ -141,6 +141,11 @@ void GfxPost_CopyAlphaToDepth(void) {
     s32 h = 448;
     s32 n = 512 / w;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no depth texture: none of its readers is drawn; nothing) */
+        return;
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(9, 1, 1);
     p[1] = GIF_REG_AD;
