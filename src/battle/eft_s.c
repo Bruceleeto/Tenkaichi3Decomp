@@ -874,6 +874,9 @@ void EftChain_DrawStrand(EftArc *w, EftArc *w2, EftArcChain *ch) {
                 if (Port_TakesRecords()) { /* the strip as a record, in the packet's place (context 2 from layer 2 on) */
                     u32 rgbaA, rgbaB;
                     gOtCur = (u32 *)pkt;
+                    if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                        continue; /* (no room left in the packet memory: this one not drawn) */
+                    }
                     pkt = Ot_NewRec(p->layer < 2 ? 0x5C : 0x25C, 4);
                     for (j = 0; j < 4; j++) {
                         f32 q = 1.0f / (f32)scr[j].w;
@@ -2474,6 +2477,9 @@ void EftRay_DrawQuad2D(Vec4 *corner, s32 z, u8 r0, u8 g0, u8 b0, u8 a0, u8 r1, u
             u32 rgba1 = r1 | g1 << 8 | b1 << 16 | (u32)(u8)aNext << 24;
             s32 i;
 
+            if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                break; /* (no room left in the packet memory: this one and the rest not drawn) */
+            }
             q = Ot_NewRec(0x5C, 4);
             Ot_RecTex0(q, tex->tex0);
             EftVram_PortRecTex(q, tex->tex0);
