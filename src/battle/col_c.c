@@ -62,6 +62,12 @@ void Font_EndPacket(CbFontOut *out) {
     Dma_EndDirect(out->p);
 }
 
+#ifdef PORT
+/* The handles of the texture and palette the last Font_MakeTex0 named (include/port/rnd.h), and its TEX0. */
+static u64 sFontTex0;
+static u32 sFontTexH, sFontPalH;
+#endif
+
 /* Appends one sprite (TEX0, RGBAQ with q = 1.0, two UV / XYZ2 pairs, z = 0xFFFFFF0); dropped when it leaves the
    GS coordinate range. Texel coordinates get the half-texel offset (u * 16 + 8). */
 void Font_PutSprite(CbFontOut *out, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 v0, s32 u1, s32 v1, u32 rgba,
@@ -72,8 +78,8 @@ void Font_PutSprite(CbFontOut *out, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 
     y1 += 0x720;
     if (Font_IsInGsRange(x0, y0, x1, y1)) {
 #ifdef PORT
-        /* (a font's palettes are the 4 at CBP + 0..3 of one upload, which no palette handle names: TEX0) */
-        if (Rnd_Sprite(x0, y0, x1, y1, u0 * 16 + 8, v0 * 16 + 8, u1 * 16 + 8, v1 * 16 + 8, rgba, 0, 0, tex0)) {
+        if (Rnd_Sprite(x0, y0, x1, y1, u0 * 16 + 8, v0 * 16 + 8, u1 * 16 + 8, v1 * 16 + 8, rgba,
+                       tex0 == sFontTex0 ? sFontTexH : 0, tex0 == sFontTex0 ? sFontPalH : 0, tex0)) {
             return;
         }
 #endif
@@ -203,6 +209,12 @@ u64 Font_MakeTex0(FontSlot *slot, s32 clut) {
 
     tex0 |= (u64)(slot->cbp + clut) << 37;
     tex0 |= slot->tbp;
+#ifdef PORT
+    /* (the font's palettes are the four 16-colour blocks of one upload: Port_PalSub) */
+    sFontTex0 = tex0 | 0x400000000;
+    sFontTexH = Port_TexHandle(slot->data->tex);
+    sFontPalH = Port_PalSub(Port_PalHandle((void *)slot->data->tex->clutPtr), clut);
+#endif
     return tex0 | 0x400000000;
 }
 

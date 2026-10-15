@@ -607,6 +607,33 @@ bad:
    header is, counting from b (as the game finds them: by an offset in the format's own header). */
 /* Texture tables anywhere in b (a format of its own): counting from themselves (as the game's (res, res, res)) or
    from b. */
+/* A font (src/battle/col_c.c FontData, "5tnF"): one texture entry at +0x0C, its packets at byte offsets from the font
+   (Font_SetFont), 4-bit with four palettes of 16 colours in one 16x16 upload. */
+static int font(const uint8_t *b, uint32_t n) {
+    const uint8_t *e;
+    uint32_t pix, size, clut, csize, psm;
+    uint64_t t0;
+    if (n < 0x24 || memcmp(b, "5tnF", 4) != 0 || rd32(b + 0xC) > n - 0x40) { return 0; }
+    e = b + rd32(b + 0xC);
+    pix = rd32(e), size = rd32(e + 8), clut = rd32(e + 4), csize = rd32(e + 12);
+    memcpy(&t0, e + 0x30, 8);
+    psm = (t0 >> 20) & 63;
+    if (pix > n || size > n - pix || clut > n || csize > n - clut || psm != 0x14 || ((t0 >> 26) & 15) > 10 || ((t0 >> 30) & 15) > 10) { return 0; }
+    xml(1, "<textures at=\"0x%X\" count=\"1\" format=\"font\">", rd32(b + 0xC));
+    xml(0, "<tex i=\"0\" psm=\"%s\" w=\"%u\" h=\"%u\" clut=\"yes\" as=\"indexed\"/>", psm_name(psm), 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+    pal_emit(b + clut, csize, rd32(e + 0x1C));
+    memset(sVram, 0, sizeof(sVram));
+    if (upload(b + pix, size, rd32(e + 0x18), 0, 1)) {
+        sStat[0]++;
+        sStat[1]++;
+        emit(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+    } else {
+        sStat[4]++;
+    }
+    xml(-1, "</textures>");
+    return 1;
+}
+
 static int search(const uint8_t *b, uint32_t n) {
     uint32_t h;
     int found = 0;
@@ -624,7 +651,7 @@ static int search(const uint8_t *b, uint32_t n) {
 static int scan(const uint8_t *b, uint32_t n, int depth) {
     uint32_t count, i, found = 0;
     if (n < 16 || depth > 6) { xml_unknown(b, n); return 0; }
-    if (texfile(b, n, 0)) { return 1; }
+    if (texfile(b, n, 0) || font(b, n)) { return 1; }
     if (rd32(b + 4) <= n - 8 && rd32(b + 4) + 8 + 2048 > n && rd32(b) < (64u << 20)) { /* (padded
                                                                       to 0x40 in an archive, to a sector as a file) */
         uint32_t size;

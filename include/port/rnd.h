@@ -117,5 +117,6 @@ int Rnd_Sprite(int x0, int y0, int x1, int y1, int u0, int v0, int u1, int v1, u
    upload packet; 0 = none (not converted ahead of time, or not uploaded yet). */
 uint32_t Port_TexHandle(const void *entry);
 uint32_t Port_PalHandle(const void *pkt);
+uint32_t Port_PalSub(uint32_t pal, int k); /* palette k (0..3) of 16 in the blocks of a 256 one (the font's four) */
 
 #endif

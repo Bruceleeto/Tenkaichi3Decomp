@@ -1447,19 +1447,64 @@ typedef struct NatPal {
     uint32_t *col;   /* as GS memory holds them, in the order the indices count */
     uint32_t sample; /* pkt_sample of the packet when it was made */
     uint16_t next;   /* the next record of its sPalHash chain + 1 */
+    uint16_t sub[4]; /* 256 colours of 32 bits uploaded as 16 x 16: the four palettes of 16 its four blocks hold (records
+                        + 1, at addr + 1 + k: the font's, src/battle/col_c.c Font_MakeTex0) */
 } NatPal;
 static NatPal sPal[MAX_PAL];
 static uint16_t sPalHash[MAX_PAL];
 static uint32_t sPalGen;
 #define PAL_HASH(addr) (((addr) >> 4) * 2654435761u >> 21 & (MAX_PAL - 1))
 
+/* A free record, its address addr, in the hash; NULL = none. */
+static NatPal *pal_new(uint32_t addr) {
+    uint32_t i;
+    NatPal *p;
+    for (i = 0; i < MAX_PAL && sPal[i].addr != 0; i++) {}
+    if (i == MAX_PAL) { return NULL; }
+    p = &sPal[i];
+    memset(p, 0, sizeof(*p));
+    p->addr = addr;
+    p->gen = ++sPalGen;
+    p->pak = -1;
+    p->next = sPalHash[PAL_HASH(addr)];
+    sPalHash[PAL_HASH(addr)] = (uint16_t)(i + 1);
+    return p;
+}
+
+/* p's 256 colours as the GS holds a 16 x 16 upload of 32 bits: four blocks of 8 x 8, each a palette of 16 for a 4-bit
+   texture in its top 8 x 2 (blocks 0 1 / 2 3). Each a record of its own (p->sub). */
+static void pal_split(NatPal *p) {
+    uint32_t k, j;
+    for (k = 0; k < 4; k++) {
+        NatPal *q = pal_new(p->addr + 1 + k);
+        if (q == NULL || (q->col = malloc(16 * 4)) == NULL) { if (q != NULL) { Port_TexFreed(q->addr, q->addr + 1); } return; }
+        q->pak = p->pak;
+        q->n = 16;
+        for (j = 0; j < 16; j++) {
+            uint32_t x = (k & 1) * 8 + (j & 7), y = (k >> 1) * 8 + (j >> 3), at = y * 16 + x;
+            q->col[j] = p->col[(at & 0xE7) | (at & 8) << 1 | (at & 0x10) >> 1]; /* (p's order: bits 3 and 4 exchanged) */
+        }
+        p->sub[k] = (uint16_t)(q - sPal + 1);
+    }
+}
+
+/* The palette record at block cbp for a texture of n colours (a 256's first block: its palette of 16); NULL = none. */
+static const NatPal *pal_at(uint32_t cbp, uint32_t n) {
+    uint32_t i = gGsPal[cbp & 16383];
+    const NatPal *p = i != 0 && sPal[i - 1].addr != 0 ? &sPal[i - 1] : NULL;
+    if (p != NULL && n == 16 && p->n == 256) {
+        p = p->sub[0] != 0 && sPal[p->sub[0] - 1].addr != 0 ? &sPal[p->sub[0] - 1] : NULL;
+    }
+    return p != NULL && p->n == n ? p : NULL;
+}
+
 /* The game has just queued the upload of pkt to block `block` (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c, hud_c_c.c,
    eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
    layer which it is. */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
-    uint32_t m[12] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
-    uint32_t addr = Port_Addr(pkt), i, w, h, bits;
+    uint32_t m[24] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
+    uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4;
     uint64_t key;
     NatPal *p = NULL;
     int k;
@@ -1468,39 +1513,43 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
         if (sPal[i - 1].addr == addr) {
             if (sPal[i - 1].sample == pkt_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
-            Port_TexFreed(addr, addr + 1); /* (another packet there now) */
+            Port_TexFreed(addr, addr + 16); /* (another packet there now; and the four palettes of its blocks) */
             break;
         }
     }
     if (p == NULL) {
-        for (i = 0; i < MAX_PAL && sPal[i].addr != 0; i++) {}
-        if (i == MAX_PAL) { return 0; }
-        p = &sPal[i];
-        memset(p, 0, sizeof(*p));
-        p->addr = addr;
-        p->gen = ++sPalGen;
-        p->pak = -1;
+        if ((p = pal_new(addr)) == NULL) { return 0; }
         p->sample = pkt_sample(pkt, (uint32_t)size);
-        p->next = sPalHash[PAL_HASH(addr)];
-        sPalHash[PAL_HASH(addr)] = (uint16_t)(i + 1);
         if (pkt_key(pkt, (uint32_t)size, blt, &key) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
             TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
             p->pak = k;
             p->n = w;
+            if (w == 256 && TexPak_Psm(k) == 0) { pal_split(p); }
         }
     }
     if (p->pak < 0) { return 0; }
     m[8] = (uint32_t)block & 0x3FFF;
     m[9] = (uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16; /* (the blocks it covers) */
-    Dma_AddData(m, sizeof(m));
+    if (p->sub[0] != 0 && (block & 3) == 0) {
+        /* (and blocks 1 to 3 their palettes of 16, for a 4-bit texture that names them; block 0's is p->sub[0]) */
+        m[0] = 0x10000005; m[3] = 0x50000005; m[4] = 0x00008004;
+        for (k4 = 1; k4 < 4; k4++) {
+            m[8 + k4 * 4] = (uint32_t)(block + (int)k4) & 0x3FFF;
+            m[9 + k4 * 4] = p->sub[k4];
+            m[10 + k4 * 4] = 0x7D;
+        }
+        Dma_AddData(m, sizeof(m));
+    } else {
+        Dma_AddData(m, 12 * 4);
+    }
     return (int)((uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16);
 }
 
 /* The palette of the pack at block cbp, if it has n colours: in the order the indices count, as GS memory would
    hold them. NULL = none there (it is in GS memory). */
 const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) {
-    uint32_t i = gGsPal[cbp & 16383];
-    return i != 0 && sPal[i - 1].addr != 0 && sPal[i - 1].n == n ? sPal[i - 1].col : NULL;
+    const NatPal *p = pal_at(cbp, n);
+    return p != NULL ? p->col : NULL;
 }
 
 /* src/sys/gfxm_d_c.c ObjDraw_AddClutPass: the palettes of the two pages from block cbp are tinted this frame (k, o:
@@ -1528,7 +1577,9 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
 /* The palette at block cbp as a key that changes with it (0: not one of the pack's; gs_draw.c hashes GS memory). */
 uint32_t GsPvr_PalKey(uint32_t cbp) {
     uint32_t i = gGsPal[cbp & 16383];
-    return i != 0 && sPal[i - 1].addr != 0 ? 0x80000000u | sPal[i - 1].gen : 0;
+    const NatPal *p = i != 0 && sPal[i - 1].addr != 0 ? &sPal[i - 1] : NULL;
+    return p != NULL ? 0x80000000u | p->gen : 0; /* (a 256's first block also names its palette of 16: the same colours
+                                                    the same key) */
 }
 
 /* The game's heap block [lo, hi) is freed: the entries in it are no longer textures. */
@@ -1691,7 +1742,7 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
     if (idx == 0) { sNatMiss[0]++; return 0; }
     n = &sNat[idx - 1];
     if (n->e == 0 || n->none) { sNatMiss[1]++; return 0; }
-    pal = gGsPal[cbp & 16383] != 0 ? &sPal[gGsPal[cbp & 16383] - 1] : NULL;
+    pal = pal_at(cbp, n->bits == 8 ? 256 : 16);
     return nat_resolve(n, tbp, psm, tw, th, pal, cbp, cpsm, palKey);
 }
 
@@ -1711,6 +1762,17 @@ uint32_t Port_PalHandle(const void *pkt) {
         if (sPal[i - 1].addr == addr) { return sPal[i - 1].pak < 0 ? 0 : (i | (sPal[i - 1].gen & 0xFFFF) << 16); }
     }
     return 0;
+}
+
+/* The handle of palette k (0..3) of 16 inside the 256 that handle pal names (its blocks as a 4-bit texture's
+   palettes: the font's); 0 = none. */
+uint32_t Port_PalSub(uint32_t pal, int k) {
+    uint32_t pi = pal & 0xFFFF, i;
+    if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 || k < 0 || k > 3 ||
+        (i = sPal[pi - 1].sub[k]) == 0 || sPal[i - 1].addr == 0) {
+        return 0;
+    }
+    return i | (sPal[i - 1].gen & 0xFFFF) << 16;
 }
 
 /* What a record the game handed over names (include/port/rnd.h): texture `tex` and palette `pal` as Port_TexNative
