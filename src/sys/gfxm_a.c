@@ -723,9 +723,16 @@ void StgPanBlur_RestoreEnv(void) {
 /* A+D writes of n registers (value, address pairs): the state a converted pass leaves in the GS, as its packets
    would have (the draws that are still packets read it). */
 static void GfxPost_PortRegs(const u64 *regs, s32 n) {
-    u64 *p = Dma_BeginDirect();
+    u64 *p;
     s32 i;
 
+    for (i = 0; i < n; i++) {
+        PORT_AD(regs, i * 2);
+    }
+    if (!Port_ListRead()) {
+        return;
+    }
+    p = Dma_BeginDirect();
     p[0] = GIF_TAG(n, 1, 1);
     p[1] = GIF_REG_AD;
     for (i = 0; i < n * 2; i++) {
@@ -1436,6 +1443,13 @@ void GfxPost_AddScreenFrame(void) {
         0x7000, 0x7200, GS_XYOFFSET_1, 0,
     }};
 
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
+    Rnd_GsReg(GS_XYOFFSET_1, 0x7000 | (u64)0x7200 << 32);
+    if (!Port_ListRead()) {
+        return;
+    }
+#endif
     Dma_AddData(&pkt, sizeof(pkt));
 }
 
