@@ -75,8 +75,7 @@ void GfxPost_DrawDepthClut(s32 mode, s32 tbp, s32 cbp, u64 alpha) {
     s32 n = 512 / w;
 
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(8, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(8, 1, 1), GIF_REG_AD);
     p += 2;
     z = 0xFFA8;
     if (mode != 0) {
@@ -87,33 +86,19 @@ void GfxPost_DrawDepthClut(s32 mode, s32 tbp, s32 cbp, u64 alpha) {
     }
     p[1] = GS_TEST_1;
     p += 2;
-    p[0] = alpha;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, alpha);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEXFLUSH;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXFLUSH, 0);
     p += 2;
-    p[0] = 0x8000000000;
-    p[1] = GS_TEXA;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXA, 0x8000000000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0);
     p += 2;
-    p[0] = (u32)(tbp | 0x25B20000) | ((u64)cbp << 37) | 0x2000000E40000000;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, (u32)(tbp | 0x25B20000) | ((u64)cbp << 37) | 0x2000000E40000000);
     p += 2;
-    p[0] = 0x156;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x156);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
     tag = p;
     p += 2;
@@ -129,8 +114,7 @@ void GfxPost_DrawDepthClut(s32 mode, s32 tbp, s32 cbp, u64 alpha) {
         u = u1;
         x += 32;
     }
-    tag[0] = GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4);
-    tag[1] = 0x5353;
+    PORT_PKT(tag, 0, GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4), 0x5353);
     Dma_EndDirect(p);
 }
 
@@ -154,44 +138,25 @@ void GfxPost_CopyAlphaToDepth(void) {
     }
 #endif
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(9, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(9, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = GS_SET_FRAME(GFX_ZBP, GFX_FBW, 0, 0xFFFFFF);
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, GS_SET_FRAME(GFX_ZBP, GFX_FBW, 0, 0xFFFFFF));
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0x8000000044;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x8000000044);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEXFLUSH;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXFLUSH, 0);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0xE64020E00 : 0xE64020000;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, !(gGfx.frame & 1) ? 0xE64020E00 : 0xE64020000);
     p += 2;
-    p[0] = 0x156;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x156);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
     tag = p;
     p += 2;
@@ -207,14 +172,10 @@ void GfxPost_CopyAlphaToDepth(void) {
         u = u1;
         x += 32;
     }
-    tag[0] = GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4);
-    tag[1] = 0x5353;
-    p[0] = GIF_TAG(1, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(tag, 0, GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4), 0x5353);
+    PORT_PKT(p, 0, GIF_TAG(1, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
     p += 2;
     Dma_EndDirect(p);
 }
@@ -228,40 +189,23 @@ void GfxPost_DrawTexRect(u64 tex0, s32 x, s32 y, s32 w, s32 h, s32 fullHeight) {
     GfxLens *f;
 
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(8, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(8, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x8000000064;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x8000000064);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x156;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x156);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEXFLUSH;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXFLUSH, 0);
     p += 2;
-    p[0] = tex0;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, tex0);
     p += 2;
     tw = 1 << ((s32)(tex0 >> 26) & 0xF);
     if (fullHeight != 0) {
@@ -270,8 +214,7 @@ void GfxPost_DrawTexRect(u64 tex0, s32 x, s32 y, s32 w, s32 h, s32 fullHeight) {
         th = 1 << ((s32)(tex0 >> 30) & 0xF);
     }
     GfxPostQuad_Set(&q, 0x700, 0x720, 0, 0, tw, th, x, y, w, h, 0);
-    p[0] = GIF_TAG_EX(2, 1, GIF_FLG_REGLIST, 2);
-    p[1] = 0x53;
+    PORT_PKT(p, 0, GIF_TAG_EX(2, 1, GIF_FLG_REGLIST, 2), 0x53);
     p += 2;
     p[0] = (s64)q.u0 | ((s64)q.v0 << 16);
     p[1] = (s64)q.x0 | ((s64)q.y0 << 16);
@@ -279,12 +222,9 @@ void GfxPost_DrawTexRect(u64 tex0, s32 x, s32 y, s32 w, s32 h, s32 fullHeight) {
     p[0] = (s64)q.u1 | ((s64)q.v1 << 16);
     p[1] = (s64)q.x1 | ((s64)q.y1 << 16);
     p += 2;
-    p[0] = GIF_TAG(1, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(1, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x50000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x50000);
     p += 2;
     Dma_EndDirect(p);
 }
@@ -301,29 +241,18 @@ void GfxPost_DrawTintRect(u64 alpha, Vec4 *color) {
     Gfx_AddDefaultEnv();
     Dma_AddZbuf(GFX_ZBP, 1);
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(5, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(5, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = alpha;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, alpha);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x46;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x46);
     p += 2;
-    p[0] = (u64)(u8)(u32)color->x | ((u64)(u8)(u32)color->y << 8) | ((u64)(u8)(u32)color->z << 16) |
-           ((u64)(u8)(u32)color->w << 24) | 0x3F80000000000000;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, (u64)(u8)(u32)color->x | ((u64)(u8)(u32)color->y << 8) | ((u64)(u8)(u32)color->z << 16) |
+                             ((u64)(u8)(u32)color->w << 24) | 0x3F80000000000000);
     p += 2;
 #ifdef PORT
     if (Port_TakesRecords()) { /* the rectangle as a record, under the state just set (followed) */
@@ -344,8 +273,7 @@ void GfxPost_DrawTintRect(u64 alpha, Vec4 *color) {
         p += 2;
         x += 32;
     }
-    tag[0] = GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 2);
-    tag[1] = 0x55;
+    PORT_PKT(tag, 0, GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 2), 0x55);
     Dma_EndDirect(p);
     Dma_AddZbuf(GFX_ZBP, 0);
 }
@@ -477,17 +405,10 @@ static void GfxLens_PortOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend)
                        rgba);
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(3, 1, 1);
-    p[1] = GIF_REG_AD;
-    p[2] = blend == 1 ? 0x58 : blend == 2 ? 0x52 : 0x54;
-    p[3] = GS_ALPHA_1;
-    PORT_AD(p, 2);
-    p[4] = 0x56;
-    p[5] = GS_PRIM;
-    PORT_AD(p, 4);
-    p[6] = (u64)rgba | 0x3F80000000000000;
-    p[7] = GS_RGBAQ;
-    PORT_AD(p, 6);
+    PORT_PKT(p, 0, GIF_TAG(3, 1, 1), GIF_REG_AD);
+    PORT_REG(p, 2, GS_ALPHA_1, blend == 1 ? 0x58 : blend == 2 ? 0x52 : 0x54);
+    PORT_REG(p, 4, GS_PRIM, 0x56);
+    PORT_REG(p, 6, GS_RGBAQ, (u64)rgba | 0x3F80000000000000);
     Dma_EndDirect(p + 8);
 }
 #endif
@@ -510,32 +431,24 @@ void GfxLens_DrawOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
 #endif
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(1, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(1, 1, 1), GIF_REG_AD);
     p += 2;
     switch (blend) {
         case 0:
         default:
-            p[0] = 0x54;
-            p[1] = GS_ALPHA_1;
-            PORT_AD(p, 0);
+            PORT_REG(p, 0, GS_ALPHA_1, 0x54);
             p += 2;
             break;
         case 1:
-            p[0] = 0x58;
-            p[1] = GS_ALPHA_1;
-            PORT_AD(p, 0);
+            PORT_REG(p, 0, GS_ALPHA_1, 0x58);
             p += 2;
             break;
         case 2:
-            p[0] = 0x52;
-            p[1] = GS_ALPHA_1;
-            PORT_AD(p, 0);
+            PORT_REG(p, 0, GS_ALPHA_1, 0x52);
             p += 2;
             break;
     }
-    p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-    p[1] = 0x5510;
+    PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5510);
     p += 2;
     p[0] = 0x246;
     p[1] = 0x3F80000000000000;
@@ -543,8 +456,7 @@ void GfxLens_DrawOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
     p[0] = 0x72007000;
     p[1] = 0x8E009000;
     p += 2;
-    p[0] = GIF_TAG_EX(4, 1, GIF_FLG_REGLIST, 6);
-    p[1] = 0x535310;
+    PORT_PKT(p, 0, GIF_TAG_EX(4, 1, GIF_FLG_REGLIST, 6), 0x535310);
     p += 2;
     for (i = 0; i < 4; i++) {
         p[0] = 0x356;
@@ -557,8 +469,7 @@ void GfxLens_DrawOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
         p[1] = (s64)pt[4].x | ((s64)pt[4].y << 16);
         p += 2;
     }
-    p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 6);
-    p[1] = 0x525210;
+    PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 6), 0x525210);
     p += 2;
     p[0] = 0x56;
     p[1] = (u64)rgba | 0x3F80000000000000;
@@ -695,86 +606,47 @@ u64 *GfxLens_PutCapture(u64 *p, s32 split, s32 side) {
     s32 x;
     s32 col;
 
-    p[0] = GIF_TAG(13, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(13, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 1;
-    p[1] = GS_COLCLAMP;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_COLCLAMP, 1);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_2;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_2, 0);
     p += 2;
-    p[0] = GS_SET_FRAME(0x150, 4, 0, 0);
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, GS_SET_FRAME(0x150, 4, 0, 0));
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
     p += 2;
-    p[0] = GS_SET_XYOFFSET(0x7800, 0x7800);
-    p[1] = GS_XYOFFSET_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_XYOFFSET_1, GS_SET_XYOFFSET(0x7800, 0x7800));
     p += 2;
-    p[0] = GS_SET_SCISSOR(0, 255, 0, 255);
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, 255, 0, 255));
     p += 2;
-    p[0] = 0x6FC007FC00A;
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, 0x6FC007FC00A);
     p += 2;
-    p[0] = 0x8000000064;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x8000000064);
     p += 2;
-    p[0] = 0x60;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0x60);
     p += 2;
-    p[0] = 0x20000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x20000);
     p += 2;
-    p[0] = 0x46;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x46);
     p += 2;
-    p[0] = 0x3F80000080000000;
-    p[1] = GS_RGBAQ;
+    PORT_PKT(p, 0, 0x3F80000080000000, GS_RGBAQ);
     p += 2;
-    p[0] = GIF_TAG(6, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(6, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEXFLUSH;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXFLUSH, 0);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0x2000000664020E00 : 0x2000000664020000;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, !(gGfx.frame & 1) ? 0x2000000664020E00 : 0x2000000664020000);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0);
     p += 2;
-    p[0] = 0x116;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x116);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
     col = 0;
     sh = 4;
@@ -783,8 +655,7 @@ u64 *GfxLens_PutCapture(u64 *p, s32 split, s32 side) {
         sh = 3;
     }
     x = col << 5;
-    p[0] = GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4);
-    p[1] = 0x5353;
+    PORT_PKT(p, 0, GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 4), 0x5353);
     p += 2;
     for (i = 0; i < 16; i++) {
         if (i == 0) {
@@ -818,46 +689,29 @@ u64 *GfxLens_PutCapture(u64 *p, s32 split, s32 side) {
             p += 2;
         }
     }
-    p[0] = GIF_TAG(6, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(6, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
     p += 2;
-    p[0] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
-    p[1] = GS_XYOFFSET_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_XYOFFSET_1, GS_SET_XYOFFSET(GFX_OFX, GFX_OFY));
     p += 2;
     if (split != 0) {
         if (side == 0) {
-            p[0] = GS_SET_SCISSOR(0, 256, 0, 447);
-            p[1] = GS_SCISSOR_1;
-            PORT_AD(p, 0);
+            PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, 256, 0, 447));
             p += 2;
         } else {
-            p[0] = GS_SET_SCISSOR(256, 511, 0, 447);
-            p[1] = GS_SCISSOR_1;
-            PORT_AD(p, 0);
+            PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(256, 511, 0, 447));
             p += 2;
         }
     } else {
-        p[0] = GS_SET_SCISSOR(0, 511, 0, 447);
-        p[1] = GS_SCISSOR_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, 511, 0, 447));
         p += 2;
     }
-    p[0] = 0x70000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x70000);
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
     p += 2;
-    p[0] = 0;
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, 0);
     p += 2;
     return p;
 }
@@ -871,7 +725,7 @@ static void GfxLens_PortCapture(s32 split, s32 side) {
     RndState st;
     s32 u0 = split != 0 && side == 1 ? 0x100 : 0;
     s32 u1 = split != 0 ? u0 + 0x100 : 0x200;
-    u64 *p;
+    u64 *p, r[34];
     s32 n = 0, n2;
 
     Rnd_StateInit(&st, 0x150);
@@ -881,50 +735,56 @@ static void GfxLens_PortCapture(s32 split, s32 side) {
     st.scissor[3] = 0xFF;
     Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0), 0.0f, 0.0f, 256.0f, 256.0f, u0 << 4, 0, u1 << 4,
              0x1C0 << 4, 0x80808080);
-    p = Dma_BeginDirect();
-    p[n++] = GIF_TAG(17, 1, 1);
-    p[n++] = GIF_REG_AD;
-    p[n++] = 1;
-    p[n++] = GS_COLCLAMP;
-    p[n++] = 0;
-    p[n++] = GS_FBA_1;
-    p[n++] = 0;
-    p[n++] = GS_FBA_2;
-    p[n++] = 0x60;
-    p[n++] = GS_TEX1_1;
-    p[n++] = 0x116;
-    p[n++] = GS_PRIM;
-    p[n++] = GFX_RGBAQ_NEUTRAL;
-    p[n++] = GS_RGBAQ;
-    p[n++] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[n++] = GS_FRAME_1;
-    p[n++] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
-    p[n++] = GS_XYOFFSET_1;
-    p[n++] = split == 0 ? GS_SET_SCISSOR(0, 511, 0, 447) : side == 0 ? GS_SET_SCISSOR(0, 256, 0, 447)
+    r[n++] = 1;
+    r[n++] = GS_COLCLAMP;
+    r[n++] = 0;
+    r[n++] = GS_FBA_1;
+    r[n++] = 0;
+    r[n++] = GS_FBA_2;
+    r[n++] = 0x60;
+    r[n++] = GS_TEX1_1;
+    r[n++] = 0x116;
+    r[n++] = GS_PRIM;
+    r[n++] = GFX_RGBAQ_NEUTRAL;
+    r[n++] = GS_RGBAQ;
+    r[n++] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
+    r[n++] = GS_FRAME_1;
+    r[n++] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
+    r[n++] = GS_XYOFFSET_1;
+    r[n++] = split == 0 ? GS_SET_SCISSOR(0, 511, 0, 447) : side == 0 ? GS_SET_SCISSOR(0, 256, 0, 447)
                                                                      : GS_SET_SCISSOR(256, 511, 0, 447);
-    p[n++] = GS_SCISSOR_1;
-    p[n++] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[n++] = GS_ZBUF_1;
-    p[n++] = 0x54;
-    p[n++] = GS_ALPHA_1;
-    p[n++] = 0x4A;
-    p[n++] = GS_ALPHA_2;
-    p[n++] = 0x2000C;
-    p[n++] = GS_TEST_1;
-    p[n++] = 0x2000C;
-    p[n++] = GS_TEST_2;
-    p[n++] = 5;
-    p[n++] = GS_CLAMP_1;
-    p[n++] = 5;
-    p[n++] = GS_CLAMP_2;
-    p[n++] = ((s64)8 << 26) | ((s64)8 << 30) | 0x12A00;
-    p[n++] = GS_TEX0_1;
-    p[n++] = gGfxLens.tex->entries->tex0 | 0x5C00400002F00;
-    p[n++] = GS_TEX0_1 + 1;
-    for (n2 = 2; n2 < n; n2 += 2) {
-        PORT_AD(p, n2);
+    r[n++] = GS_SCISSOR_1;
+    r[n++] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
+    r[n++] = GS_ZBUF_1;
+    r[n++] = 0x54;
+    r[n++] = GS_ALPHA_1;
+    r[n++] = 0x4A;
+    r[n++] = GS_ALPHA_2;
+    r[n++] = 0x2000C;
+    r[n++] = GS_TEST_1;
+    r[n++] = 0x2000C;
+    r[n++] = GS_TEST_2;
+    r[n++] = 5;
+    r[n++] = GS_CLAMP_1;
+    r[n++] = 5;
+    r[n++] = GS_CLAMP_2;
+    r[n++] = ((s64)8 << 26) | ((s64)8 << 30) | 0x12A00;
+    r[n++] = GS_TEX0_1;
+    r[n++] = gGfxLens.tex->entries->tex0 | 0x5C00400002F00;
+    r[n++] = GS_TEX0_1 + 1;
+    for (n2 = 0; n2 < n; n2 += 2) {
+        Rnd_GsReg((u32)r[n2 + 1], r[n2]);
     }
-    Dma_EndDirect(p + n);
+    if (!Port_ListRead()) {
+        return;
+    }
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(17, 1, 1);
+    p[1] = GIF_REG_AD;
+    for (n2 = 0; n2 < n; n2++) {
+        p[2 + n2] = r[n2];
+    }
+    Dma_EndDirect(p + 2 + n);
 }
 #endif
 
@@ -964,50 +824,29 @@ void GfxLens_Draw(s32 split, s32 side) {
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
     p = GfxLens_PutCapture(p, split, side);
-    p[0] = GIF_TAG(10, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(10, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x54;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x54);
     p += 2;
-    p[0] = 0x4A;
-    p[1] = GS_ALPHA_2;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_2, 0x4A);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_2;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_2, 0);
     p += 2;
-    p[0] = 0x2000C;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x2000C);
     p += 2;
-    p[0] = 0x2000C;
-    p[1] = GS_TEST_2;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_2, 0x2000C);
     p += 2;
-    p[0] = 5;
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, 5);
     p += 2;
-    p[0] = 5;
-    p[1] = GS_CLAMP_2;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_2, 5);
     p += 2;
     tw = Tex_Log2Size(0x100);
     th = Tex_Log2Size(0x100);
-    p[0] = ((s64)tw << 26) | ((s64)th << 30) | 0x12A00;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, ((s64)tw << 26) | ((s64)th << 30) | 0x12A00);
     p += 2;
-    p[0] = ent->tex0 | 0x5C00400002F00;
-    p[1] = GS_TEX0_1 + 1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1 + 1, ent->tex0 | 0x5C00400002F00);
     p += 2;
     Dma_EndDirect(p);
     GfxLens_DrawAll(gBtlCam->view, split, side);
@@ -1183,23 +1022,12 @@ static void GfxWater_PortDraw(s32 gu[6][10], s32 gv[6][10], s32 view, s32 x0, s3
     }
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(5, 1, 1);
-    p[1] = GIF_REG_AD;
-    p[2] = 0x30000;
-    p[3] = GS_TEST_1;
-    PORT_AD(p, 2);
-    p[4] = 0x264022A00;
-    p[5] = GS_TEX0_1;
-    PORT_AD(p, 4);
-    p[6] = ((s64)w << 14) | ((s64)0xE0 << 34) | 0xA;
-    p[7] = GS_CLAMP_1;
-    PORT_AD(p, 6);
-    p[8] = 0x114;
-    p[9] = GS_PRIM;
-    PORT_AD(p, 8);
-    p[10] = (u64)rgba;
-    p[11] = GS_RGBAQ;
-    PORT_AD(p, 10);
+    PORT_PKT(p, 0, GIF_TAG(5, 1, 1), GIF_REG_AD);
+    PORT_REG(p, 2, GS_TEST_1, 0x30000);
+    PORT_REG(p, 4, GS_TEX0_1, 0x264022A00);
+    PORT_REG(p, 6, GS_CLAMP_1, ((s64)w << 14) | ((s64)0xE0 << 34) | 0xA);
+    PORT_REG(p, 8, GS_PRIM, 0x114);
+    PORT_REG(p, 10, GS_RGBAQ, (u64)rgba);
     Dma_EndDirect(p + 12);
 }
 #endif
@@ -1346,60 +1174,35 @@ void GfxWater_DrawView(s32 split, s32 view) {
 #endif
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(9, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(9, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x60;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0x60);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000);
     p += 2;
-    p[0] = GS_SET_FRAME(0x150, 8, 0, 0);
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, GS_SET_FRAME(0x150, 8, 0, 0));
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
     p += 2;
-    p[0] = ((s64)(w - 1) << 16) | ((u64)0xDF << 48);
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, ((s64)(w - 1) << 16) | ((u64)0xDF << 48));
     p += 2;
-    p[0] = ((s64)x0 << 4) | ((u64)0x1C0 << 34) | ((s64)x1 << 14) | 0xA;
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, ((s64)x0 << 4) | ((u64)0x1C0 << 34) | ((s64)x1 << 14) | 0xA);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44);
     p += 2;
-    p[0] = GIF_TAG(2, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(2, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x116;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x116);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
     n = (u32)srcW >> 5;
     step = w / n;
-    p[0] = GIF_TAG_EX(n, 0, GIF_FLG_REGLIST, 4);
-    p[1] = 0x5353;
+    PORT_PKT(p, 0, GIF_TAG_EX(n, 0, GIF_FLG_REGLIST, 4), 0x5353);
     p += 2;
     for (row = 0; row < n; row++) {
         p[0] = (x0 + row * 32) << 4;
@@ -1409,36 +1212,25 @@ void GfxWater_DrawView(s32 split, s32 view) {
         p[1] = (s64)(GFX_OFX + (((row + 1) * step) << 4)) | ((u64)0x8000 << 16);
         p += 2;
     }
-    p[0] = GIF_TAG(4, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(4, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x264022A00;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, 0x264022A00);
     p += 2;
-    p[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
     p += 2;
-    p[0] = (s64)x0 | ((s64)(x1 - 1) << 16) | ((u64)0x1BF << 48);
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, (s64)x0 | ((s64)(x1 - 1) << 16) | ((u64)0x1BF << 48));
     p += 2;
-    p[0] = ((s64)w << 14) | ((s64)h << 34) | 0xA;
-    p[1] = GS_CLAMP_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_CLAMP_1, ((s64)w << 14) | ((s64)h << 34) | 0xA);
     p += 2;
     for (row = 0; row < 5; row++) {
-        p[0] = GIF_TAG_EX(1, 0, GIF_FLG_REGLIST, 2);
-        p[1] = 0x10;
+        PORT_PKT(p, 0, GIF_TAG_EX(1, 0, GIF_FLG_REGLIST, 2), 0x10);
         p += 2;
         p[0] = 0x114;
         rgba = gGfxWater[view].rgba;
         p[1] = (u64)(rgba & 0xFF) | ((u64)((rgba >> 8) & 0xFF) << 8) | ((u64)((rgba >> 16) & 0xFF) << 16) |
                ((u64)((rgba >> 24) & 0xFF) << 24);
         p += 2;
-        p[0] = GIF_TAG_EX(cols, 0, GIF_FLG_REGLIST, 4);
-        p[1] = 0x5353;
+        PORT_PKT(p, 0, GIF_TAG_EX(cols, 0, GIF_FLG_REGLIST, 4), 0x5353);
         p += 2;
         for (col = 0; col < cols; col++) {
             sx = ((x0 + col * srcW / (cols - 1)) << 4) + GFX_OFX;
@@ -1450,16 +1242,11 @@ void GfxWater_DrawView(s32 split, s32 view) {
             p += 2;
         }
     }
-    p[0] = GIF_TAG(2, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0));
     p += 2;
-    p[0] = GS_SET_SCISSOR(0, 511, 0, 447);
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, 511, 0, 447));
     p += 2;
     Dma_EndDirect(p);
 }
@@ -1544,52 +1331,29 @@ void GfxPost_ShiftHighWord(s32 fbp, s32 tbp, s32 h) {
     s32 n;
 
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(11, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(11, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = (s64)(fbp | 0x02080000) | 0x3FFF00000000;
-    p[1] = GS_FRAME_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FRAME_1, (s64)(fbp | 0x02080000) | 0x3FFF00000000);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = ((u64)(h - 1) << 48) | 0x1FF0000;
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, ((u64)(h - 1) << 48) | 0x1FF0000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEXFLUSH;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXFLUSH, 0);
     p += 2;
-    p[0] = 0x8000000000;
-    p[1] = GS_TEXA;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEXA, 0x8000000000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_TEX1_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX1_1, 0);
     p += 2;
-    p[0] = (s64)(tbp | 0x2B220000) | 0xE80000000;
-    p[1] = GS_TEX0_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEX0_1, (s64)(tbp | 0x2B220000) | 0xE80000000);
     p += 2;
-    p[0] = 0x116;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x116);
     p += 2;
-    p[0] = GFX_RGBAQ_NEUTRAL;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_RGBAQ_NEUTRAL);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY + 8);
-    p[1] = GS_XYOFFSET_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_XYOFFSET_1, GS_SET_XYOFFSET(GFX_OFX, GFX_OFY + 8));
     p += 2;
     tag = p;
     n = 512 / w;
@@ -1605,18 +1369,12 @@ void GfxPost_ShiftHighWord(s32 fbp, s32 tbp, s32 h) {
         p[1] = (s64)q.x1 | ((s64)q.y1 << 16);
         p += 2;
     }
-    tag[0] = GIF_TAG_EX(64, 1, GIF_FLG_REGLIST, 2);
-    tag[1] = 0x53;
-    p[0] = GIF_TAG(2, 1, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(tag, 0, GIF_TAG_EX(64, 1, GIF_FLG_REGLIST, 2), 0x53);
+    PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
     p += 2;
-    p[0] = GS_SET_SCISSOR(0, 511, 0, 447);
-    p[1] = GS_SCISSOR_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, 511, 0, 447));
     p += 2;
-    p[0] = GS_SET_XYOFFSET(GFX_OFX, GFX_OFY);
-    p[1] = GS_XYOFFSET_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_XYOFFSET_1, GS_SET_XYOFFSET(GFX_OFX, GFX_OFY));
     p += 2;
     Dma_EndDirect(p);
 }
