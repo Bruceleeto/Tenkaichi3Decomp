@@ -138,8 +138,9 @@ void StgPanBlur_Draw(void) {
             on0 = StgPanBlur_UpdateView(&gStgPanBlur->view[0]);
             on1 = StgPanBlur_UpdateView(&gStgPanBlur->view[1]);
         }
-#ifdef PORT /* (the setting "Movement blur": the views are kept up to date, nothing is drawn) */
-        if (Port_FxOff(32)) {
+#ifdef PORT /* (the setting "Movement blur": the views are kept up to date, nothing is drawn; so too without frame
+               buffers, Rnd_FxOn) */
+        if (Port_FxOff(32) || (Port_TakesRecords() && !Rnd_FxOn())) {
             on0 = on1 = 0;
         }
 #endif
@@ -162,7 +163,7 @@ void StgPanBlur_Draw(void) {
             on0 = StgPanBlur_UpdateView(&gStgPanBlur->view[0]);
         }
 #ifdef PORT
-        if (Port_FxOff(32)) {
+        if (Port_FxOff(32) || (Port_TakesRecords() && !Rnd_FxOn())) {
             on0 = 0;
         }
 #endif
@@ -309,12 +310,71 @@ s32 StgPanBlur_UpdateView(StgPanBlurView *view) {
 }
 
 
+#ifdef PORT
+/* The post passes as records (include/port/rnd.h): the state of one, into page fbp inside x0..x1, y0..y1 (pixels,
+   inclusive), blended by `blend` (RND_BLEND_), RND_ flags; no depth test, no depth written. */
+static void GfxPost_PortState(RndState *st, u32 fbp, s32 x0, s32 y0, s32 x1, s32 y1, s32 blend, s32 flags) {
+    Rnd_StateInit(st, fbp);
+    st->blend = blend;
+    st->flags = flags;
+    st->scissor[0] = x0;
+    st->scissor[1] = y0;
+    st->scissor[2] = x1;
+    st->scissor[3] = y1;
+}
+
+/* StgPanBlur_CopyScreen as a record: the frame (512 x 448 of a 512 x 512 texture) into the 256 x 256 page 0x150,
+   halved, filtered, not blended (its alpha copied with it). */
+static void StgPanBlur_PortCopy(void) {
+    RndState st;
+
+    GfxPost_PortState(&st, 0x150, 0, 0, 0xFF, 0xFF, RND_BLEND_NONE, RND_SMOOTH);
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0), 0.0f, 0.0f, 256.0f, 256.0f, 0, 0, 0x200 << 4,
+             0x1C0 << 4, 0x80808080);
+}
+
+/* StgPanBlur_DrawView as records: the work page (or the view's half of it) into the 128 x 128 page 0x170 with the
+   view's strength as its alpha, the two layers blended over its colour shifted sideways, and that stretched over
+   the view's rectangle of the frame, blended by its alpha (the frame's alpha not written). */
+static void StgPanBlur_PortView(StgPanBlurView *view, s32 split) {
+    RndState st;
+    u32 work = Rnd_TargetTex(0x150, 0x100, 0x100, 0);
+    s32 srcX = split != 0 && view->index != 0 ? 0x80 : 0;
+    s32 size = 0x100 >> (split != 0);
+    s32 k;
+
+    GfxPost_PortState(&st, 0x170, 0, 0, 0x7F, 0x7F, RND_BLEND_NONE, RND_SMOOTH);
+    Rnd_Blit(&st, work, 0.0f, 0.0f, 128.0f, 128.0f, srcX << 4, 0, (srcX + size) << 4, 0x1000,
+             (u32)(view->maxAlpha * view->strength) << 24 | 0x808080);
+    GfxPost_PortState(&st, 0x170, 0, 0, 0x7F, 0x7F, RND_BLEND_NORMAL, RND_SMOOTH | RND_NO_ALPHA);
+    for (k = 0; k < 2; k++) {
+        StgPanBlurLayer *layer = &view->layer[k];
+        s32 x = layer->ofs.x;
+        s32 y = layer->ofs.y;
+        s32 r = layer->size;
+
+        Rnd_Blit(&st, work, (f32)(x - r), (f32)(y - r), (f32)(0x80 + r + x), (f32)(y + r + 0x80), (srcX << 4) + 8, 8,
+                 ((srcX + size) << 4) + 8, 0x1008, (u32)layer->color.w << 24 | 0x808080);
+    }
+    GfxPost_PortState(&st, GFX_FRAME_FBP(), view->x, view->y, view->x + view->w - 1, view->y + view->h - 1,
+                      RND_BLEND_NORMAL, RND_SMOOTH | RND_NO_ALPHA);
+    Rnd_Blit(&st, Rnd_TargetTex(0x170, 0x80, 0x80, 0), (f32)view->x, 0.0f, (f32)(view->x + view->w), 448.0f, 8, 8,
+             (0x80 << 4) + 8, 0x7F8, 0x80808080);
+}
+#endif
+
 /* Copies the frame, halved, to the 256x256 work page. */
 void StgPanBlur_CopyScreen(void) {
     u64 *p;
     s32 i;
     s32 x0;
 
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        StgPanBlur_PortCopy();
+        return;
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(9, 0, 1);
     p[1] = GIF_REG_AD;
@@ -398,6 +458,12 @@ void StgPanBlur_DrawView(StgPanBlurView *view, s32 split) {
     s32 shift = 0;
     s32 srcX = 0;
 
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        StgPanBlur_PortView(view, split);
+        return;
+    }
+#endif
     if (split != 0) {
         srcX = 0x80;
         shift = 1;
