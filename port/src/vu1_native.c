@@ -170,8 +170,9 @@ static void split(const uint32_t *hdr, uint32_t *nh, const uint32_t **vtx, uint3
 }
 
 /* The triangles of a strip of n corners, those whose last corner is marked (ADC) left out; two that follow each
-   other as one record of four corners (the GS's strip order: 0 1 2, 1 2 3). */
-static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t prim, uint64_t tex0) {
+   other as one record of four corners (the GS's strip order: 0 1 2, 1 2 3). The texture: TEX0 tex0, or by the
+   handle tex where there is one (0: none). */
+static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t prim, uint64_t tex0, uint32_t tex) {
     int ctx = (int)(prim >> 9) & 1;
     uint32_t k = 2;
     RndPoly p;
@@ -192,6 +193,7 @@ static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t 
             k++;
         }
         p.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+        p.tex = (prim >> 4) & 1 ? tex : 0;
         p.st.flags = RND_VU;
         Rnd_Draw(&p, ctx, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
     }
@@ -268,9 +270,10 @@ static int p4_plane(P4Vtx *dst, const P4Vtx *src, int n, int comp, float sign) {
 /* The triangle of strip corners c0, c1, c2 (clip positions, the colours' integers, texture coordinates) clipped
    and sent as a fan, as clip_triangle / emit_fan do: first grown by 0.5% about its centre (so it overlaps the
    strip's triangles around it), then cut by z = -w, z = +w, x = -w, x = +w, y = -w, y = +w in that order; what is
-   left goes through the clip -> screen matrix. */
+   left goes through the clip -> screen matrix toScr (program 4's and program 6's clippers are the same). The
+   texture as put_strip's. */
 static void p4_clip(const float *c0, const float *c1, const float *c2, const int32_t (*col)[4], const float *const *tc,
-                    uint32_t prim, uint64_t tex0) {
+                    uint32_t prim, uint64_t tex0, uint32_t tex, const float *toScr) {
     static const int comp[6] = {2, 2, 0, 0, 1, 1};
     static const float sign[6] = {-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f};
     static P4Vtx poly[2][P4_POLY + 1];
@@ -304,7 +307,7 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
         const P4Vtx *v = &poly[0][k];
         float s[4], q;
         int32_t c[4];
-        mtx_apply(s, sP4 + 32, v->p[0], v->p[1], v->p[2], v->p[3]);
+        mtx_apply(s, toScr, v->p[0], v->p[1], v->p[2], v->p[3]);
         q = vu_div(1.0f, s[3]);
         for (i = 0; i < 4; i++) {
             s[i] = vu_clamp(s[i] * q);
@@ -319,6 +322,7 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
         r.v[2] = fan[k];
         r.n = 3;
         r.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+        r.tex = (prim >> 4) & 1 ? tex : 0;
         r.st.flags = RND_VU;
         Rnd_Draw(&r, ctx, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
     }
@@ -383,12 +387,12 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
                 tc[0] = (const float *)(vtx + (i - 2) * 12) + 8;
                 tc[1] = (const float *)(vtx + (i - 1) * 12) + 8;
                 tc[2] = v + 8;
-                p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1));
+                p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), 0, sP4 + 32);
             }
             adc[i] = 1;
         }
     }
-    put_strip(out, adc, n, prim, tex0);
+    put_strip(out, adc, n, prim, tex0, 0);
     return 1;
 }
 
@@ -527,8 +531,8 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         flags[2] = clip_flags(cl);
         adc[i] = (flags[0] | flags[1] | flags[2]) != 0; /* (the first two complete no triangle) */
     }
-    put_strip(out[0], adc, n, prim[0], tex0[0]);
-    put_strip(out[1], adc, n, prim[1], tex0[1]);
+    put_strip(out[0], adc, n, prim[0], tex0[0], 0);
+    put_strip(out[1], adc, n, prim[1], tex0[1], 0);
     return 1;
 }
 
@@ -637,7 +641,7 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         flags[2] = clip_flags(cl);
         adc[i] = !sP2Alt && (flags[0] | flags[1] | flags[2]) != 0; /* (2b: none) */
     }
-    put_strip(out, adc, n, prim, tex0);
+    put_strip(out, adc, n, prim, tex0, 0);
     return 1;
 }
 
@@ -649,4 +653,134 @@ void Vu1Native_Prog2(const void *chain, const void *consts) {
     wk.draw = 1;
     wk.k = (const float *)consts;
     walk(chain, p2_batch, &wk);
+}
+
+/* ---------------------------------------------------------------------------------------------- program 6 */
+
+/* Program 6 draws the stage's triangles under a fighter (ObjShadow_Draw) with the shadow page the silhouette was
+   drawn into (program 2b): program 4 with the texture coordinates made from the position (the shadow camera's
+   matrix and a scale: s, t = (c.xy * scale + 1) / 2), four quadwords a corner (position with a no-draw flag in w,
+   the normal, the colour, the slot of s t 1), w taken as 1 in every transform of a corner, and the batch's TEX0
+   quadwords not sent. The input is a list of triangles sent as one strip (ObjShadow_BuildPacket): the flag marks
+   the two strip triangles that join one to the next, which are left out (ADC); one that the clipper cuts is sent
+   as a fan only when its last corner has no flag. Constants (Vu1Pkt_LoadProg6): screen, clip, clip -> screen,
+   shadow camera (0..15), the scale (16.x). The chain: the fans' tag first (NLOOP 0), then batches of a TEX0 tag
+   and its quadword, the strip's tag, the corners. The texture: the TEX0 bound (ObjGs_AddShadowTexEnv), the page
+   it names read as a frame buffer (Rnd_TargetTex); in its format, PSMCT24, a texel's alpha is TEXA's 0x80, so the
+   corners' alpha is the one drawn by (RND_TEX_RGB). */
+#define P6_MAXV 72 /* corners of one batch (the builder sends at most 54) */
+
+static float sP6[68]; /* VU 0..16 */
+
+void Vu1Native_SetProg6(const void *consts) {
+    memcpy(sP6, consts, sizeof(sP6));
+}
+
+/* The handle of the frame buffer a TEX0 of the shadow page names: 0 for any other (a texture, or a format or
+   function a record cannot take as the GS would draw it). */
+static uint32_t p6_target(uint64_t tex0) {
+    uint32_t tbp = (uint32_t)tex0 & 0x3FFF, tw = (uint32_t)(tex0 >> 26) & 15, th = (uint32_t)(tex0 >> 30) & 15;
+    if (((tex0 >> 20) & 0x3F) != 1 || ((tex0 >> 35) & 3) != 0 || (tbp & 31) != 0 || tw > 9 || th > 9) {
+        return 0;
+    }
+    return Rnd_TargetTex(tbp >> 5, 1 << tw, 1 << th, 1) | RND_TEX_RGB;
+}
+
+static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    static RndVtx out[P6_MAXV];
+    static uint8_t adc[P6_MAXV];
+    static float clip[P6_MAXV][4], st[P6_MAXV][4];
+    static int32_t col[P6_MAXV][4];
+    P4Walk *wk = (P4Walk *)arg;
+    uint32_t prim, n, i, k, flags[3] = {0, 0, 0}, tex;
+    uint64_t tex0, lo;
+    int ctx;
+
+    if (!wk->header) { /* the first MSCNT: the fans' tag (NLOOP 0: the clipper writes it) */
+        memcpy(&lo, hdr, 8);
+        if (nh != 1 || vtx != NULL || !((lo >> 15) & 1) || !((lo >> 46) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 3 ||
+            (hdr[2] & 0xFFF) != 0x412 || (tag_prim(hdr) & 0x127) != 5) {
+            return 0;
+        }
+        wk->fanPrim = tag_prim(hdr);
+        wk->header = 1;
+        return wk->draw || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
+    }
+    memcpy(&lo, hdr, 8);
+    /* +0 a tag of one register (+1 its quadword: neither is sent), +2 the strip's tag; the vertices behind */
+    if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 58) & 3) != 0 || !tag_ok(hdr + 8, 4, 1)) {
+        return 0;
+    }
+    prim = tag_prim(hdr + 8);
+    n = hdr[8] & 0x7FFF;
+    ctx = (int)(prim >> 9) & 1;
+    if (n > P6_MAXV || n * 4 > nv) {
+        return 0;
+    }
+    if (!wk->draw) {
+        return gRndCtxBad[ctx] == 0 && (!((prim >> 4) & 1) || p6_target(Rnd_Tex0(ctx)) != 0) &&
+               (!((wk->fanPrim >> 4) & 1) || p6_target(Rnd_Tex0((int)(wk->fanPrim >> 9) & 1)) != 0);
+    }
+    tex0 = Rnd_Tex0(ctx);
+    tex = p6_target(tex0);
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 16); /* position (w: the flag), normal, colour, s t slot */
+        float s[4], c[4], q;
+        int16_t sum, flag = (int16_t)(vtx[i * 16 + 3] & 0xFFFF);
+
+        mtx_apply(s, sP6, v[0], v[1], v[2], 1.0f);
+        mtx_apply(clip[i], sP6 + 16, v[0], v[1], v[2], 1.0f);
+        mtx_apply(c, sP6 + 48, v[0], v[1], v[2], 1.0f);
+        st[i][0] = vu_clamp(vu_clamp(vu_clamp(c[0] * sP6[64]) + 1.0f) * 0.5f);
+        st[i][1] = vu_clamp(vu_clamp(vu_clamp(c[1] * sP6[64]) + 1.0f) * 0.5f);
+        st[i][2] = 1.0f;
+        st[i][3] = 0.0f;
+        q = vu_div(1.0f, s[3]);
+        for (k = 0; k < 4; k++) {
+            s[k] = vu_clamp(s[k] * q);
+            col[i][k] = vu_ftoi(v[8 + k], 1.0f);
+        }
+        put_vtx(&out[i], ctx, s, vu_clamp(st[i][0] * q), vu_clamp(st[i][1] * q), q, col[i]);
+        flags[0] = flags[1];
+        flags[1] = flags[2];
+        flags[2] = clip_flags(clip[i]);
+        /* the program's count of the last three corners outside (the two before the first count -2 each), plus the
+           flag: a triangle with a corner outside is clipped and sent as a fan before the strip (unless all three
+           are outside one plane, or its last corner has the flag: the fan's corners all ADC then), and left out of
+           the strip; one inside is left out when the flag says so */
+        sum = (int16_t)((i >= 2 ? flags[0] != 0 : -2) + (i >= 1 ? flags[1] != 0 : -2) + (flags[2] != 0));
+        if (sum > 0 && (flags[0] & flags[1] & flags[2]) == 0) {
+            if (flag == 0) {
+                const float *tc[3];
+                tc[0] = st[i - 2];
+                tc[1] = st[i - 1];
+                tc[2] = st[i];
+                p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim,
+                        Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), p6_target(Rnd_Tex0((int)(wk->fanPrim >> 9) & 1)), sP6 + 32);
+            }
+            adc[i] = 1;
+        } else {
+            adc[i] = (int16_t)(sum + flag) > 0;
+        }
+    }
+    put_strip(out, adc, n, prim, tex0, tex);
+    return 1;
+}
+
+int Vu1Native_Prog6(const void *chain) {
+    P4Walk wk;
+
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    memset(&wk, 0, sizeof(wk));
+    if (!walk(chain, p6_batch, &wk) || !wk.header) {
+        gVu1NativeStat[VU1N_P6][0]++;
+        return 0;
+    }
+    gVu1NativeStat[VU1N_P6][1]++;
+    memset(&wk, 0, sizeof(wk));
+    wk.draw = 1;
+    walk(chain, p6_batch, &wk);
+    return 1;
 }

@@ -30,8 +30,14 @@ void Vu1Native_Prog2(const void *chain, const void *consts);
    Vu1Pkt_LoadProg2; its caller fills 11..18 before the parts are drawn, read then). */
 void Vu1Native_SetProg2(int alt, const void *consts);
 
+/* Program 6 (the ground under a fighter, with its shadow page): the 17 quadwords Vu1Pkt_LoadProg6 puts at VU
+   address 0 (screen, clip, clip -> screen, shadow camera, scale), kept for the call that follows; the chain
+   ObjShadow_BuildPacket made drawn with them, 1 = taken. */
+void Vu1Native_SetProg6(const void *consts);
+int Vu1Native_Prog6(const void *chain);
+
 /* The calls of each program sent as packets [0] and drawn as records [1] (BT3_GS_VERBOSE). */
-enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_STATS };
+enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_P6, VU1N_STATS };
 extern unsigned gVu1NativeStat[VU1N_STATS][2];
 
 #endif

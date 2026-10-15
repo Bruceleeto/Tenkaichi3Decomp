@@ -91,7 +91,15 @@ static void add(List *l, const Tri *t) {
 uint32_t gRndCtxBad[2];
 int Port_TakesRecords(void) { return 1; }
 #define BOUND_TEX0_2 0x0006580400003D40ull /* the TEX0_2 bound before program 2 (a stand-in) */
-uint64_t Rnd_Tex0(int ctx) { return ctx == 0 ? STAGE_TEX0 : BOUND_TEX0_2; }
+#define SHADOW_TEX0 (0x2A00ull | 4ull << 14 | 0xC402ull << 19) /* ObjGs_AddShadowTexEnv(0x2A00, 4) */
+static uint64_t sTex0Ctx0 = STAGE_TEX0;
+uint64_t Rnd_Tex0(int ctx) { return ctx == 0 ? sTex0Ctx0 : BOUND_TEX0_2; }
+static unsigned log2_of(int v) { unsigned k = 0; while ((1 << k) < v) { k++; } return k; }
+uint32_t Rnd_TargetTex(uint32_t fbp, int w, int h, int psm) { /* (as port/src/rnd_fx.c) */
+    return (fbp & 0x1FF) | ((uint32_t)psm & 0x3F) << 9 | RND_TEX_TARGET | log2_of(w) << 16 | log2_of(h) << 20;
+}
+static uint32_t sWantTex; /* the handle a textured record must have (program 6: the shadow page), 0: none */
+static size_t sBadTex;
 static uint32_t sPrmode; /* PRMODE with PRMODECONT 0 (VU1_PRMODE: the shadow passes' 0x48), 0: PRMODECONT 1 */
 uint32_t Rnd_Prim(uint32_t prim) { return sPrmode ? (prim & 7) | (sPrmode & 0x7F8) : prim & 0x7FF; }
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
@@ -107,6 +115,9 @@ void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, floa
 int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
     Tri t;
     int k;
+    if (p->tex != (p->gsTex0 != 0 ? sWantTex : 0)) {
+        sBadTex++;
+    }
     for (k = 0; k + 3 <= (int)p->n; k++) {
         t.ctx = ctx;
         t.bits = (uint32_t)abe | (uint32_t)gouraud << 1 | (p->gsTex0 != 0) << 2;
@@ -430,6 +441,89 @@ static void rot_mtx(float *m, double x, double y, double z, double a, double tx,
     memcpy(m, r, sizeof(r));
 }
 
+/* ---- program 6: the chain ObjShadow_BuildPacket makes (src/sys/gfxm_e_b.c, its C attempt) from triangles ---- */
+typedef struct ShTri {
+    float v[3][4], normal[4];
+} ShTri;
+#define SH_MAX 256 /* triangles taken of a chain */
+
+static size_t build_p6(uint32_t *pkt, int count, const ShTri *tris, const float *color) {
+    uint32_t *p, *tag;
+    float *f;
+    int i = 0, j, k;
+    size_t n;
+
+    pkt[0] = 0x60000000; pkt[1] = 0; pkt[2] = 0x6C018000; pkt[3] = 0x8000;
+    pkt[4] = 0x302EC000; pkt[5] = 0x412; pkt[6] = 0; pkt[7] = 0x17000000;
+    p = pkt + 8;
+    do {
+        *p++ = 0x6C038000; *p++ = 0x8001; *p++ = 0x10000000; *p++ = 6;
+        *p++ = 0; *p++ = 0; *p++ = 0; *p++ = 0;
+        *p++ = 0;
+        tag = p;
+        *p++ = 0; *p++ = 0x302E4000; *p++ = 0x412; *p++ = 0;
+        *p++ = 0;
+        f = (float *)p;
+        j = 0;
+        do {
+            for (k = 0; k < 3; k++) {
+                *f++ = tris[i].v[k][0] + tris[i].normal[0] * 0.02f;
+                *f++ = tris[i].v[k][1] + tris[i].normal[1] * 0.02f;
+                *f++ = tris[i].v[k][2] + tris[i].normal[2] * 0.02f;
+                p = (uint32_t *)f;
+                *p++ = k < 2 && j != 0;
+                f = (float *)p;
+                f[0] = tris[i].normal[0]; f[1] = tris[i].normal[1]; f[2] = tris[i].normal[2]; f[3] = 1.0f;
+                f[4] = color[0]; f[5] = color[1]; f[6] = color[2]; f[7] = color[3];
+                f[8] = 0.0f; f[9] = 0.0f; f[10] = 1.0f; f[11] = 0.0f;
+                f += 12;
+            }
+            i++;
+            j++;
+        } while (i < count && j < 18);
+        p = (uint32_t *)f;
+        tag[0] = (uint32_t)(j * 3) | 0x8000;
+        tag[4] = ((uint32_t)(j * 3) << 18) | 0x6C008003;
+        *p++ = 0x17000000;
+    } while (i < count);
+    while ((p - pkt) % 4 != 0) {
+        *p++ = 0;
+    }
+    *p++ = 0x70000000; *p++ = 0; *p++ = 0; *p++ = 0;
+    n = (size_t)(p - pkt);
+    pkt[0] = (uint32_t)(n / 4) + 0x5FFFFFFE;
+    return n;
+}
+
+/* the triangles of a chain's strips (vertices three quadwords each behind a header of h), with their normals */
+static int chain_tris(const uint32_t *t, uint32_t h, ShTri *out) {
+    const uint32_t *w = t + 2, *end = t + 4 + (t[0] & 0xFFFF) * 4;
+    int n = 0;
+    while (w < end && n < SH_MAX) {
+        uint32_t code = *w++, num = (code >> 16) & 0xFF, k, i;
+        if (((code >> 24) & 0x7F) != 0x6C) { continue; }
+        num = num ? num : 256;
+        if ((code & 0x3FF) == h) {
+            for (k = 2; k < num / 3 && n < SH_MAX; k++) {
+                double a[3], b[3], c[3], len;
+                for (i = 0; i < 3; i++) {
+                    memcpy(out[n].v[i], w + (k - 2 + i) * 12, 16);
+                    out[n].v[i][3] = 1.0f;
+                }
+                for (i = 0; i < 3; i++) { a[i] = out[n].v[1][i] - out[n].v[0][i]; b[i] = out[n].v[2][i] - out[n].v[0][i]; }
+                c[0] = a[1] * b[2] - a[2] * b[1]; c[1] = a[2] * b[0] - a[0] * b[2]; c[2] = a[0] * b[1] - a[1] * b[0];
+                len = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+                if (len < 1e-12) { c[0] = 0; c[1] = 1; c[2] = 0; len = 1; }
+                for (i = 0; i < 3; i++) { out[n].normal[i] = (float)(c[i] / len); }
+                out[n].normal[3] = 1.0f;
+                n++;
+            }
+        }
+        w += num * 4;
+    }
+    return n;
+}
+
 int main(int argc, char **argv) {
     const char *blobPath = getenv("VU1_BLOB") ? getenv("VU1_BLOB") : "assets/cod/1BF6B0.textbin.bin";
     int prog, part, cam;
@@ -445,14 +539,14 @@ int main(int argc, char **argv) {
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
-    if (prog < 0 || prog > 4) {
+    if (prog < 0 || (prog > 4 && prog != 6)) {
         fprintf(stderr, "program %d: not here\n", prog);
         return 2;
     }
     if (getenv("VU1_PRMODE") != NULL) {
         sPrmode = (uint32_t)strtoul(getenv("VU1_PRMODE"), NULL, 0);
     }
-    hdrSize = prog == 4 ? 1 : 5;
+    hdrSize = prog == 4 || (prog == 6 && part != 3) ? 1 : 5;
     f = fopen(blobPath, "rb");
     if (f == NULL) { perror(blobPath); return 2; }
     fseek(f, 0, SEEK_END);
@@ -465,7 +559,7 @@ int main(int argc, char **argv) {
     for (off = 0; off + 16 <= size; off += 16) {
         const uint32_t *t = (const uint32_t *)(b + off);
         if (is_chain(t, (const uint32_t *)(b + size), (int)hdrSize)) {
-            bounds(t, prog == 4 ? 3 : 5, lo, hi);
+            bounds(t, hdrSize == 1 ? 3 : 5, lo, hi);
             chains++;
             off += (t[0] & 0xFFFF) * 16;
         }
@@ -486,7 +580,7 @@ int main(int argc, char **argv) {
         }
         if (cam == 6) { /* from outside, all of it in view */
             eye[2] -= span * 1.5;
-        } else if (prog != 4) { /* a model: from just outside it, so that some of it is out of view */
+        } else if (hdrSize == 5) { /* a model: from just outside it, so that some of it is out of view */
             for (i = 0; i < 3; i++) { eye[i] -= fwd[i] * span * 0.6; }
         }
         camera(consts, eye, fwd, up, span * 0.002, span * 4);
@@ -512,7 +606,45 @@ int main(int argc, char **argv) {
                 continue;
             }
             sRef.n = sNat.n = 0;
-            if (prog == 4) {
+            if (prog == 6) {
+                /* triangles of the chain (a stage's, or a model's in part 3) under a shadow: ObjShadow_BuildPacket,
+                   Vu1Pkt_LoadProg6 (17 quadwords: screen, clip, clip -> screen, a shadow camera from above, the
+                   scale), Vu1Pkt_CallProg6 and the chain */
+                static ShTri tris[SH_MAX];
+                static uint32_t pkt[8 + (SH_MAX / 18 + 1) * 16 + SH_MAX * 48 + 16] __attribute__((aligned(16)));
+                static const float color[4] = {120.0f, 110.5f, 99.0f, 77.0f};
+                float k6[17 * 4], sp = (float)(2.0 / (span > 0 ? span : 1));
+                int nt = chain_tris(t, 3 + (hdrSize == 5) * 2, tris);
+                if (nt == 0) {
+                    off += (t[0] & 0xFFFF) * 16;
+                    continue;
+                }
+                build_p6(pkt, nt, tris, color);
+                memset(k6, 0, sizeof(k6));
+                memcpy(k6, consts, 48 * sizeof(float));
+                k6[48] = sp; k6[50] = 0.001f; /* x's column: c.x = x * 2 / span, c.z = y / 1000 */
+                k6[53] = 0.1f * sp; k6[54] = 0.001f; /* y's column */
+                k6[57] = sp; /* z's column: c.y = z * 2 / span */
+                k6[60] = -(lo[0] + hi[0]) / 2 * sp; k6[61] = -(lo[2] + hi[2]) / 2 * sp; k6[63] = 1.0f;
+                k6[64] = 0.9f + 0.02f * cam;
+                load_program(0x2C1F00 - 0x2BF6B0, 0x2C2D30 - 0x2C1F00);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 0x11, 0, (const uint32_t *)k6);
+                GsVu1_SetBase(0x92);
+                GsVu1_SetOffset(0x1B2);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0x92);
+                GsVu1_SetOffset(0x1B2);
+                gs.tex0[0] = SHADOW_TEX0;
+                sTex0Ctx0 = SHADOW_TEX0;
+                sWantTex = Rnd_TargetTex(0x150, 256, 256, 1) | RND_TEX_RGB;
+                run_chain(pkt);
+                Vu1Native_SetProg6(k6);
+                if (!Vu1Native_Prog6(pkt)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                }
+            } else if (prog == 4) {
                 /* the reference: Vu1Pkt_LoadProg4, then Vu1Pkt_CallProg4 and the chain */
                 load_program(0x2C04F0 - 0x2BF6B0, 0x2C1180 - 0x2C04F0);
                 GsVu1_SetCycle(1, 1);
@@ -579,6 +711,10 @@ int main(int argc, char **argv) {
             recs += sNat.n;
             off += (t[0] & 0xFFFF) * 16;
         }
+    }
+    if (sBadTex != 0) {
+        printf("%zu records with another texture handle\n", sBadTex);
+        sBad += sBadTex;
     }
     printf("%zu batches; %zu triangles from the microcode (%zu of them clipped; %zu left out), %zu from records; worst corner %.4f px, depth %.0f, s t q %.3g relative; %zu differences\n",
            sBatches, tris, sFanTris, sAdc, recs, sWorstXY, sWorstZ, sWorstSTQ, sBad);

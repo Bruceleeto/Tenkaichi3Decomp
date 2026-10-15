@@ -405,6 +405,12 @@ u32 *Vu1Pkt_LoadProg8(void) {
 
 /* Program 6 draw: runs the caller's chain with the constants already loaded. */
 void Vu1Pkt_CallProg6(u32 chain) {
+#ifdef PORT
+    /* the ground's triangles as records (port/include/vu1_native.h), with the constants Vu1Pkt_LoadProg6 loaded */
+    if (Vu1Native_Prog6((void *)(chain & VU1_ADDR_MASK))) {
+        return;
+    }
+#endif
     u32 *p = Dma_Alloc(0x20);
 
     p[0] = VU1_DMA_CALL | 1;
@@ -437,4 +443,7 @@ void Vu1Pkt_LoadProg6(u8 *obj, void *mtx, f32 *vec) {
     p[0x49] = VU1_VIF_BASE(0x92);
     p[0x4A] = VU1_VIF_OFFSET(0x1B2);
     p[0x4B] = VU1_VIF_NOP;
+#ifdef PORT
+    Vu1Native_SetProg6(p + 4); /* (the same constants for the draws as records) */
+#endif
 }
