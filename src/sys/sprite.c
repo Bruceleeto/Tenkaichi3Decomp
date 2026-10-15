@@ -66,18 +66,23 @@ void Sprite_DrawPicture(SpriteRes *res, s32 x, s32 y, s32 alpha) {
     p += 2;
     p[0] = 0x44; /* Cs * As + Cd * (1 - As) */
     p[1] = GS_ALPHA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = GS_FBA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000; /* alpha and depth tests always pass */
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = ((u64)alpha << 24) | 0x808080;
     p[1] = GS_RGBAQ;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 5; /* clamp S and T */
     p[1] = GS_CLAMP_1;
+    PORT_AD(p, 0);
     p += 2;
     Dma_EndDirect(p);
 #ifdef PORT
@@ -139,12 +144,15 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
     p += 2;
     p[0] = 0x44; /* Cs * As + Cd * (1 - As) */
     p[1] = GS_ALPHA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x60; /* bilinear */
     p[1] = GS_TEX1_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000;
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     Dma_EndDirect(p);
 #ifdef PORT
@@ -185,6 +193,7 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
             if ((spr->flags & 4) || res == NULL) {
                 p[0] = 0;
                 p[1] = 0x46;
+                PORT_AD(p, 0);
             } else {
                 p[0] = res->tex[spr->tex].tex0 | ((u64)(res->tex[spr->tex].cbpOfs + SPRITE_CBP_LIST) << 37) |
                        (((u64)4 << 32) | SPRITE_TBP);
