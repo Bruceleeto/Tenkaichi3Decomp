@@ -124,7 +124,7 @@ $(shell mkdir -p $(OBJ); if [ "$$(cat $(TEXPACK_FLAG) 2>/dev/null)" != "$(TEXPAC
 
 # ------------------------------------------------------------------------------------------------------ the rules
 
-.PHONY: all setup extract run demo test pvr clean distclean
+.PHONY: all setup extract run demo test pvr dcsim clean distclean
 .DELETE_ON_ERROR:
 
 all: $(EXE)
@@ -205,6 +205,22 @@ $(OBJ)/pc_vu1_native.o: PC_CFLAGS += -msse2 -mfpmath=sse
 # link.py: the link (with stubs for anything still missing), then the game-state map (make_state.py)
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link.py
 	BT3_CC=gcc $(PYTHON) port/tools/link.py
+
+# make dcsim: the PC build with the Dreamcast's memory (port/src/dcsim/dcsim.c) -> port/build/bt3-dcsim; needs the
+# Dreamcast build (make -f Makefile.dc) for where its program ends and which objects it has
+# (the renderer's objects as the Dreamcast build makes them: its lists' sizes, gs/gs_draw.h, and DC_RTT=0's switches)
+DC_ELF   := $(BUILD)/dc/bt3.elf
+DCSIM_O  := $(BUILD)/dcsim/dcsim.o
+DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o)
+$(BUILD)/dcsim/obj/gs_%.o: port/src/gs/%.c | $(GEN_GS)/.stamp
+	mkdir -p $(BUILD)/dcsim/obj
+	$(CC) $(GS_CFLAGS) -DBT3_DCSIM -DBT3_NO_RTT $< -o $@
+$(BUILD)/dcsim/obj/gs_gs_pvr.o: GS_CFLAGS += $(PVR_INC)
+$(DCSIM_O): port/src/dcsim/dcsim.c port/src/dcsim/dcsim_mallocr.inc $(DC_ELF)
+	mkdir -p $(BUILD)/dcsim
+	$(CC) -m32 -O2 -c -DDCSIM_HEAP_START=0x$$(/opt/toolchains/dc/sh-elf/bin/sh-elf-nm $(DC_ELF) | awk '$$3 == "_end" { print $$1 }')u $< -o $@
+dcsim: $(OBJS) $(DATA)/.stamp $(DCSIM_O) $(DCSIM_GS) port/tools/link.py
+	BT3_CC=gcc BT3_DCSIM=$(DCSIM_O) $(PYTHON) port/tools/link.py
 
 run: $(EXE)
 	port/run.sh menu

@@ -16,7 +16,8 @@ extern int gsScale;
 #define GS_W 1024
 #define GS_H 1024
 
-#if defined(__DREAMCAST__) && defined(BT3_NO_RTT)
+/* (BT3_DCSIM: these objects as the Dreamcast has them, for the PC's sim of its memory; Makefile, make dcsim) */
+#if (defined(__DREAMCAST__) || defined(BT3_DCSIM)) && defined(BT3_NO_RTT)
 /* The Dreamcast without its renders to textures (Makefile.dc DC_RTT=0): the PVR draws the lists' draws whenever
    they are full (gs_pvr.c spill), so they hold a part of a frame: 448 KB and 144 KB. The vertex programs' lists are
    not filled there (gs_vu1.c, the PS2 reference that fills them, is the PC's): none. */
@@ -25,7 +26,7 @@ extern int gsScale;
 #define MAX_VU_VERTS 16
 #define MAX_VU_IDX 16
 #define MAX_VU_UNIFORMS 16
-#elif defined(__DREAMCAST__)
+#elif defined(__DREAMCAST__) || defined(BT3_DCSIM)
 /* The Dreamcast with them (DC_RTT=1): a frame's lists sized by what one holds (BT3_GS_PEAKS: the attract demo's
    1 v 1 fight peaks at 102,717 vertices and 2,818 draws), 3.5 MB and 1.2 MB; a frame that needs more says so
    (lists_full). */

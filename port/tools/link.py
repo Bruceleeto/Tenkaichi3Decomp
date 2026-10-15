@@ -71,8 +71,39 @@ def link(objs, extra):
                           ["-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic", "-lm", "-lpthread", "-lSDL3", "-rdynamic",
                            "-Wl,-rpath,$ORIGIN/lib"] + common + base64, capture_output=True, text=True)
 
+# make dcsim (BT3_DCSIM=<port/src/dcsim/dcsim.c's object>): the objects the Dreamcast build has too get the
+# Dreamcast's memory for their blocks and open files, renamed to dcsim.c's; the PC's own keep the system's
+DCSIM_NAMES = ["malloc", "calloc", "realloc", "free", "fopen", "fclose"]
+
+def dcsim_objs(objs):
+    dc = {o.name for o in (ROOT / "port/build/dc/obj").glob("*.o")}
+    if not dc:
+        sys.exit("make dcsim needs the Dreamcast build's objects (make -f Makefile.dc)")
+    out = ROOT / "port/build/obj_dcsim"
+    out.mkdir(exist_ok=True)
+    for f in out.glob("*.o"):
+        f.unlink()
+    res, moved = [], []
+    own = ROOT / "port/build/dcsim/obj"  # the renderer's objects built as the Dreamcast's (the Makefile)
+    for o in objs:
+        p = pathlib.Path(o)
+        if p.parent == OBJ and (own / p.name).exists():
+            o = str(own / p.name)
+        if pathlib.Path(o).parent in (OBJ, own) and p.name in dc:
+            und = subprocess.run(["nm", "-u", o], capture_output=True, text=True).stdout.split()
+            if any(n in und for n in DCSIM_NAMES):
+                subprocess.run(["objcopy"] + [f"--redefine-sym={n}=dcsim_{n}" for n in DCSIM_NAMES] + [o, str(out / p.name)], check=True)
+                res.append(str(out / p.name))
+                moved.append(p.stem)
+                continue
+        res.append(o)
+    print("dcsim: the Dreamcast's memory for " + " ".join(moved))
+    return res + [os.environ["BT3_DCSIM"]]
+
 def main():
     objs = [str(o) for o in sorted(OBJ.glob("*.o")) + sorted(DATA.glob("*.o"))]
+    if os.environ.get("BT3_DCSIM"):
+        objs = dcsim_objs(objs)
     r = link(objs, [])  # first pass: ask the linker what nobody provides (the host C library included)
     need = sorted(set(re.findall(r'^\s+"_(\w+)", referenced from', r.stderr, re.M) if MAC else  # (ld64; GNU ld)
                       re.findall(r"undefined reference to `(\w+)'", r.stderr)))

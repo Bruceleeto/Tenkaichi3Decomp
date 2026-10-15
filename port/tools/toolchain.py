@@ -34,7 +34,7 @@ CLANG_TARGET = ["--target=x86_64-w64-mingw32"] if WIN else [f"--target={MAC_TRIP
 OBJ = ROOT / ("port/build/obj" if VARIANT == "gcc" else "port/build/obj_" + VARIANT)
 DATA = ROOT / ("port/build/obj_data" if not BITS64 else "port/build/obj_data_win64" if WIN else
                "port/build/obj_data_mac64" if MAC else "port/build/obj_data64")
-EXE = ROOT / "port/build" / {"gcc": "bt3", "clang64": "bt3_64", "win64": "bt3.exe", "mac64": "bt3_mac"}.get(VARIANT, "bt3_" + VARIANT)
+EXE = ROOT / "port/build" / {"gcc": "bt3-dcsim" if os.environ.get("BT3_DCSIM") else "bt3", "clang64": "bt3_64", "win64": "bt3.exe", "mac64": "bt3_mac"}.get(VARIANT, "bt3_" + VARIANT)
 
 def sdl3():
     """The folder with SDL3's include/ and lib/ for the Windows build, or None when the compiler finds it itself."""
