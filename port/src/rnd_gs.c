@@ -422,8 +422,11 @@ void Rnd_OtRec(const RndOtRec *r) {
     int i;
 
     gs_write(0, rec_prim(r), 1);
-    if (r->setTex0) {
+    if (r->setTex0 & 1) {
         gs_write(0x06 + (r->ctx & 1), r->tex0, 1);
+    }
+    if (r->setTex0 & RND_OTREC_CLAMP) {
+        gs_write(0x08 + (r->ctx & 1), 5, 1);
     }
     sVn = 0;
     for (i = 0; i < r->n; i++) {
@@ -439,6 +442,9 @@ void Rnd_OtRec(const RndOtRec *r) {
         }
         vertex(v->x, v->y, v->z & 0xFFFFFF, 1, DRAW);
     }
+    if (r->setTex0 & RND_OTREC_CLAMP) {
+        gs_write(0x08 + (r->ctx & 1), 0, 1);
+    }
     gRndOtStat[2]++;
 }
 
@@ -448,13 +454,20 @@ uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
     uint64_t *start = dst;
     int i;
 
-    dst[0] = 1 | (uint64_t)(r->setTex0 ? 2 : 1) << 60; /* NLOOP 1, PACKED */
-    dst[1] = r->setTex0 ? 0x00ull | (uint64_t)(0x06 + (r->ctx & 1)) << 4 : 0x00ull;
+    int tex = r->setTex0 & 1, clamp = (r->setTex0 & RND_OTREC_CLAMP) != 0;
+
+    dst[0] = 1 | (uint64_t)(1 + tex + clamp) << 60; /* NLOOP 1, PACKED: PRIM, TEX0, CLAMP */
+    dst[1] = (tex ? (uint64_t)(0x06 + (r->ctx & 1)) << 4 : 0) | (clamp ? (uint64_t)(0x08 + (r->ctx & 1)) << (4 + 4 * tex) : 0);
     dst[2] = rec_prim(r);
     dst[3] = 0;
     dst += 4;
-    if (r->setTex0) {
+    if (tex) {
         dst[0] = r->tex0;
+        dst[1] = 0;
+        dst += 2;
+    }
+    if (clamp) {
+        dst[0] = 5;
         dst[1] = 0;
         dst += 2;
     }
@@ -486,6 +499,13 @@ uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
         dst[0] = (uint64_t)v->x | (uint64_t)v->y << 32;
         dst[1] = v->z & 0xFFFFFF;
         dst += 2;
+    }
+    if (clamp) { /* (CLAMP 0 after the corners, A+D) */
+        dst[0] = 1 | 1ull << 15 | 1ull << 60;
+        dst[1] = 0xE;
+        dst[2] = 0;
+        dst[3] = 0x08 + (r->ctx & 1);
+        dst += 4;
     }
     walk(start, (unsigned)(dst - start) / 2, FOLLOW); /* (what it sets, as a packet that stays) */
     gRndOtStat[0]++;

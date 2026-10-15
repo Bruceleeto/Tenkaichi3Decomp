@@ -55,13 +55,17 @@ static void reset(void) {
 static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
     uint64_t *s = d, prim = (uint64_t)r->type | (uint64_t)r->gouraud << 3 | (uint64_t)r->tme << 4 | (uint64_t)r->abe << 6 |
                             (uint64_t)r->fst << 8 | (uint64_t)r->ctx << 9;
-    int i, nreg = 1 + (r->setTex0 != 0) + r->n * (r->tme ? 3 : 2);
+    int tex = r->setTex0 & 1, clamp = (r->setTex0 & RND_OTREC_CLAMP) != 0;
+    int i, nreg = 1 + tex + 2 * clamp + r->n * (r->tme ? 3 : 2);
     uint64_t regs = 0;
     int k = 0;
 
     regs |= 0ull << (k++ * 4);
-    if (r->setTex0) {
+    if (tex) {
         regs |= (uint64_t)(6 + r->ctx) << (k++ * 4);
+    }
+    if (clamp) { /* (EftSprAnim_QueueTri's packet: CLAMP 5 before the corners, CLAMP 0 after) */
+        regs |= (uint64_t)(8 + r->ctx) << (k++ * 4);
     }
     if (!packed) {
         for (i = 0; i < r->n; i++) {
@@ -71,12 +75,18 @@ static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
             }
             regs |= 4ull << (k++ * 4);
         }
+        if (clamp) {
+            regs |= (uint64_t)(8 + r->ctx) << (k++ * 4);
+        }
         d[0] = 1 | 1ull << 15 | 1ull << 58 | (uint64_t)(nreg & 15) << 60;
         d[1] = regs;
         d += 2;
         *d++ = prim;
-        if (r->setTex0) {
+        if (tex) {
             *d++ = r->tex0;
+        }
+        if (clamp) {
+            *d++ = 5;
         }
         for (i = 0; i < r->n; i++) {
             const RndOtVtx *v = &r->v[i];
@@ -92,6 +102,9 @@ static unsigned packet(uint64_t *d, const RndOtRec *r, int packed) {
                 d++;
             }
             *d++ = (uint64_t)v->x | (uint64_t)v->y << 16 | (uint64_t)v->z << 32 | 0xFFull << 56;
+        }
+        if (clamp) {
+            *d++ = 0;
         }
         if ((d - s) & 1) {
             *d++ = 0;
@@ -277,8 +290,11 @@ int main(void) {
 
     for (k = 0; k < sizeof(kinds) / sizeof(kinds[0]); k++) {
         for (rep = 0; rep < 20; rep++) {
-            for (setTex0 = 0; setTex0 < 2; setTex0++) {
+            for (setTex0 = 0; setTex0 < 4; setTex0++) { /* (bit 0 TEX0, bit 1 RND_OTREC_CLAMP) */
                 for (packed = 0; packed < 2; packed++) {
+                    if (packed && (setTex0 & RND_OTREC_CLAMP)) {
+                        continue; /* (only a REGLIST packet writes CLAMP around its corners) */
+                    }
                     if (packed && ((kinds[k].prim >> 8) & 1)) {
                         continue; /* (the PACKED writer here has no UV) */
                     }

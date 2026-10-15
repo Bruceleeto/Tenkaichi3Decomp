@@ -4,6 +4,7 @@
 #include "sys/heap.h"
 #ifdef PORT
 #include "port/rnd.h"
+#include <stdio.h>
 #endif
 
 /*
@@ -88,6 +89,13 @@ void Ot_SetDefaultAlpha(void) {
 
 /* Rewinds the packet allocation cursor. */
 void Ot_ResetCursor(void) {
+#ifdef PORT
+    /* Nothing checks that the packet memory lasts (the game's packets never did): the port's nodes are never bigger
+       than the packets they stand for, so a frame needs no more than it did on the PS2; told if one ever does. */
+    if ((u8 *)gOtCur > (u8 *)gOt->buf + gOt->bufSize) {
+        fprintf(stderr, "ot: the ordering table's packet memory overran by %d bytes\n", (s32)((u8 *)gOtCur - ((u8 *)gOt->buf + gOt->bufSize)));
+    }
+#endif
     gOtCur = gOt->buf;
 }
 
@@ -418,8 +426,12 @@ void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 
 }
 
 void Ot_RecTex0(void *node, u64 tex0) {
-    OT_REC(node)->setTex0 = 1;
+    OT_REC(node)->setTex0 |= 1;
     OT_REC(node)->tex0 = tex0;
+}
+
+void Ot_RecClamp(void *node) {
+    OT_REC(node)->setTex0 |= RND_OTREC_CLAMP;
 }
 
 /* A packet node that writes one GS register (A+D): the state a producer's packet set around its draw, kept as a

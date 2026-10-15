@@ -158,6 +158,7 @@ typedef struct RndOtRec {
     uint64_t tex0;
     RndOtVtx v[4];
 } RndOtRec; /* 112 bytes */
+#define RND_OTREC_CLAMP 2 /* setTex0 bit: CLAMP 5 (both clamped) for its corners, then CLAMP 0 (repeat), as the packet */
 /* A record of the ordering table: whether it is drawn as polygons (1: Rnd_OtRec, under the state followed to
    that point, as Rnd_OtDraw draws the packet it stands for), or not (0: Rnd_OtRecPacket writes that packet at dst
    and returns its end; its register writes are followed). */

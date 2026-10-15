@@ -29,6 +29,7 @@ void *Ot_NewAd(u32 addr, u64 data); /* a packet node that writes one GS register
    a texel), r g b a (r in the low byte), as the packet holds them. */
 void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 rgba);
 void Ot_RecTex0(void *node, u64 tex0); /* the TEX0 the packet writes to its context before its corners */
+void Ot_RecClamp(void *node); /* its packet writes CLAMP 5 before its corners and CLAMP 0 after (RND_OTREC_CLAMP) */
 u32 Ot_RecRgba(f32 r, f32 g, f32 b, f32 a); /* a colour from floats, each converted to a byte as a packet's RGBAQ is */
 
 #endif
