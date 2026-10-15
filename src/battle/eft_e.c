@@ -1463,7 +1463,19 @@ static inline void EftWaterOt_Add(OtPrim *p, s32 z, s32 layer) {
     e->tail = p;
 }
 
-/* Queues a packet that sets GS TEST_1 at depth z; leaves the calling function when the packet memory is used up. */
+/* Queues a packet that sets GS TEST_1 at depth z; leaves the calling function when the packet memory is used up.
+   (PORT: a register node, Ot_NewAd, in the packet's place.) */
+#ifdef PORT
+#define EFT_WATER_QUEUE_TEST(test, z, layer)                                                                         \
+    {                                                                                                               \
+        void *q = Ot_NewAd(0x47, (test));                                                                           \
+                                                                                                                    \
+        if (q == NULL) {                                                                                            \
+            return;                                                                                                 \
+        }                                                                                                           \
+        EftWaterOt_Add((OtPrim *)q, z, layer);                                                                       \
+    }
+#else
 #define EFT_WATER_QUEUE_TEST(test, z, layer)                                                                         \
     {                                                                                                               \
         EftWaterRegPkt *q = (EftWaterRegPkt *)gOtCur;                                                                 \
@@ -1484,6 +1496,7 @@ static inline void EftWaterOt_Add(OtPrim *p, s32 z, s32 layer) {
         q->reg = 0x47;                                                                                              \
         EftWaterOt_Add((OtPrim *)q, z, layer);                                                                       \
     }
+#endif
 
 #define EFT_WATER_PAUSED() (Battle_GetWork()->flags & 0x100)
 
