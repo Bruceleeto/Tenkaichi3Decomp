@@ -38,15 +38,19 @@ void Fade_DrawRect(Fade *fade) {
     p += 2;
     p[0] = 0x30000; /* alpha and depth tests always pass */
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1); /* no depth writes */
     p[1] = GS_ZBUF_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x46; /* sprite, alpha blended */
     p[1] = GS_PRIM;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = (u64)rgba | (0x3F800000ULL << 32);
     p[1] = GS_RGBAQ;
+    PORT_AD(p, 0);
     p += 2;
 #ifdef PORT
     /* The sprites as a record (include/port/rnd.h): the default state with no test and depth not written. */
