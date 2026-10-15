@@ -186,12 +186,12 @@ s32 Ot_Send(void) {
     }
     Ot_AddEnv(0);
 #ifdef PORT
-    Rnd_OtBegin(GFX_FRAME_REG(), GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_OtBegin();
 #endif
     dst = (u8 *)Dma_BeginDirect();
     for (prim = gOtHead; prim != NULL; prim = prim->next) {
 #ifdef PORT
-        if (Rnd_OtTake((const u64 *)(prim + 1), prim->qwc)) { /* its polygons handed to the renderer (port/src/rnd_ot.c) */
+        if (Rnd_OtTake((const u64 *)(prim + 1), prim->qwc)) { /* its polygons handed to the renderer (port/src/rnd_gs.c) */
             Dma_EndDirect((u64 *)dst);
             Rnd_OtDraw((const u64 *)(prim + 1), prim->qwc);
             dst = (u8 *)Dma_BeginDirect();
@@ -204,8 +204,11 @@ s32 Ot_Send(void) {
     }
 #ifdef PORT
     dst = (u8 *)Rnd_OtState((u64 *)dst);
-#endif
     Dma_EndDirect((u64 *)dst);
+    Rnd_OtEnd();
+#else
+    Dma_EndDirect((u64 *)dst);
+#endif
     Ot_AddRestoreEnv();
     return 1;
 }

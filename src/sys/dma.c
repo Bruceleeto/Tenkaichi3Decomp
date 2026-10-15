@@ -1,6 +1,9 @@
 #include "common.h"
 #include "sys/dma.h"
 #include "sys/heap.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /* libc */
 extern void *memcpy(void *dst, const void *src, u32 size);
@@ -30,6 +33,9 @@ void Dma_InitBuffers(void) {
 
 /* Copies `size` bytes (whole quadwords) of ready-made packet data to the display list. */
 void Dma_AddData(void *src, s32 size) {
+#ifdef PORT
+    Rnd_GsFollow(src, size); /* the GS state it sets, as the renderer's (port/src/rnd_gs.c) */
+#endif
     memcpy(gDmaCur, src, size);
     gDmaCur = (u32 *)((u8 *)gDmaCur + size / 16 * 16);
 }
@@ -115,6 +121,9 @@ void Dma_EndDirect(u64 *end) {
         tag[1] = 0;
         tag[2] = VIF_FLUSHE;
         tag[3] = VIF_DIRECT | qwc;
+#ifdef PORT
+        Rnd_GsFollow(tag, (qwc + 1) << 4);
+#endif
         FlushCache(0);
         gDmaCur = (u32 *)end;
     }

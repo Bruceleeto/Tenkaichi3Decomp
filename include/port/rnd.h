@@ -16,7 +16,7 @@
  * Users: the Flash player's quads (src/sys/gfxm_c.c FlashDraw_Quad), the battle HUD's sprites (src/battle/hud_c_c.c),
  * the screen clear and the fades (src/sys/gfx.c Gfx_ClearScreen, src/sys/fade.c Fade_DrawRect), the text and its
  * icons (src/battle/col_c.c, col_c_b.c), the battle menu (src/battle/hud_0_b.c, hud_0_c.c); as polygons (RndPoly,
- * GsGpu_Poly), the effects' draws of the ordering table (src/sys/gfx_ot.c Ot_Send, port/src/rnd_ot.c).
+ * GsGpu_Poly), the effects' draws of the ordering table (src/sys/gfx_ot.c Ot_Send, port/src/rnd_gs.c).
  */
 
 #include <stdint.h>
@@ -110,11 +110,22 @@ int Port_Quad(const RndQuad *q); /* queues the quad at the display list's cursor
                                     which draws only GS packets: the caller sends its packet as before) */
 int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
-/* The ordering table's packets as polygons (port/src/rnd_ot.c, from src/sys/gfx_ot.c Ot_Send): the state of the
-   sorted pass to start from (FRAME, SCISSOR as Ot_AddEnv sets them); whether a packet is a draw taken (1) or one
-   kept (0: its register writes are followed); its polygons to the queue; the registers the GS would hold after
-   those taken, written as A+D at dst (the new end) before a packet that is kept. */
-void Rnd_OtBegin(uint64_t frame, uint64_t scissor);
+/* port/src/rnd_gs.c. The GS state the game sets, followed into gRndCtx from each packet the display list gets
+   (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them). */
+void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes);
+/* What of a context's state a record cannot say (gRndCtxBad): a blend that is none of RND_BLEND_, a write mask of
+   some channels, a depth test that never passes, a region clamp. */
+#define RND_BAD_BLEND 1
+#define RND_BAD_FRAME 2
+#define RND_BAD_TEST 4
+#define RND_BAD_CLAMP 8
+extern uint32_t gRndCtxBad[2];
+/* The ordering table's packets as polygons (from src/sys/gfx_ot.c Ot_Send, between Rnd_OtBegin and Rnd_OtEnd):
+   whether a packet is a draw taken (1) or one kept (0: its register writes are followed); its polygons to the
+   queue; the registers the GS would hold after those taken, written as A+D at dst (the new end) before a packet
+   that is kept. */
+void Rnd_OtBegin(void);
+void Rnd_OtEnd(void);
 int Rnd_OtTake(const uint64_t *pkt, unsigned qwc);
 void Rnd_OtDraw(const uint64_t *pkt, unsigned qwc);
 uint64_t *Rnd_OtState(uint64_t *dst);
@@ -122,9 +133,9 @@ extern unsigned gRndOtStat[2]; /* the ordering table's draws sent as packets, as
 void Rnd_StateInit(RndState *s, uint32_t fbp); /* the whole picture, blended normally, no test, nothing else */
 int Rnd_Fill(const RndState *st, uint32_t rgba); /* the whole picture in one colour, as Port_Quad */
 
-/* What the GS's two contexts hold while the HUD draws, kept by everything that sets them in the meantime (its
-   environment and its parts' mask states; the font's packets through Rnd_DefaultEnv and Rnd_FontEnv).
-   gRndCtxValid 0: not known (outside the HUD), the packets are sent. */
+/* What the GS's two contexts hold, as the display list is made: followed from the packets (Rnd_GsFollow), and set
+   by the HUD's environment and its parts' mask states (Rnd_Set*) as well. gRndCtxValid: the HUD takes its sprites
+   as records (0 outside the HUD: the packets are sent). */
 extern RndState gRndCtx[2];
 extern int gRndCtxValid;
 void Rnd_DefaultEnv(uint32_t fbp); /* context 1 as src/sys/gfx.c Gfx_PutDefaultEnv leaves it */
