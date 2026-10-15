@@ -37,7 +37,7 @@ extern unsigned gGsFrame; /* pictures so far (gs_walk.c) */
 const char *Gs_Mode(void); /* BT3_GS: "gpu", "1" (the software reference); NULL = nothing is drawn */
 int Gs_On(void);           /* the renderer started (the first transfer to the GS does it); 0 = nothing is drawn */
 void Gs_FrameCount(void);  /* a picture is finished */
-void Gs_RndTake(uint32_t tadr);  /* the list at tadr is handed over: its records to the walk */
+void Gs_RndTake(void);           /* the list is handed over: its records to the walk */
 void Gs_RndDrain(uint32_t tadr); /* the walk is at the DMA tag at tadr: the records queued in front of it are drawn */
 void Gs_RndRest(void);           /* the walk is done: the records it did not meet are drawn */
 uint64_t Gs_NowNs(void);

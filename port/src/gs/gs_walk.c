@@ -228,13 +228,14 @@ int Gs_TakesRecords(void) {
 
 /* ---- the renderer's command queue (include/port/rnd.h) ----
    What the game hands over as records does not travel in its display list: it is queued here with the place in the
-   list it belongs at (the list's first address, and the address the list's cursor had: the DMA tag written there
-   next). The list is walked (gs_core.c run_chain); before the tag at an address the records queued at it are drawn,
-   so they come between the packets the game put in front of them and after them. A list's records go to the walk
-   when the list is handed over (Gs_RndTake); records of a list not handed over yet stay. Two queues: the one the game
-   fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
+   list it belongs at (the address the list's cursor had: the DMA tag written there next). The list is walked (the
+   reference, gs_core.c run_chain); before the tag at an address the records queued at it are drawn, so they come
+   between the packets the game put in front of them and after them. A transfer is a call (sys/dma.c), so what is
+   queued is always the list being made: all of it goes to the walk when the list is handed over (Gs_RndTake), and
+   it is dropped when the game starts the list again without sending it (Dma_ResetBuffers: Port_ListRestart). Two
+   queues: the one the game fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
 typedef struct RndCmd {
-    uint32_t list, at; /* the display list's first address; the address in it */
+    uint32_t at;       /* the address in the display list */
     uint32_t kind;     /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value) */
     union { RndQuad q; RndPoly p; uint64_t m[2]; } r;
 } RndCmd;
@@ -246,18 +247,15 @@ static RndQueue sRndFill, sRndWalk;
 static unsigned sMarksIn; /* markers queued (Port_Mark) since the last report */
 static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
 
+/* src/sys/dma.c Dma_ResetBuffers: the list is started again without being handed over: its records go. */
+void Port_ListRestart(void) {
+    sRndFill.n = 0;
+}
+
 /* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
-   that starts at `list`. 0 = not taken. */
-int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
+   being made. 0 = not taken. */
+int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     RndQueue *f = &sRndFill;
-    if (f->n != 0 && f->cmd[f->n - 1].list == list && at < f->cmd[f->n - 1].at) {
-        /* the list was started again without being handed over (src/sys/dma.c Dma_ResetBuffers): its records go */
-        uint32_t i, keep = 0;
-        for (i = 0; i < f->n; i++) {
-            if (f->cmd[i].list != list) { f->cmd[keep++] = f->cmd[i]; }
-        }
-        f->n = keep;
-    }
     if (f->n == f->cap) {
         uint32_t cap = f->cap ? f->cap * 2 : 1024;
         RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
@@ -269,7 +267,6 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
         f->cmd = c;
         f->cap = cap;
     }
-    f->cmd[f->n].list = list;
     f->cmd[f->n].at = at;
     f->cmd[f->n].kind = (uint32_t)kind;
     if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else if (kind == 1) { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
@@ -279,9 +276,8 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
 }
 
 /* The list at tadr is handed over: its records from the queue being filled to the one the walk reads, in order. */
-void Gs_RndTake(uint32_t tadr) {
+void Gs_RndTake(void) {
     RndQueue *f = &sRndFill, *w = &sRndWalk;
-    uint32_t i, keep = 0;
     w->n = w->next = 0;
     if (w->cap < f->n) {
         RndCmd *c = realloc(w->cmd, f->n * sizeof(RndCmd));
@@ -289,14 +285,9 @@ void Gs_RndTake(uint32_t tadr) {
         w->cmd = c;
         w->cap = f->n;
     }
-    for (i = 0; i < f->n; i++) {
-        if (f->cmd[i].list == tadr) {
-            w->cmd[w->n++] = f->cmd[i];
-        } else {
-            f->cmd[keep++] = f->cmd[i];
-        }
-    }
-    f->n = keep;
+    memcpy(w->cmd, f->cmd, f->n * sizeof(RndCmd));
+    w->n = f->n;
+    f->n = 0;
 }
 
 static void rnd_draw(const RndCmd *c) {
@@ -785,7 +776,7 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
         return;
     }
     tChain = Gs_NowNs();
-    Gs_RndTake(tadr);
+    Gs_RndTake();
 #ifdef PORT_GS_REF
     if (sWalk != 3) {
         walk_chain(tadr, tte);

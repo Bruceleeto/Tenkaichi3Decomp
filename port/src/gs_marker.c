@@ -15,16 +15,14 @@ void Port_GsMarker(int effect) {
 }
 
 /* include/port/rnd.h: the quad to the renderer's queue (gs/gs_walk.c Gs_RecordPush), with the place in the display
-   list it belongs at: the list being built (its first address) and the list's cursor (where the next packet goes). */
+   list it belongs at: the list's cursor (where the next packet goes). */
 #include <string.h>
 #include "../../include/port/rnd.h"
 #include "port_addr.h"
 
 extern int Gs_TakesRecords(void);                                       /* gs/gs_walk.c */
-extern int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at); /* gs/gs_walk.c */
+extern int Gs_RecordPush(const void *rec, int kind, uint32_t at); /* gs/gs_walk.c */
 extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
-extern uint32_t gDmaBuf[2];   /* its two buffers (game addresses) */
-extern int gDmaBufIdx;        /* the one being built */
 
 RndState gRndCtx[2];
 int gRndCtxValid;
@@ -75,14 +73,14 @@ int Port_Quad(const RndQuad *q) {
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    return Gs_RecordPush(q, 0, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+    return Gs_RecordPush(q, 0, Port_Addr(gDmaCur));
 }
 
 int Port_Poly(const RndPoly *p) {
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    return Gs_RecordPush(p, 1, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+    return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
 }
 
 extern int Gs_MarksQueued(void); /* gs/gs_walk.c */
@@ -93,7 +91,7 @@ int Port_Mark(uint32_t addr, uint64_t d) {
     }
     m[0] = addr;
     m[1] = d;
-    return Gs_RecordPush(m, 2, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
+    return Gs_RecordPush(m, 2, Port_Addr(gDmaCur));
 }
 
 /* A marker: one of the port's registers (0x7B..0x7F: Port_GsMarker, gs_pvr.c Port_TexNative / Port_PalNative /

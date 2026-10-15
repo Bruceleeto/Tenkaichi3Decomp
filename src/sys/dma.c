@@ -151,6 +151,9 @@ void Dma_ResetBuffers(void) {
     ((u32 *)gDmaBuf[1])[2] = 0;
     ((u32 *)gDmaBuf[1])[3] = 0;
     gDmaCur = (u32 *)gDmaBuf[gDmaBufIdx];
+#ifdef PORT
+    Port_ListRestart();
+#endif
 }
 
 /* Returns the usable size of one display-list buffer. */

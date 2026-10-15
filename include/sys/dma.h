@@ -82,6 +82,7 @@ typedef unsigned int u128 __attribute__((mode(TI)));
    transfer), GIF data (`qwc` quadwords at `addr`, or a source chain at it). Done when they return. */
 void Port_GsVif1Chain(u32 tadr, s32 tte);
 void Port_GsGifChannel(u32 addr, u32 qwc, s32 chain);
+void Port_ListRestart(void); /* the list being made is started again: what was queued for it goes */
 #else
 /* EE hardware registers. */
 #define VIF1_STAT HW_EE(0x10003C00)

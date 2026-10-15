@@ -1483,9 +1483,9 @@ void GsRef_Vif1Chain(uint32_t tadr, int tte) {
     tChain = Gs_NowNs();
     if (sThreaded) {
         render_wait(); /* the previous list must be finished before this one starts (the PS2's sceGsSyncPath) */
-        Gs_RndTake(tadr);
+        Gs_RndTake();
     } else {
-        Gs_RndTake(tadr);
+        Gs_RndTake();
         run_chain(tadr, tte);
     }
     Gs_FramePace(tChain); /* the frame's work ends here */
