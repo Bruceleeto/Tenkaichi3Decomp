@@ -107,13 +107,18 @@ static void late_release(void) {
     sLateCur = old;
 }
 static int sNatOn; /* the game's texture entries are PVR textures of their own (below: NatTex); BT3_TEXPAK= none */
+/* (and only where the list is not read for its packets: there every upload is sent as on the PS2, and drawn from
+   GS memory) */
+extern int Port_ListRead(void); /* gs_walk.c */
+static int nat_on(void) { return sNatOn && !Port_ListRead(); }
+void Port_Bind(int kind, uint32_t block, uint32_t blocks, uint32_t h); /* port/src/gs_marker.c */
 static unsigned sNatWhy[5]; /* records not native: not 4/8-bit, packet not read, not in the pack, another size; no record free */
 static unsigned sNatEvicted; /* native textures that let go of their PVR memory (nat_evict) */
 static unsigned sTintDraws; /* per 30 frames: draws with a tinted palette (Port_ClutTint) */
 static unsigned sPalMade[2]; /* per 30 frames: palettes made for a native one from tex.pak, out of GS memory */
 static unsigned sNatLive, sNatSteal, sNatMiss[4]; /* per frame, draws of a 4/8-bit texture not native: no record at
                                                      its block, record not native, another size or format; uploads not native */
-static unsigned sPalStale; /* per 30 frames: records whose palette handle no longer named what is at their CBP */
+extern unsigned gRndBindLive, gRndBindPeak, gRndRebound; /* port/src/gs_marker.c */
 static unsigned sPalMiss; /* per 30 frames: palette uploads not native (not a palette of the pack, or no record free): sent
                              to GS memory as before */
 static int sPalAsk;       /* Port_TexNative asking whether a direct entry's pixels are also a palette (not counted) */
@@ -1328,15 +1333,15 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing (%u a palette no longer at its CBP); ordering table: %u packets, %u decoded, %u records, %u nodes read as GS packets\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing (%u whose palette was no longer at its CBP; %u bindings, at most %u); ordering table: %u packets, %u decoded, %u records, %u nodes read as GS packets\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, sPalStale, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2], gRndOtStat[3]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, gRndRebound, gRndBindLive, gRndBindPeak, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2], gRndOtStat[3]);
         sTintDraws = 0;
         gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = gRndOtStat[3] = 0;
         gsRndFallback = gsRndByTex0 = gsRndHandleMiss = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
         sPalMiss = 0;
-        sPalStale = 0;
+        gRndRebound = 0;
         memset(sPalMade, 0, sizeof(sPalMade));
     }
     memset(gGsTint, 0, sizeof(gGsTint)); /* (the tints are the frame's: the game sets them again for the next) */
@@ -1386,8 +1391,8 @@ static void frame_end(void) {
    A texture entry (TexEntry, include/sys/gfxm_b_b.h) the game uploads becomes a PVR texture the first time, from
    the converted ones (texpak.h), and stays one until the game frees its file: the upload itself is left out
    (Port_TexNative), nothing is decoded or sent again. Its record is found by the entry's address (sNatHash; the
-   entry itself is not written: the HUD's keeps a mark at +0x28), and by the blocks of GS memory it was uploaded
-   to (gGsNat), where the draws still look for it.
+   entry itself is not written: the HUD's keeps a mark at +0x28); its handle is bound to the block the game
+   uploads it to (port/src/gs_marker.c Port_Bind), for the records that name it by TEX0.
    The palette stays the game's (it changes them): read from GS memory when it changes, into the codebook of
    an 8-bit one (VQ, the palette as the codebook) or into a bank of palette RAM for a 4-bit one (PAL4). */
 /* (the attract demo's 1 v 1 fight has about 170 at once; a full table says so, nat_full: raise it then) */
@@ -1576,14 +1581,15 @@ static NatTex *nat_get(uint8_t *e) {
 }
 
 /* The game uploads entry e's pixels to block tbp (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c): not 0 (its handle, include/port/rnd.h) = it is a PVR texture of
-   its own, the upload is left out. In its place in the DMA chain, a write of register 0x7E telling the GS layer
-   which record the blocks hold from there on (the chain runs after the game has built all of it). */
+   its own, the upload is left out. Its handle is bound to the block (Port_Bind), for the records that name it by
+   TEX0; in its place in the list a write of register 0x7E, which says which blocks the upload would have written
+   (gs_walk.c: their pages changed). */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block);
 int Port_TexNative(void *e, int tbp) {
     extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
     uint32_t blocks;
     NatTex *n;
-    if (!sNatOn) { return 0; }
+    if (!nat_on()) { return 0; }
     if ((n = nat_get(e)) == NULL || n->none) {
         sNatMiss[3]++;
         Port_Lost("a texture not in tex.pak (its entry's address)", Port_Addr(e), __builtin_return_address(0));
@@ -1595,12 +1601,12 @@ int Port_TexNative(void *e, int tbp) {
         blocks &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
     }
     sPalAsk = 0;
-    Port_MarkReg(0x7E, ((uint32_t)tbp & 0x3FFF) | (uint64_t)blocks << 32);
+    Port_MarkReg(0x7E, ((uint32_t)tbp & 0x3FFF) | (uint64_t)(blocks >> 16) << 48);
+    Port_Bind(0, (uint32_t)tbp, blocks >> 16, (uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
     return (int)((uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
 }
 
-/* The palettes of tex.pak, by the address of the upload packet the game sends (the ones it changes while it runs it
-   still sends: drawn over in GS memory, gGsPal forgets them there). */
+/* The palettes of tex.pak, by the address of the upload packet the game sends. */
 #define MAX_PAL 2048
 typedef struct NatPal {
     uint32_t addr;   /* the packet's game address; 0 = a free record */
@@ -1668,28 +1674,18 @@ static void pal_alphas(NatPal *p, const uint8_t *img) {
     }
 }
 
-/* The palette record at block cbp for a texture of n colours (a 256's first block: its palette of 16); NULL = none. */
-static const NatPal *pal_at(uint32_t cbp, uint32_t n) {
-    uint32_t i = gGsPal[cbp & 16383];
-    const NatPal *p = i != 0 && sPal[i - 1].addr != 0 ? &sPal[i - 1] : NULL;
-    if (p != NULL && n == 16 && p->n == 256) {
-        p = p->sub[0] != 0 && sPal[p->sub[0] - 1].addr != 0 ? &sPal[p->sub[0] - 1] : NULL;
-    }
-    return p != NULL && p->n == n ? p : NULL;
-}
-
 /* The game has just queued the upload of pkt to block `block` (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c, hud_c_c.c,
-   eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
-   layer which it is. */
+   eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; bound to the block, and a write
+   of register 0x7D in its place, as Port_TexNative. */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
-    uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4;
+    uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4, hnd;
     uint64_t key;
     const uint8_t *img = NULL;
     NatPal *p = NULL;
     int k;
 
-    if (!sNatOn) { return 0; }
+    if (!nat_on()) { return 0; }
     for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
         if (sPal[i - 1].addr == addr) {
             if (sPal[i - 1].sample == pal_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
@@ -1720,22 +1716,26 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         }
         return 0;
     }
-    Port_MarkReg(0x7D, ((uint32_t)block & 0x3FFF) |
-                       (uint64_t)((uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16) << 32); /* (the blocks it covers) */
+    hnd = (uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16;
+    Port_MarkReg(0x7D, ((uint32_t)block & 0x3FFF) | (uint64_t)(p->n == 256 ? 4u : 1u) << 48); /* (the blocks it covers) */
+    Port_Bind(1, (uint32_t)block, p->n == 256 ? 4u : 1u, hnd);
     if (p->sub[0] != 0 && (block & 3) == 0) {
         /* (and blocks 1 to 3 their palettes of 16, for a 4-bit texture that names them; block 0's is p->sub[0]) */
         for (k4 = 1; k4 < 4; k4++) {
-            Port_MarkReg(0x7D, ((uint32_t)(block + (int)k4) & 0x3FFF) | (uint64_t)p->sub[k4] << 32);
+            Port_Bind(1, (uint32_t)(block + (int)k4), 0, Port_PalSub(hnd, (int)k4));
         }
     }
-    return (int)((uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16);
+    return (int)hnd;
 }
 
-/* The palette of the pack at block cbp, if it has n colours: in the order the indices count, as GS memory would
-   hold them. NULL = none there (it is in GS memory). */
-const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) {
-    const NatPal *p = pal_at(cbp, n);
-    return p != NULL ? p->col : NULL;
+/* The colours of the palette handle pal names, if it has n: in the order the indices count, as GS memory would
+   hold them. NULL = none (gs_draw.c's table passes). */
+const uint32_t *GsPvr_PalCol(uint32_t pal, uint32_t n) {
+    uint32_t pi = pal & 0xFFFF;
+    if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 || sPal[pi - 1].n != n) {
+        return NULL;
+    }
+    return sPal[pi - 1].col;
 }
 
 /* src/sys/gfxm_d_c.c ObjDraw_AddClutPass: the palettes of the two pages from block cbp are tinted this frame (k, o:
@@ -1745,7 +1745,7 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
     extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
     uint64_t v = 1ull << 63;
     int i;
-    if (!sNatOn) { return 0; }
+    if (!nat_on()) { return 0; }
     if (cbp < 0) { return 1; } /* (no pass this frame: nothing to tint) */
     for (i = 0; i < 3; i++) {
         float kk = k[i] < 0.0f ? 0.0f : k[i] > 1.0f ? 1.0f : k[i], oo = o[i] < 0.0f ? 0.0f : o[i] > 255.0f ? 255.0f : o[i];
@@ -1757,25 +1757,14 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
     return 1;
 }
 
-/* The palette at block cbp as a key that changes with it (0: not one of the pack's; gs_draw.c hashes GS memory). */
-uint32_t GsPvr_PalKey(uint32_t cbp) {
-    uint32_t i = gGsPal[cbp & 16383];
-    const NatPal *p = i != 0 && sPal[i - 1].addr != 0 ? &sPal[i - 1] : NULL;
-    return p != NULL ? 0x80000000u | p->gen : 0; /* (a 256's first block also names its palette of 16: the same colours
-                                                    the same key) */
-}
-
 /* The game's heap block [lo, hi) is freed: the entries in it are no longer textures. */
 void Port_TexFreed(uint32_t lo, uint32_t hi) {
-    uint32_t i, b;
+    uint32_t i;
     uint16_t *p;
     for (i = 0; i < MAX_NAT; i++) {
         NatTex *n = &sNat[i];
         if (n->e == 0 || n->e < lo || n->e >= hi) { continue; }
         if (n->t.mem != NULL) { late_free(n->t.mem); sTexBytes -= n->t.bytes; sNatLive--; }
-        for (b = 0; b < 16384; b++) {
-            if (gGsNat[b] == i + 1) { gGsNat[b] = 0; }
-        }
         if (!n->isVar && !n->isView) {
             for (p = &sNatHash[NAT_HASH(n->e)]; *p != i + 1; p = &sNat[*p - 1].next) {}
             *p = n->next;
@@ -1785,9 +1774,6 @@ void Port_TexFreed(uint32_t lo, uint32_t hi) {
     for (i = 0; i < MAX_PAL; i++) { /* and the palettes' packets in it */
         NatPal *q = &sPal[i];
         if (q->addr == 0 || q->addr < lo || q->addr >= hi) { continue; }
-        for (b = 0; b < 16384; b++) {
-            if (gGsPal[b] == i + 1) { gGsPal[b] = 0; }
-        }
         for (p = &sPalHash[PAL_HASH(q->addr)]; *p != i + 1; p = &sPal[*p - 1].next) {}
         *p = q->next;
         free(q->col);
@@ -1913,22 +1899,9 @@ static NatTex *nat_view(NatTex *n, uint32_t tw, uint32_t th) {
     return v;
 }
 
-/* A draw samples the texture at block tbp (gs_draw.c): the native one there, if it is the one asked for, with the
-   palette at cbp (palKey: its hash). 0 = none. */
+/* Native record n drawn as TEX0 reads it (tbp: its block, which says whether a direct one can be read as 8-bit
+   indices), with palette pal (palKey: what tells its colours apart). 0 = none. */
 static GsTex nat_resolve(NatTex *n, uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, const NatPal *pal, uint32_t cbp, uint32_t cpsm, uint32_t palKey);
-
-GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey) {
-    uint32_t idx = gGsNat[tbp & 16383];
-    NatTex *n;
-    const NatPal *pal;
-
-    if (idx == 0) { sNatMiss[0]++; return 0; }
-    n = &sNat[idx - 1];
-    if (n->e == 0 || n->none) { sNatMiss[1]++; return 0; }
-    pal = pal_at(cbp, psm == 0x13 ? 256 : 16); /* (as TEX0 reads it: a direct one read as 8-bit indices, the light,
-                                                   takes a palette of 256) */
-    return nat_resolve(n, tbp, psm, tw, th, pal, cbp, cpsm, palKey);
-}
 
 /* include/port/rnd.h: the handle of entry e's texture record (one Port_TexNative made), of the palette record of
    upload packet pkt (Port_PalNative); 0 = none. */
@@ -1960,23 +1933,10 @@ uint32_t Port_PalSub(uint32_t pal, int k) {
 }
 
 /* What a record the game handed over names (include/port/rnd.h): texture `tex` and palette `pal` as Port_TexNative
-   and Port_PalNative gave them, and its size. With the record's TEX0 (t0 not 0) it is read as that TEX0 reads it,
-   as a draw of TEX0 alone would read the record at its block (GsPvr_Native): its format and size (a direct one as
-   8-bit indices: the light), whose palette is then the one pal names. 0 = not (or no longer) one, or not drawable
-   so: the record's TEX0 is looked for at its block, else its GS fallback is drawn. */
-/* Palette record pi (+ 1) is still what GS memory holds at block cbp, as the record's TEX0 names it: the record at
-   cbp, or palette k of 16 of the 256 at cbp - k (the font's; their marker named only the first block). Not when
-   something was uploaded over it or the game drew into its page since (gs_core.c src_begin, src_own clear gGsPal): the
-   draw then reads what is there now, by its CBP. */
-static int pal_still_at(uint32_t pi, uint32_t cbp) {
-    uint32_t k, j;
-    if (gGsPal[cbp & 16383] == pi) { return 1; }
-    for (k = 1; k < 4 && k <= cbp; k++) {
-        j = gGsPal[(cbp - k) & 16383];
-        if (j != 0 && j <= MAX_PAL && sPal[j - 1].addr != 0 && sPal[j - 1].sub[k] == pi) { return 1; }
-    }
-    return 0;
-}
+   and Port_PalNative gave them (or port/src/gs_marker.c bind_resolve, from what was bound where its TEX0 names),
+   and its size. With the record's TEX0 (t0 not 0) it is read as that TEX0 reads it: its format and size (a direct
+   one as 8-bit indices: the light), whose palette is then the one pal names. 0 = not (or no longer) one, or not
+   drawable so: its GS fallback is drawn. */
 
 /* ---- the movie (port/src/plat_movie.c): its pictures in a YUV422 texture of their own, RND_TEX_MOVIE ----
    Not twiddled, the picture's size rounded up to powers of two (the picture at its top left). The PC writes its
@@ -2095,7 +2055,6 @@ static GsTex tex_handle(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, u
         if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 ||
             sPal[pi - 1].n != (psm == 0x14 ? 16u : 256u)) { return 0; }
         p = &sPal[pi - 1];
-        if (t0 != 0 && !pal_still_at(pi, (uint32_t)(t0 >> 37) & 0x3FFF)) { sPalStale++; return 0; }
     }
     *tw = w;
     *th = h;

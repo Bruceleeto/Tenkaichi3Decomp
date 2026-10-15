@@ -69,18 +69,164 @@ void Port_Lost(const char *what, uint32_t why, const void *from) {
                     "read here\n", what, (unsigned)why, name);
 }
 
+/* ---- the textures the game's uploads bound where (gs/gs_pvr.c Port_TexNative, Port_PalNative) ----
+   The game's models, and some of its drawing, name a texture by where the PS2 uploaded it: TEX0's TBP and CBP. Each
+   upload made native binds its handle to its first block, in the order the game queues them, which is the order
+   the list is drawn in; a record that names its texture by TEX0 alone is given the handles bound there when it is
+   made (bind_resolve), so the renderer is handed handles and reads no address. An upload over the blocks of an
+   earlier one unbinds it, as the GS's memory would lose it. */
+#define BIND_MAX 1024
+typedef struct Bind {
+    uint16_t block, next; /* next: the next of its sBindHash chain + 1 */
+    uint32_t h[2];        /* the texture's handle, the palette's; 0 = none */
+} Bind;
+static Bind sBind[BIND_MAX];
+static uint16_t sBindHash[512], sBindFree; /* (records + 1) */
+static uint32_t sBindAt[16384 / 32];       /* a bit per block: a binding starts there */
+static int sBindInit;
+unsigned gRndBindLive, gRndBindPeak, gRndRebound; /* (gs/gs_pvr.c's report) */
+
+static uint16_t *bind_slot(uint32_t b) {
+    uint16_t *p = &sBindHash[(b * 2654435761u) >> 23];
+    while (*p != 0 && sBind[*p - 1].block != b) {
+        p = &sBind[*p - 1].next;
+    }
+    return p;
+}
+
+static void bind_drop(uint32_t b) {
+    uint16_t *p = bind_slot(b), i = *p;
+    sBindAt[b >> 5] &= ~(1u << (b & 31));
+    if (i == 0) {
+        return;
+    }
+    *p = sBind[i - 1].next;
+    sBind[i - 1].next = sBindFree;
+    sBindFree = i;
+    gRndBindLive--;
+}
+
+/* gs/gs_pvr.c: handle h (kind 0 a texture, 1 a palette) uploaded to `block`, over `blocks` blocks: those lose what
+   was bound at them (0: none do), and `block` holds h. */
+void Port_Bind(int kind, uint32_t block, uint32_t blocks, uint32_t h) {
+    uint32_t b = block & 0x3FFF, e = b + blocks, w;
+    uint16_t *p, i;
+
+    if (!sBindInit) {
+        for (i = 0; i < BIND_MAX; i++) {
+            sBind[i].next = (uint16_t)(i + 2 <= BIND_MAX ? i + 2 : 0);
+        }
+        sBindFree = 1;
+        sBindInit = 1;
+    }
+    while (b < e && b < 16384) {
+        if ((w = sBindAt[b >> 5] >> (b & 31)) == 0) {
+            b = (b | 31) + 1;
+            continue;
+        }
+        b += (uint32_t)__builtin_ctz(w);
+        if (b < e) {
+            bind_drop(b++);
+        }
+    }
+    b = block & 0x3FFF;
+    if (*(p = bind_slot(b)) == 0) {
+        if (h == 0) {
+            return;
+        }
+        if ((i = sBindFree) == 0) {
+            Port_Lost("a texture's binding: no room for another (BIND_MAX)", b, __builtin_return_address(0));
+            return;
+        }
+        sBindFree = sBind[i - 1].next;
+        memset(&sBind[i - 1], 0, sizeof(Bind));
+        sBind[i - 1].block = (uint16_t)b;
+        *p = i;
+        sBindAt[b >> 5] |= 1u << (b & 31);
+        if (++gRndBindLive > gRndBindPeak) {
+            gRndBindPeak = gRndBindLive;
+        }
+    }
+    sBind[*p - 1].h[kind] = h;
+}
+
+static uint32_t bind_at(int kind, uint32_t b) {
+    uint16_t i;
+    b &= 0x3FFF;
+    if (!((sBindAt[b >> 5] >> (b & 31)) & 1) || (i = *bind_slot(b)) == 0) {
+        return 0;
+    }
+    return sBind[i - 1].h[kind];
+}
+
+/* The palette bound at cbp as a texture of format psm reads it: a 4-bit one names the first of the four palettes of
+   16 in the blocks of a 256 (the font's). */
+static uint32_t bind_pal(uint32_t cbp, uint32_t psm) {
+    uint32_t h = bind_at(1, cbp), s;
+    if ((psm == 0x14 || psm == 0x24 || psm == 0x2C) && (s = Port_PalSub(h, 0)) != 0) {
+        h = s;
+    }
+    return h;
+}
+
+/* Palette h is still what is bound at cbp: there, or palette k of 16 of the 256 at cbp - k. */
+static int bind_pal_still(uint32_t h, uint32_t cbp) {
+    uint32_t k;
+    if (bind_at(1, cbp) == h) {
+        return 1;
+    }
+    for (k = 1; k < 4 && k <= cbp; k++) {
+        if (Port_PalSub(bind_at(1, cbp - k), (int)k) == h) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* A record's handles from what TEX0 t0 names: none given, the ones bound at its blocks; a palette given that is no
+   longer the one at its CBP (a texture read through a palette: something was uploaded over it), both of them
+   anew, as the GS would read what is there now. */
+static void bind_resolve(uint32_t *tex, uint32_t *pal, uint64_t t0) {
+    uint32_t tbp = (uint32_t)t0 & 0x3FFF, psm = (uint32_t)(t0 >> 20) & 0x3F, cbp = (uint32_t)(t0 >> 37) & 0x3FFF, h;
+    int indexed = psm == 0x13 || psm == 0x14 || psm == 0x1B || psm == 0x24 || psm == 0x2C;
+
+    if ((*tex & RND_TEX_TARGET) || *tex == RND_TEX_MOVIE) {
+        return;
+    }
+    if (*tex != 0 && (!indexed || (*pal != 0 && bind_pal_still(*pal, cbp)))) {
+        return;
+    }
+    gRndRebound += *tex != 0;
+    h = bind_at(0, tbp);
+    *tex = h != 0 ? h | (*tex & RND_TEX_RGB) : 0;
+    *pal = indexed ? bind_pal(cbp, psm) : 0; /* (also with no texture: a table pass reads the depth page through it,
+                                                gs/gs_draw.c depth_clut) */
+}
+
 int Port_Quad(const RndQuad *q) {
+    RndQuad r;
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    return Gs_RecordPush(q, 0, Port_Addr(gDmaCur));
+    if (q->gsTex0 == 0) {
+        return Gs_RecordPush(q, 0, Port_Addr(gDmaCur));
+    }
+    r = *q;
+    bind_resolve(&r.tex, &r.pal, r.gsTex0);
+    return Gs_RecordPush(&r, 0, Port_Addr(gDmaCur));
 }
 
 int Port_Poly(const RndPoly *p) {
+    RndPoly r;
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
+    if (p->gsTex0 == 0) {
+        return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
+    }
+    r = *p;
+    bind_resolve(&r.tex, &r.pal, r.gsTex0);
+    return Gs_RecordPush(&r, 1, Port_Addr(gDmaCur));
 }
 
 extern int Gs_MarksQueued(void); /* gs/gs_walk.c */

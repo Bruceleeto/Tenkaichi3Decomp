@@ -296,8 +296,6 @@ static void src_begin(uint32_t dbp, uint32_t bw, uint32_t psm, uint32_t tx, uint
         uint32_t first = dbp / 32 + (ty * rowbytes) / 8192, last = dbp / 32 + ((ty + th) * rowbytes + 8191) / 8192;
         for (i = first * 32; i < (last + 1) * 32; i++) {
             src_set(i & 16383, 0);
-            gGsNat[i & 16383] = 0;
-            gGsPal[i & 16383] = 0;
         }
         return;
     }
@@ -323,8 +321,6 @@ static void src_begin(uint32_t dbp, uint32_t bw, uint32_t psm, uint32_t tx, uint
             uint32_t x = bx << 3, y = by << 3;
             uint32_t a = ((dbp + (y >> 5) * 32 * bw) << 6) + ((x >> 6) << 11) + sIn32[y & 31][x & 63];
             src_set((a >> 6) & 16383, n + 1);
-            gGsNat[(a >> 6) & 16383] = 0;
-            gGsPal[(a >> 6) & 16383] = 0;
         }
     }
     s->refs--;
@@ -341,7 +337,6 @@ static void src_own(uint32_t page) {
         }
         memcpy(sOwn[b], (const uint8_t *)sVram + b * 256, 256);
         src_set(b, SRC_OWN);
-        gGsPal[b] = 0;
     }
 }
 

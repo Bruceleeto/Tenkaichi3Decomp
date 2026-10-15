@@ -50,9 +50,7 @@ uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_
 int Gs_SrcRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t *v); /* the same from the upload's source data; 0 = none */
 #endif
 unsigned GsDraw_TexMisses(void); /* textures drawn white since the last call: no tex.pak entry, no GS memory (gs_draw.c) */
-extern uint16_t gGsNat[16384]; /* per block: a texture entry held there as a PVR texture (gs_pvr.c; gs_walk.c); 0 = none */
 extern uint64_t gGsTint[512];  /* per page: the tint of the palettes there this frame (gs_pvr.c Port_ClutTint; gs_walk.c); 0 = none */
-extern uint16_t gGsPal[16384]; /* per block: a palette of tex.pak uploaded there (gs_pvr.c; gs_walk.c); 0 = none */
 /* The 256-byte block of GS memory that holds the pixel (x, y) of that buffer (formats 0x00, 0x13, 0x14). */
 const uint8_t *Gs_BlockPtr(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y);
 extern unsigned gGsFbUploads;

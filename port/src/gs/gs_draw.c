@@ -131,14 +131,11 @@ static uint32_t tex_bucket(uint64_t t0, uint64_t texa, uint32_t gen) {
    of them every frame (lit palettes, the fighters' palettes painted for the see-through pass), which made every
    texture with a palette in the same page count as new and be decoded again, hundreds per frame on some stages. */
 #ifdef BT3_PVR
-GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey); /* gs_pvr.c */
-uint32_t GsPvr_PalKey(uint32_t cbp);
-const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n); /* (a palette of tex.pak, which GS memory does not have) */
+const uint32_t *GsPvr_PalCol(uint32_t pal, uint32_t n); /* gs_pvr.c: the colours of a palette handle (tex.pak's) */
 #else
 int Port_TexNative(void *e, int tbp) { (void)e; (void)tbp; return 0; } /* (gs_pvr.c's, without it: every upload as on the PS2) */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) { (void)pkt; (void)size; (void)blt; (void)block; return 0; }
-static const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) { (void)cbp; (void)n; return NULL; }
-static uint32_t GsPvr_PalKey(uint32_t cbp) { (void)cbp; return 0; }
+static const uint32_t *GsPvr_PalCol(uint32_t pal, uint32_t n) { (void)pal; (void)n; return NULL; }
 int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) { (void)cbp; (void)k; (void)o; (void)alpha; return 0; }
 void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
 uint32_t Port_TexHandle(const void *e) { (void)e; return 0; }
@@ -150,7 +147,6 @@ static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     uint32_t key = cbp << 5 | cpsm << 1 | (count == 256), slot = (key * 2654435761u) >> 22, h = 2166136261u, i;
     uint32_t g0 = gGsPageGen[(cbp / 32) & 511], g1 = gGsPageGen[(cbp / 32 + 1) & 511];
 
-    if ((h = GsPvr_PalKey(cbp)) != 0) { return h; } /* (a palette of tex.pak) */
 #ifndef PORT_GS_REF
     (void)memo; (void)slot; (void)g0; (void)g1; (void)i;
     return 1; /* (no GS memory to hash it from: a palette tex.pak does not have, which gs_pvr.c then does not draw) */
@@ -202,6 +198,7 @@ static void tex_sweep(unsigned keep) {
 typedef struct GsRegs {
     uint64_t prim, texa, tex0, tex1, clamp, scissor, alpha, test, frame, zbuf, fba;
     GsTex tex; /* the texture itself (a handle's: GsGpu_Quad), its size in tex0; 0: the one tex0 names in GS memory */
+    uint32_t pal; /* a record's palette handle (rnd_gs): a table pass's table (depth_clut); 0: the one at tex0's CBP */
 } GsRegs;
 
 static const GsRegs *regs_of(int ctx) {
@@ -210,6 +207,7 @@ static const GsRegs *regs_of(int ctx) {
     r.tex0 = gGs.tex0[ctx]; r.tex1 = gGs.tex1[ctx]; r.clamp = gGs.clamp[ctx]; r.scissor = gGs.scissor[ctx];
     r.alpha = gGs.alpha[ctx]; r.test = gGs.test[ctx]; r.frame = gGs.frame[ctx]; r.zbuf = gGs.zbuf[ctx]; r.fba = gGs.fba[ctx];
     r.tex = 0;
+    r.pal = 0;
     return &r;
 }
 
@@ -222,7 +220,6 @@ static GsTex texture_get(const GsRegs *r) {
     uint32_t cbp = (t0 >> 37) & 0x3FFF, cpsm = (t0 >> 51) & 15;
     uint32_t bits = (uint32_t)Gs_PsmBits(psm), gen = 0, pages, i, x, y, *px;
     Tex *t;
-    const uint32_t *pal;
     uint64_t tex_t0;
     TexPackImage pack;
     uint32_t packMaxAlpha = 255, rw = tw, rh = th;
@@ -231,16 +228,10 @@ static GsTex texture_get(const GsRegs *r) {
     if (tw > 1024) { tw = 1024; }
     if (th > 1024) { th = 1024; }
     rw = tw; rh = th;
-#ifdef BT3_PVR
-    if (sBackend == &sPvrBackend) { /* the game's texture entry, a PVR texture of its own */
-        uint32_t palKey = bits > 8 ? 0 : GsPvr_PalKey(cbp); /* (a palette of tex.pak: nothing read out of GS memory) */
-        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, palKey != 0 || bits > 8 ? palKey : clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
-        if (nat != 0) { return nat; }
-    }
-#endif
 #ifndef PORT_GS_REF
-    /* a texture tex.pak does not have: without GS memory there is nothing to make it from (counted: GsDraw_TexMisses) */
-    (void)texa; (void)gen; (void)pages; (void)i; (void)x; (void)y; (void)px; (void)t; (void)pal; (void)tex_t0; (void)pack;
+    /* a texture no handle names (nothing of tex.pak bound where its TEX0 says: gs_marker.c bind_resolve): without GS
+       memory there is nothing to make it from (counted: GsDraw_TexMisses) */
+    (void)texa; (void)gen; (void)pages; (void)i; (void)x; (void)y; (void)px; (void)t; (void)tex_t0; (void)pack;
     (void)packMaxAlpha; (void)packFormat; (void)replaced; (void)menuText; (void)sharedText; (void)rw; (void)rh;
     sTexNoSource++;
     return gsWhite;
@@ -305,14 +296,11 @@ static GsTex texture_get(const GsRegs *r) {
         }
     }
     px = replaced ? NULL : malloc((size_t)tw * th * 4);
-    pal = bits <= 8 ? GsPvr_Pal(cbp, bits == 8 ? 256 : 16) : NULL; /* (a palette of tex.pak, not in GS memory) */
     for (y = 0; !replaced && y < th; y++) {
         for (x = 0; x < tw; x++) {
             uint32_t c = Gs_VramRead(tbp, tbw, psm, x, y), a;
             if (bits > 8) {
                 c = Gs_Expand(c, psm);
-            } else if (pal != NULL) {
-                c = Gs_Expand(pal[c], cpsm);
             } else if (bits == 8) {
                 c = (c & 0xE7) | ((c & 8) << 1) | ((c & 0x10) >> 1);
                 c = Gs_Expand(Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4), cpsm);
@@ -452,14 +440,15 @@ static GsTex texture_get(const GsRegs *r) {
 #endif
 }
 
-/* A 256-colour table at `cbp` (32-bit, the GS's index order undone) as a 256 x 1 texture; alpha as stored. */
-static GsTex clut_texture(uint32_t cbp) {
+/* A 256-colour table (32-bit, the GS's index order undone) as a 256 x 1 texture; alpha as stored: palette handle
+   palH's, else the one in GS memory at `cbp`. */
+static GsTex clut_texture(uint32_t palH, uint32_t cbp) {
     uint32_t px[256], hash = 2166136261u, i;
     GsTex tex;
     uint32_t *upload;
     int k, old = 0;
 
-    const uint32_t *pal = GsPvr_Pal(cbp, 256);
+    const uint32_t *pal = GsPvr_PalCol(palH, 256);
 
     for (i = 0; i < 256; i++) {
         uint32_t n = (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1);
@@ -653,7 +642,7 @@ static void depth_clut(const GsRegs *r) {
             return; /* the see-through tint, switched off */
         }
     }
-    d.tex = clut_texture((uint32_t)((r->tex0 >> 37) & 0x3FFF));
+    d.tex = clut_texture(r->pal, (uint32_t)((r->tex0 >> 37) & 0x3FFF));
     if (d.tex == 0) {
         return;
     }
@@ -1384,6 +1373,7 @@ static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, 
     gsRndFallback++;
     memset(&r, 0, sizeof(r));
     r.tex0 = t0;
+    r.pal = pal;
     r.prim = 4 | (st->blend != RND_BLEND_NONE ? 1 << 6 : 0) | (st->flags & RND_GOURAUD ? 1 << 3 : 0) | (t0 != 0 ? 1 << 4 | (stq ? 0 : 1 << 8) : 0);
     r.texa = 0x80ull << 32;
     r.tex1 = st->flags & RND_SMOOTH ? 0x60 : 0;
@@ -1403,12 +1393,11 @@ static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, 
     }
 }
 
-/* Records textured this frame by TEX0 alone (no handle: the native one at its block, or GS memory), and records
-   whose handle named nothing drawable (freed, or not as TEX0 reads it; then as by TEX0 alone). */
+/* Records with TEX0 alone (no handle: nothing bound where it says, gs_marker.c bind_resolve; GS memory then), and
+   records whose handle named nothing drawable (freed, or not as TEX0 reads it). */
 unsigned gsRndByTex0, gsRndHandleMiss;
 
-/* The texture a record names: by its handles (read as its TEX0 reads it), or the native one uploaded where TEX0
-   says (the block map of the PVR layer, gGsNat / gGsPal: no GS memory read); its size. 0 = none (rnd_gs then). */
+/* The texture a record names: by its handles (read as its TEX0 reads it); its size. 0 = none (rnd_gs then). */
 static GsTex rnd_tex(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
     GsTex g;
     if (tex != 0 && sBackend->texHandle != NULL) {
@@ -1419,17 +1408,6 @@ static GsTex rnd_tex(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint
     } else if (tex == 0 && t0 != 0) {
         gsRndByTex0++;
     }
-#ifdef BT3_PVR
-    if (t0 != 0 && sBackend == &sPvrBackend) {
-        uint32_t tbp = t0 & 0x3FFF, psm = (t0 >> 20) & 0x3F, cbp = (t0 >> 37) & 0x3FFF, cpsm = (t0 >> 51) & 15;
-        uint32_t bits = (uint32_t)Gs_PsmBits(psm), palKey = bits > 8 ? 0 : GsPvr_PalKey(cbp);
-        *tw = 1u << ((t0 >> 26) & 15);
-        *th = 1u << ((t0 >> 30) & 15);
-        if (bits > 8 || palKey != 0) { /* (a palette in GS memory: rnd_gs) */
-            return GsPvr_Native(tbp, psm, *tw, *th, cbp, cpsm, palKey);
-        }
-    }
-#endif
     return 0;
 }
 

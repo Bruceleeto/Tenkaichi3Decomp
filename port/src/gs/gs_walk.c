@@ -400,24 +400,15 @@ uint32_t gGsPageGen[512];         /* per page: bumped whenever an upload writes 
 uint64_t gGsTint[512];            /* per page: the tint of the palettes there this frame (gs_pvr.c Port_ClutTint), cleared
                                      each frame */
 static uint64_t sTintNext;        /* the tint the next 0x7C sets */
-uint16_t gGsPal[16384];           /* per block: the palette of tex.pak uploaded there (gs_pvr.c's record + 1; 0 = none), until
-                                     something else is uploaded or drawn over it */
-uint16_t gGsNat[16384];           /* per block: the game's texture entry held there as a PVR texture of its own (gs_pvr.c's
-                                     record + 1; 0 = none), until something else is uploaded over it */
 
-/* A marker of gs_pvr.c in place of an upload (0x7D, 0x7E): d = block | record + 1 << 32 | blocks << 48. The blocks
-   the upload would have written hold neither a native texture nor a palette of the pack from then on, but the
-   first holds the record. Their pages changed, as with an upload (what was drawn there is no longer there). */
-static void nat_mark(uint16_t *map, uint64_t d) {
+/* A marker of gs_pvr.c in place of an upload (0x7D, 0x7E): d = block | blocks << 48. The pages the upload would
+   have written changed, as with an upload (what was drawn there is no longer there). (What it bound there the
+   records were given when they were made: gs_marker.c Port_Bind.) */
+static void nat_mark(uint64_t d) {
     uint32_t b = (uint32_t)d & 0x3FFF, n = (uint32_t)(d >> 48), i;
-    for (i = 0; i < n; i++) {
-        gGsNat[(b + i) & 16383] = 0;
-        gGsPal[(b + i) & 16383] = 0;
-    }
     for (i = b / 32; i <= (b + (n ? n : 1) - 1) / 32; i++) {
         gGsPageGen[i & 511]++;
     }
-    map[b] = (uint16_t)(d >> 32);
 }
 
 void Gs_Marker(uint32_t addr, uint64_t d) {
@@ -425,9 +416,8 @@ void Gs_Marker(uint32_t addr, uint64_t d) {
     case 0x7F: if (sGpu) { GsGpu_Native((int)d); } break; /* a native effect goes here (gs_marker.c) */
     case 0x7B: sTintNext = d; break; /* (a tint of the palettes of the two pages from page d: gs_pvr.c Port_ClutTint) */
     case 0x7C: gGsTint[d & 511] = gGsTint[(d + 1) & 511] = sTintNext; break;
-    case 0x7D: nat_mark(gGsPal, d); break; /* a palette of tex.pak in place of its upload: gs_pvr.c Port_PalNative */
-    case 0x7E: nat_mark(gGsNat, d); break; /* the texture entry uploaded to block d is a PVR texture of its own
-                                              (gs_pvr.c's record d >> 32), sent instead of its pixels */
+    case 0x7D: nat_mark(d); break; /* a palette of tex.pak in place of its upload: gs_pvr.c Port_PalNative */
+    case 0x7E: nat_mark(d); break; /* a texture entry as a PVR texture of its own in place of its pixels: Port_TexNative */
     default: break;
     }
 }
