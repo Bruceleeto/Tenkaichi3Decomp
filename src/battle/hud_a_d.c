@@ -29,6 +29,13 @@ void HudGauge_GsBeginMask(void) {
         0x3000F, 0, GS_TEST_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x34000);
+    Rnd_GsReg(GS_FRAME_2, ((u64)(u32)(0xFFFFFF) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_FBA_2, 1);
+    Rnd_GsReg(GS_TEST_2, 0x3000F);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_IF_UNMARKED);                /* TEST_1 0x34000 */
@@ -49,6 +56,13 @@ void HudGauge_GsEndMask(void) {
         0x30000, 0, GS_TEST_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x30000);
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_TEST_2, 0x30000);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
@@ -72,6 +86,15 @@ void HudGauge_GsBeginMask2(void) {
         1, 0, GS_FBA_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_2, 0x48);
+    Rnd_GsReg(GS_TEST_2, 0x3C000);
+    Rnd_GsReg(GS_TEST_1, 0x307FB);
+    Rnd_GsReg(GS_FRAME_1, ((u64)(u32)(0xFFFFFF) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_FBA_1, 1);
+    Rnd_GsReg(GS_FBA_2, 1);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetBlend(1, RND_BLEND_ADD, 0);                                                     /* ALPHA_2 0x48 */
@@ -96,6 +119,15 @@ void HudGauge_GsEndMask2(void) {
         0x30000, 0, GS_TEST_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    Rnd_GsReg(GS_FRAME_1, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_TEST_2, 0x30000);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);

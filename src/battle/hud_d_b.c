@@ -66,6 +66,12 @@ void HudNotice_GsBeginAdd(void) {
         0x58, 0, GS_ALPHA_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x3301B);
+    Rnd_GsReg(GS_FRAME_2, ((u64)(u32)(0xFF000000) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_ALPHA_2, 0x58);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_GEQUAL, 1, RND_AFAIL_RGB, RND_MASK_NONE); /* TEST_1 0x3301B */
@@ -84,6 +90,12 @@ void HudNotice_GsEndAdd(void) {
         0x44, 0, GS_ALPHA_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x30000);
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
@@ -103,6 +115,13 @@ void HudNotice_GsBeginAddAlpha(void) {
         0x58, 0, GS_ALPHA_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x3301B);
+    Rnd_GsReg(GS_FRAME_1, ((u64)(u32)(0xFFFFFF) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_FRAME_2, ((u64)(u32)(0xFF000000) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_ALPHA_2, 0x58);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_GEQUAL, 1, RND_AFAIL_RGB, RND_MASK_NONE); /* TEST_1 0x3301B */
@@ -123,6 +142,13 @@ void HudNotice_GsEndAddAlpha(void) {
         0x44, 0, GS_ALPHA_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, 0x30000);
+    Rnd_GsReg(GS_FRAME_1, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
@@ -144,6 +170,13 @@ void HudNotice_GsBeginMask(void) {
         GFX_FRAME_REG(), 0, GS_FRAME_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_FBA_1, 1);
+    Rnd_GsReg(GS_FRAME_1, ((u64)(u32)(0xFFFFFF) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_TEST_2, 0x3C000);
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetMark(0, 1);
@@ -164,6 +197,13 @@ void HudNotice_GsEndMask(void) {
         GFX_FRAME_REG(), 0, GS_FRAME_2, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FRAME_1, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_TEST_2, 0x30000);
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     Rnd_SetMark(0, 0);

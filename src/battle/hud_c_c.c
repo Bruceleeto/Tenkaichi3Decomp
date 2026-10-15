@@ -498,6 +498,29 @@ void HudGfx_SetEnv(void) {
         1, 0, GS_PRMODECONT, 0,
     };
 
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, (u32)(HUDC_FRAME_WORD()));
+    Rnd_GsReg(GS_FRAME_2, (u32)(HUDC_FRAME_WORD()));
+    Rnd_GsReg(GS_ZBUF_1, ((u64)(u32)(1) << 32 | (u32)(0x310000E0)));
+    Rnd_GsReg(GS_ZBUF_2, ((u64)(u32)(1) << 32 | (u32)(0x310000E0)));
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_XYOFFSET_2, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_SCISSOR_1, ((u64)(u32)(0x01BF0000) << 32 | (u32)(0x01FF0000)));
+    Rnd_GsReg(GS_SCISSOR_2, ((u64)(u32)(0x01BF0000) << 32 | (u32)(0x01FF0000)));
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    Rnd_GsReg(GS_TEST_1, 0x30000);
+    Rnd_GsReg(GS_TEST_2, 0x30000);
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(0x15, 0x60);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_CLAMP_2, 0);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_PRMODECONT, 1);
+    if (Port_ListRead()) /* (the packet only for the PS2 reference) */
+#endif
     Dma_AddData(pkt, sizeof(pkt));
 #ifdef PORT
     {   /* both contexts: the frame, depth not written, the whole picture, blended normally, no test, filtered,
