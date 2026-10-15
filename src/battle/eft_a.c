@@ -1859,6 +1859,9 @@ void EftGfx_DrawSprite(EftVec *pos, EftVec *color, f32 w, f32 h, f32 u0, f32 v0,
         u32 rgba;
         gOtCur = (u32 *)p;
         ctx = layer >= 2;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
         rgba = Ot_RecRgba(color->x, color->y, color->z, color->w);
         Ot_RecTex0(p, tex0);
