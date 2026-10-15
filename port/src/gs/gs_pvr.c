@@ -1825,7 +1825,8 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
     if (idx == 0) { sNatMiss[0]++; return 0; }
     n = &sNat[idx - 1];
     if (n->e == 0 || n->none) { sNatMiss[1]++; return 0; }
-    pal = pal_at(cbp, n->bits == 8 ? 256 : 16);
+    pal = pal_at(cbp, psm == 0x13 ? 256 : 16); /* (as TEX0 reads it: a direct one read as 8-bit indices, the light,
+                                                   takes a palette of 256) */
     return nat_resolve(n, tbp, psm, tw, th, pal, cbp, cpsm, palKey);
 }
 
