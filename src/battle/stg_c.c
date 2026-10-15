@@ -10,6 +10,9 @@
 #include "sys/math3d.h"
 #include "sys/ramp.h"
 #include "sys/randf.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Battle screen effects, 0x245F58..0x248F28. See include/battle/stg_c.h for the overview.
@@ -985,6 +988,150 @@ static inline void StgBlur_PutVertex(StgBlurDraw *d, u32 rgba, s32 x, s32 y, s32
     d->p++;
 }
 
+#ifdef PORT
+/* One ring of StgBlur_Draw as records: its strip of ten corners (x, y, u, v, colour; view pixels, texels of the
+   256 x 256 work buffer as a texture) as four polygons of two triangles. */
+static void StgBlur_PortRing(const RndState *st, u32 tex, s32 v[10][5], s32 xOffset) {
+    RndPoly r;
+    s32 k;
+    s32 j;
+
+    memset(&r, 0, sizeof(r));
+    r.n = 4;
+    r.tex = tex;
+    r.st = *st;
+    for (k = 0; k + 3 < 10; k += 2) {
+        for (j = 0; j < 4; j++) {
+            r.v[j].x = (f32)(v[k + j][0] + xOffset);
+            r.v[j].y = (f32)v[k + j][1];
+            r.v[j].s = ((f32)v[k + j][2] + 0.5f) / 256.0f;
+            r.v[j].t = ((f32)v[k + j][3] + 0.5f) / 256.0f;
+            r.v[j].q = 1.0f;
+            r.v[j].rgba = (u32)v[k + j][4];
+        }
+        Port_Poly(&r);
+    }
+}
+
+/* StgBlur_Draw as records, the same pages and order: the view's part of the frame halved into 0x150; each pass the
+   work buffer copied into the other (0x150 <-> 0x16C, half a texel off), and drawn over that copy again in colour3,
+   pulled in and shifted; the last one drawn over the view in the two rings of strips, blended by their colours'
+   alpha. Then the state its packets leave. */
+static void StgBlur_PortDraw(StgBlur *blur, Vec4 *c, s32 width, s32 half, s32 xOffset, s32 x1, s32 u1, s32 srcH,
+                             s32 h) {
+    static const u32 fbp[2] = { 0x150, 0x16C };
+    RndState st;
+    u32 last = 0x150;
+    s32 i;
+    f32 f;
+    GsQword *q;
+    u64 *p;
+
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = half - 1;
+    st.scissor[3] = h - 1;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)half, (f32)h,
+             xOffset << 4, 0, u1 << 4, srcH << 4, 0x80808080);
+    f = 1.0f;
+    for (i = 0; i < blur->passes; i++, f += f) {
+        u32 src = Rnd_TargetTex(fbp[i & 1], 0x100, 0x100, 0) | RND_TEX_RGB;
+        s32 grow = f * blur->scale;
+        s32 dx = (f32)(s32)f * blur->shiftX * c->x;
+        s32 dy = f * blur->shiftY * c->y;
+        s32 nx = 0;
+        s32 ny = 0;
+
+        if (dx < 0) {
+            nx = -dx;
+            dx = 0;
+        }
+        if (dy < 0) {
+            ny = -dy;
+            dy = 0;
+        }
+        st.fbp = fbp[(i & 1) ? 0 : 1];
+        last = st.fbp;
+        st.blend = RND_BLEND_NONE;
+        Rnd_Blit(&st, src, 0.0f, 0.0f, (f32)half, (f32)h, 8, 8, (half << 4) + 8, (h << 4) + 8, 0x80808080);
+        st.blend = RND_BLEND_NORMAL;
+        Rnd_Blit(&st, src, 0.0f, 0.0f, (f32)half, 224.0f, ((grow + dx) << 4) + 8, ((grow + dy) << 4) + 8,
+                 ((half - (grow + nx)) << 4) + 8, ((h - (grow + ny)) << 4) + 8, blur->color3);
+    }
+    Rnd_StateInit(&st, GFX_FRAME_FBP());
+    st.flags = RND_SMOOTH | RND_GOURAUD;
+    st.scissor[0] = xOffset;
+    st.scissor[2] = x1 - 1;
+    st.scissor[3] = srcH - 1;
+    {
+        u32 tex = Rnd_TargetTex(last, 0x100, 0x100, 0) | RND_TEX_RGB;
+        u32 c0 = (u32)blur->color01;
+        u32 c1 = ((u32 *)&blur->color01)[1];
+        s32 cx = (c->x * 0.5f + 0.5f) * (f32)width;
+        s32 cy = (c->y * 0.5f + 0.5f) * (f32)srcH;
+        s32 hx = cx / 2;
+        s32 hy = cy / 2;
+        s32 rx = width - cx;
+        s32 ry = srcH - cy;
+        s32 ru = half - hx;
+        s32 rv = h - hy;
+        s32 out[4][4];
+        s32 in[4][4];
+        s32 v[10][5];
+        s32 k;
+
+        out[0][0] = 0;     out[0][1] = 0;    out[0][2] = 0;    out[0][3] = 0;
+        out[1][0] = width; out[1][1] = 0;    out[1][2] = half; out[1][3] = 0;
+        out[2][0] = width; out[2][1] = srcH; out[2][2] = half; out[2][3] = h;
+        out[3][0] = 0;     out[3][1] = srcH; out[3][2] = 0;    out[3][3] = h;
+        in[0][0] = hx;          in[0][1] = hy;          in[0][2] = hx / 2;      in[0][3] = hy / 2;
+        in[1][0] = cx + rx / 2; in[1][1] = hy;          in[1][2] = hx + ru / 2; in[1][3] = hy / 2;
+        in[2][0] = cx + rx / 2; in[2][1] = cy + ry / 2; in[2][2] = hx + ru / 2; in[2][3] = hy + rv / 2;
+        in[3][0] = hx;          in[3][1] = cy + ry / 2; in[3][2] = hx / 2;      in[3][3] = hy + rv / 2;
+        for (i = 0; i < 5; i++) { /* centre -> half way to the corners */
+            v[i * 2][0] = cx;
+            v[i * 2][1] = cy;
+            v[i * 2][2] = hx;
+            v[i * 2][3] = hy;
+            v[i * 2][4] = c0;
+            for (k = 0; k < 4; k++) {
+                v[i * 2 + 1][k] = in[i % 4][k];
+            }
+            v[i * 2 + 1][4] = c1;
+        }
+        StgBlur_PortRing(&st, tex, v, xOffset);
+        for (i = 0; i < 5; i++) { /* half way -> the corners */
+            for (k = 0; k < 4; k++) {
+                v[i * 2][k] = in[i % 4][k];
+                v[i * 2 + 1][k] = out[i % 4][k];
+            }
+            v[i * 2][4] = c1;
+            v[i * 2 + 1][4] = blur->color2;
+        }
+        StgBlur_PortRing(&st, tex, v, xOffset);
+    }
+    q = (GsQword *)Dma_BeginDirect();
+    Gfx_PutDefaultEnv(&q);
+    p = (u64 *)q;
+    p[0] = GIF_TAG(6, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = 0x30000;
+    p[3] = GS_TEST_1;
+    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[5] = GS_ZBUF_1;
+    p[6] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
+    p[7] = GS_FRAME_1;
+    p[8] = GS_SET_SCISSOR(xOffset, x1 - 1, 0, srcH - 1);
+    p[9] = GS_SCISSOR_1;
+    p[10] = (u64)((last == 0x150 ? 0x2A00 : 0x2D80) | 0x20010000) | ((u64)8 << 30);
+    p[11] = GS_TEX0_1;
+    p[12] = GS_SET_CLAMP(2, 2, 0, half - 1, 0, h - 1);
+    p[13] = GS_CLAMP_1;
+    Dma_EndDirect(p + 14);
+}
+#endif
+
 /*
  * Radial blur of one view. Nothing is drawn unless one of the three ring colours (centre, middle, edge)
  * has a non-zero alpha.
@@ -1037,6 +1184,11 @@ void StgBlur_Draw(s32 split, s32 view, Mtx44 *viewMtx) {
     if ((blur->color01 & 0xFF000000FF000000) == 0 && (blur->color2 & 0xFF000000) == 0) {
         return;
     }
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: nothing) */
+        return;
+    }
+#endif
     if (split) {
         width = 0x100;
         half = 0x80;
@@ -1053,6 +1205,12 @@ void StgBlur_Draw(s32 split, s32 view, Mtx44 *viewMtx) {
         Mtx_ClearTrans(&m);
         Mtx_MulVec4(&c, &m, &blur->center);
     }
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        StgBlur_PortDraw(blur, &c, width, half, xOffset, x1, u1, srcH, h);
+        return;
+    }
+#endif
     StgBlur_BeginDraw(&d, xOffset, x1, width, srcH, half, h);
     {
         u32 tbp[2] = { 0x2A00, 0x2D80 }; /* the two work buffers as textures ... */
