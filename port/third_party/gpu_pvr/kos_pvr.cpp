@@ -45,10 +45,11 @@
 #include "libpvr/pvr.h"
 #include "libpvr/vram.h"
 #include "kos_pvr.h"
+#include "kos/arch/arch.h" /* GPU_PVR_VRAM_MB */
 
 using R = pvr::RegisterName;
 
-#define VRAM_SIZE      0x1000000u /* 16 MB, twice the Dreamcast's: TEMPORARY, while the frame buffers rendered to textures do not fit in 8 (back to 0x800000 once they do) */
+#define VRAM_SIZE      ((uint32_t)GPU_PVR_VRAM_MB << 20) /* kos/arch/arch.h: 8 or 16 MB */
 #define VRAM_ALIGN     0x1000000u
 #define SCREEN_W       640
 #define SCREEN_H       480

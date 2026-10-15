@@ -977,7 +977,7 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
 
 /* BT3_PVR_NO_RTT=1: nothing rendered to a texture (the draws into the other frame buffers and those that sample
    one left out). The Dreamcast's default while its 8 MB of PVR memory has no room for them (gpu_pvr has 16 for
-   now, kos_pvr.cpp VRAM_SIZE). */
+   now: gpu_pvr/kos/arch/arch.h GPU_PVR_VRAM_MB). */
 static int no_rtt(void) {
 #ifdef __DREAMCAST__
     return 1;
