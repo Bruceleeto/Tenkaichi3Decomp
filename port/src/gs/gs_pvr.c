@@ -1182,8 +1182,9 @@ static void frame_end(void) {
 /* ---- the game's texture entries as PVR textures of their own ------------------------------------------------
    A texture entry (TexEntry, include/sys/gfxm_b_b.h) the game uploads becomes a PVR texture the first time, from
    the converted ones (texpak.h), and stays one until the game frees its file: the upload itself is left out
-   (Port_TexNative), nothing is decoded or sent again. Its record's number is kept in the entry's spare bytes
-   (+0x28), and in the blocks of GS memory it was uploaded to (gGsNat), where the draws still look for it.
+   (Port_TexNative), nothing is decoded or sent again. Its record is found by the entry's address (sNatHash; the
+   entry itself is not written: the HUD's keeps a mark at +0x28), and by the blocks of GS memory it was uploaded
+   to (gGsNat), where the draws still look for it.
    The palette stays the game's (it changes them): read from GS memory when it changes, into the codebook of
    an 8-bit one (VQ, the palette as the codebook) or into a bank of palette RAM for a 4-bit one (PAL4). */
 #define MAX_NAT 4096
@@ -1194,8 +1195,14 @@ typedef struct NatTex {
     uint32_t palKey;   /* the palette the codebook or bank holds (clut hash), with palOk */
     int palOk, bank;   /* bank: a 4-bit one's, -1 none */
     int none;          /* not among the converted ones: uploaded as before */
+    uint16_t next;     /* the next record of its sNatHash chain + 1 */
+    uint16_t var;      /* 8-bit: the next copy for another palette + 1 (a record of its own, not in sNatHash) */
+    int isVar, pak;    /* a copy; the converted one's number in the pack */
+    unsigned palFrame; /* 8-bit: the last frame drawn with the codebook */
 } NatTex;
 static NatTex sNat[MAX_NAT];
+static uint16_t sNatHash[MAX_NAT]; /* by the entry's address (its bits from 6: entries are 0x40 bytes): record + 1 */
+#define NAT_HASH(addr) (((addr) >> 6) * 2654435761u >> 20 & (MAX_NAT - 1))
 /* the palette RAM: 64 banks of 16 colours, by palette (clut hash), each free once no frame used it for two
    (the chip may still be drawing the frame before) */
 static struct { uint32_t key; unsigned last; int used; } sBank[64];
@@ -1237,21 +1244,23 @@ static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key)
 
 /* The record of entry e (made the first time: its PVR memory filled from the converted one). */
 static NatTex *nat_get(uint8_t *e) {
-    uint32_t idx = rd32(e + 0x28), addr = Port_Addr(e), i, w, h, bits, psm, tw, th, bytes;
+    uint32_t addr = Port_Addr(e), i, w, h, bits, psm, tw, th, bytes;
     uint64_t t0, key;
     NatTex *n;
     int k;
     uint8_t *data;
 
-    if (idx != 0 && idx <= MAX_NAT && sNat[idx - 1].e == addr) { return &sNat[idx - 1]; }
+    for (i = sNatHash[NAT_HASH(addr)]; i != 0; i = sNat[i - 1].next) {
+        if (sNat[i - 1].e == addr) { return &sNat[i - 1]; }
+    }
     for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
     if (i == MAX_NAT) { sNatWhy[4]++; return NULL; }
     n = &sNat[i];
     memset(n, 0, sizeof(*n));
     n->e = addr;
     n->bank = -1;
-    idx = i + 1;
-    memcpy(e + 0x28, &idx, 4);
+    n->next = sNatHash[NAT_HASH(addr)];
+    sNatHash[NAT_HASH(addr)] = (uint16_t)(i + 1);
     memcpy(&t0, e + 0x30, 8);
     psm = (t0 >> 20) & 63;
     tw = 1u << ((t0 >> 26) & 15);
@@ -1274,6 +1283,7 @@ static NatTex *nat_get(uint8_t *e) {
     pvr_txr_load(data, (uint8_t *)n->t.mem + (bits == 4 ? 0 : 2048), w * h * bits / 8);
     free(data);
     n->none = 0;
+    n->pak = k;
     n->psm = psm; n->tw = tw; n->th = th; n->bits = bits;
     n->t.w = w; n->t.h = h; n->t.format = GS_TEXFMT_RGBA8; n->t.bytes = bytes; n->t.base = n->t.mem;
     n->t.pw = bits == 4 ? w : w * 2;
@@ -1303,6 +1313,7 @@ int Port_TexNative(void *e, int tbp) {
 /* The game's heap block [lo, hi) is freed: the entries in it are no longer textures. */
 void Port_TexFreed(uint32_t lo, uint32_t hi) {
     uint32_t i, b;
+    uint16_t *p;
     for (i = 0; i < MAX_NAT; i++) {
         NatTex *n = &sNat[i];
         if (n->e == 0 || n->e < lo || n->e >= hi) { continue; }
@@ -1310,8 +1321,39 @@ void Port_TexFreed(uint32_t lo, uint32_t hi) {
         for (b = 0; b < 16384; b++) {
             if (gGsNat[b] == i + 1) { gGsNat[b] = 0; }
         }
+        if (!n->isVar) {
+            for (p = &sNatHash[NAT_HASH(n->e)]; *p != i + 1; p = &sNat[*p - 1].next) {}
+            *p = n->next;
+        }
         n->e = 0;
     }
+}
+
+/* Another copy of 8-bit n, for another palette (a frame can draw it with two, and the chip may still be drawing
+   the frame before with the codebook). NULL = no room. */
+static NatTex *nat_copy(NatTex *n) {
+    uint32_t i;
+    NatTex *v;
+    uint8_t *data;
+    for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
+    if (i == MAX_NAT || (data = TexPak_Read(n->pak)) == NULL) { return NULL; }
+    v = &sNat[i];
+    *v = *n;
+    v->palOk = 0;
+    v->isVar = 1;
+    v->t.mem = v->t.base = pvr_mem_malloc(n->t.bytes);
+    if (v->t.mem == NULL) {
+        free(data);
+        v->e = 0;
+        return NULL;
+    }
+    pvr_txr_load(data, (uint8_t *)v->t.mem + 2048, n->t.bytes - 2048);
+    free(data);
+    n->var = (uint16_t)(i + 1);
+    sTexBytes += v->t.bytes;
+    sNatLive++;
+    if (sTexBytes > sTexPeak) { sTexPeak = sTexBytes; }
+    return v;
 }
 
 /* A draw samples the texture at block tbp (gs_draw.c): the native one there, if it is the one asked for, with the
@@ -1329,13 +1371,23 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
         sBank[n->bank].last = gGsFrame;
         return (GsTex)&n->t;
     }
-    if (n->bits == 8 && n->palOk && n->palKey == palKey) { return (GsTex)&n->t; }
+    if (n->bits == 8) { /* the copy with these colours, or one no frame has drawn for two, or a new one */
+        NatTex *v, *w = NULL;
+        for (v = n;; v = &sNat[v->var - 1]) {
+            if (v->palOk && v->palKey == palKey) { v->palFrame = gGsFrame; return (GsTex)&v->t; }
+            if (w == NULL && (!v->palOk || v->palFrame + 2 <= gGsFrame)) { w = v; }
+            if (v->var == 0) { break; }
+        }
+        if (w == NULL && (w = nat_copy(n)) == NULL) { w = n; sNatSteal++; }
+        n = w;
+    }
     for (i = 0; i < (n->bits == 8 ? 256u : 16u); i++) { /* the palette, in the order the indices count (as gs_draw.c) */
         uint32_t c = n->bits == 8 ? (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1) : i;
         col[i] = argb4444(Gs_Expand(n->bits == 8 ? Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4) : Gs_VramRead(cbp, 1, cpsm, c & 7, c >> 3), cpsm));
     }
     n->palKey = palKey;
     n->palOk = 1;
+    n->palFrame = gGsFrame;
     if (n->bits == 8) { /* the codebook: each entry four texels of one colour */
         uint16_t book[1024];
         for (i = 0; i < 256; i++) { book[i * 4] = book[i * 4 + 1] = book[i * 4 + 2] = book[i * 4 + 3] = col[i]; }

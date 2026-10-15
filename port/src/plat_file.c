@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "port_addr.h"
 #include "plat_stages.h"
 #include "plat_songs.h"
 
@@ -30,6 +31,7 @@ typedef struct PortFile {
 extern long Port_FileSize(const char *rel); /* plat_fcache.c */
 extern void Port_TestSlow(int what, int amount); /* gs/net.c: testing, a machine that is slow at this */
 extern size_t Port_FileReadAt(const char *rel, long offset, void *buf, size_t bytes);
+extern void Port_TexFreed(uint32_t lo, uint32_t hi); /* gs/gs_pvr.c: texture entries that are PVR textures */
 
 static char sPartDir[8][64];
 char gPortMoviePath[512]; /* host path of the movie file opened last */
@@ -208,6 +210,7 @@ int ADXF_ReadNw(void *h, int nsct, void *buf) {
     }
     got = Port_FileReadAt(f->rel, (long)f->posSct * SECTOR, buf, (size_t)nsct * SECTOR);
     memset((uint8_t *)buf + got, 0, (size_t)nsct * SECTOR - got);
+    Port_TexFreed(Port_Addr(buf), Port_Addr(buf) + (uint32_t)nsct * SECTOR); /* (texture entries read over) */
     f->posSct += nsct;
     f->stat = STAT_READEND;
     return nsct;

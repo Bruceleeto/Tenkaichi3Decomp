@@ -30,6 +30,12 @@ void *Bpe_Decode(void *src, void *dst, s32 *rawSize) {
     } else {
         buf = Heap_Alloc(size, 0x20, 0, HEAP_ANY);
     }
+#ifdef PORT
+    {
+        extern void Port_TexFreed(u32 lo, u32 hi); /* port/src/gs/gs_pvr.c: texture entries written over */
+        Port_TexFreed((u32)buf, (u32)buf + size);
+    }
+#endif
     out = buf;
     in = src;
     while (in - (u8 *)src != packSize) {

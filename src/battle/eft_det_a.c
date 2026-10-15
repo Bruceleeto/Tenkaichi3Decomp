@@ -29,6 +29,11 @@ extern f32 atan2f(f32 y, f32 x);
 extern void Res_RelocateOffsets(void *out, void *base, void *hdr);
 extern void Dma_AddData(void *src, s32 size);
 extern void Dma_AddRef(void *addr, s32 size);
+#ifdef PORT
+int Port_TexNative(void *e, s32 tbp); /* port/src/gs/gs_pvr.c (sys/gfxm_b_b.h) */
+#else
+#define Port_TexNative(e, tbp) 0
+#endif
 /* Empty (a stripped assert: count <= max). It is defined right before the loaders in the original file (0x1AE140),
    so the compiler knew it touches no memory and kept the pack header and the count in registers across the call;
    the attribute stands in for that (the function is in eft_ae.c, which declares it the same way; the two files were
@@ -244,7 +249,7 @@ void EftVram_Upload(EftVramTex *tex, s32 imageBlock, s32 clutBlock) {
     };
     EftVramImage *img = tex->img;
 
-    if (imageBlock >= 0 && img->imageSize != 0) {
+    if (imageBlock >= 0 && img->imageSize != 0 && !Port_TexNative(img, imageBlock)) {
         pkt[8] = EFT_VRAM_BITBLTBUF(imageBlock, img->imageWidth);
         pkt[9] = EFT_VRAM_BITBLTBUF(imageBlock, img->imageWidth) >> 32;
         Dma_AddData(pkt, sizeof(pkt));

@@ -2,6 +2,7 @@
 #include "battle/hud_c.h"
 #include "sys/dma.h"
 #include "sys/gfx.h"
+#include "sys/gfxm_b_b.h"
 #include "sys/sprite.h"
 
 /*
@@ -171,10 +172,12 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
         if (t->imageSize != 0) {
             s32 block = t->imageBlock + tbp;
 
-            pkt[8] = HUDC_BITBLTBUF(block, imageWidth);
-            pkt[9] = HUDC_BITBLTBUF(block, imageWidth) >> 32;
-            Dma_AddData(pkt, sizeof(pkt));
-            Dma_AddRef(t->image, t->imageSize);
+            if (!Port_TexNative(t, block)) {
+                pkt[8] = HUDC_BITBLTBUF(block, imageWidth);
+                pkt[9] = HUDC_BITBLTBUF(block, imageWidth) >> 32;
+                Dma_AddData(pkt, sizeof(pkt));
+                Dma_AddRef(t->image, t->imageSize);
+            }
         }
         if (t->clutSize != 0) {
             s32 block = t->clutBlock + cbp;
