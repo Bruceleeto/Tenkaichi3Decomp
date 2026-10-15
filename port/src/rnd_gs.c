@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include "../../include/port/rnd.h"
 
@@ -139,6 +140,7 @@ static int sU, sVv;
 /* A vertex (kick: one that draws): the polygon it completes to the queue; 0 = one that cannot be drawn. */
 static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
     int type = (int)(sPrim & 7), c = (int)(sPrim >> 9) & 1, fst = (int)(sPrim >> 8) & 1, tme = (int)(sPrim >> 4) & 1;
+    int need = type == 6 || type <= 2 ? 2 : 3; /* (the vertices a primitive takes) */
     uint64_t t0 = sTex0[c];
     RndVtx v;
     RndPoly p;
@@ -146,7 +148,7 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
     if (mode == FOLLOW) {
         return 1;
     }
-    if (type < 3 || type > 6 || ((sPrim >> 5) & 1)) { /* (points, lines; fog) */
+    if (type == 0 || type > 6 || ((sPrim >> 5) & 1)) { /* (points; fog) */
         return 0;
     }
     v.x = (float)((int32_t)(x & 0xFFFF) - (int32_t)(sXyOff[c] & 0xFFFF)) / 16.0f; /* (sixteenths of a pixel, from XYOFFSET) */
@@ -162,7 +164,7 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
         v.t = sT;
         v.q = sQ;
     }
-    if (sVn == (type == 6 ? 2 : 3)) { /* the queue full: a fan keeps its first, the others their last two */
+    if (sVn == need) { /* the queue full: a fan keeps its first, the others their last two (a line strip its last) */
         if (type == 5) {
             sV[1] = sV[2];
         } else {
@@ -172,7 +174,7 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
         sVn--;
     }
     sV[sVn++] = v;
-    if (!kick || sVn < (type == 6 ? 2 : 3)) {
+    if (!kick || sVn < need) {
         return 1;
     }
     if (gRndCtxBad[c] != 0) {
@@ -198,6 +200,23 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
         }
         p.n = 4;
         p.st.flags &= ~RND_GOURAUD;
+    } else if (type <= 2) { /* a line: a quad one pixel wide along it, each end's colour at its two corners */
+        float dx = sV[1].x - sV[0].x, dy = sV[1].y - sV[0].y, len = sqrtf(dx * dx + dy * dy);
+        int i;
+        if (type == 1) {
+            sVn = 0;
+        }
+        if (len == 0.0f) {
+            return 1;
+        }
+        dx *= 0.5f / len;
+        dy *= 0.5f / len;
+        for (i = 0; i < 4; i++) {
+            p.v[i] = sV[i & 1];
+            p.v[i].x += i & 2 ? dy : -dy;
+            p.v[i].y += i & 2 ? -dx : dx;
+        }
+        p.n = 4;
     } else {
         memcpy(p.v, sV, sizeof(sV));
         p.n = 3;
