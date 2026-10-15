@@ -33,28 +33,17 @@ s32 Font_IsInClip(CbFontClip *clip, s32 x0, s32 y0, s32 x1, s32 y1) {
 void Font_BeginPacket(CbFontOut *out) {
     out->p = Dma_BeginDirect();
     Gfx_PutDefaultEnv(out);
-    out->p[0] = 0x1000000000008005;
-    out->p[1] = 0xE;
+    PORT_PKT(out->p, 0, 0x1000000000008005, 0xE);
     out->p += 2;
-    out->p[0] = 0;
-    out->p[1] = 8;
-    PORT_AD(out->p, 0);
+    PORT_REG(out->p, 0, 8, 0);
     out->p += 2;
-    out->p[0] = 0;
-    out->p[1] = 0x47;
-    PORT_AD(out->p, 0);
+    PORT_REG(out->p, 0, 0x47, 0);
     out->p += 2;
-    out->p[0] = 0x0000008000008080;
-    out->p[1] = 0x3B;
-    PORT_AD(out->p, 0);
+    PORT_REG(out->p, 0, 0x3B, 0x0000008000008080);
     out->p += 2;
-    out->p[0] = 0x00000001310000E0;
-    out->p[1] = 0x4E;
-    PORT_AD(out->p, 0);
+    PORT_REG(out->p, 0, 0x4E, 0x00000001310000E0);
     out->p += 2;
-    out->p[0] = 0x156;
-    out->p[1] = 0;
-    PORT_AD(out->p, 0);
+    PORT_REG(out->p, 0, 0, 0x156);
     out->p += 2;
 #ifdef PORT
     Rnd_SetFlag(0, RND_REPEAT, 1);                                      /* CLAMP_1 0 */
