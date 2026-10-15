@@ -513,8 +513,29 @@ taught: constants as variables assigned in front of each use (not loop invariant
 converted to float through a spilled variable, and pointer variables assigned twice (unknown alias base). */
 /* Fills and queues one lightning sprite: a triangle strip between two projected corners, white scaled by the
    layer brightness, alpha 128 * life / lifeMax, in the second chain of the depth slot of its z. */
+#ifdef PORT
+/* The same sprite as a record: the flat strip's PRIM, TEX0, colour (q 1) and corners, in the same chain. */
+static void EftStorm_RecSprite(EftStormBolt *bolt, EftScrXyz *a, EftScrXyz *b, u64 tex0, f32 col) {
+    u32 rgba = (u8)(u32)col | (u8)(u32)col << 8 | (u8)(u32)col << 16 | (u32)(u8)((bolt->life << 7) / bolt->lifeMax) << 24;
+    void *r = Ot_NewRec(0x54, 4);
+
+    Ot_RecTex0(r, tex0);
+    Ot_RecVtx(r, 0, a->x, a->y, a->z, 0.0f, 0.0f, 1.0f, rgba);
+    Ot_RecVtx(r, 1, b->x, a->y, a->z, 1.0f, 0.0f, 1.0f, rgba);
+    Ot_RecVtx(r, 2, a->x, b->y, a->z, 0.0f, 1.0f, 1.0f, rgba);
+    Ot_RecVtx(r, 3, b->x, b->y, a->z, 1.0f, 1.0f, 1.0f, rgba);
+    EftOt_Add(r, a->z >> 8, 1);
+}
+#define EFT_STORM_REC(bolt, a, b, texv, col) \
+    if (Port_TakesRecords()) { \
+        EftStorm_RecSprite(bolt, a, b, texv, col); \
+    } else
+#else
+#define EFT_STORM_REC(bolt, a, b, texv, col)
+#endif
 #define EFT_STORM_SPRITE(bolt, a, b, texv, col, tagv, vifv) \
     do { \
+        EFT_STORM_REC(bolt, a, b, texv, col) { \
         p = EftOt_Alloc(sizeof(EftStripPkt)); \
         p->gif1 = 0xF42424242160; \
         p->vif0 = 0x10000000; \
@@ -554,6 +575,7 @@ converted to float through a spilled variable, and pointer variables assigned tw
         p->v[3].t = 1.0f; \
         p->tex0 = (texv); \
         EftOt_Add((OtPrim *)p,  (a)->z >> 8, 1); \
+        } \
     } while (0)
 
 void EftStorm_DrawBolts(EftStormBolt *bolt) {
