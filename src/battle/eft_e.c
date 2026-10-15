@@ -2974,49 +2974,63 @@ static inline void EftWater_QueueTri(EftWaterScr4 *p0, EftWaterScr4 *p1, EftWate
                                      EftWaterVec *t2, s32 layer, s32 z, u64 tex0) {
     EftWaterTriPkt *p = (EftWaterTriPkt *)gOtCur;
 
-    gOtCur = (u32 *)(p + 1);
-    p->prim = 0x5B;
-    p->h.tag = 0x20000007;
-    p->h.vif0 = 0x10000000;
-    p->h.vif1 = 0x50000007;
-    p->h.gif0 = 0xC400000000008001;
-    p->h.gif1 = 0xF42142142160;
-    p->h.next = 0;
-    p->pad = 0;
-    p->v[0].rgba[0] = (u32)c0->x;
-    p->v[0].rgba[1] = (u32)c0->y;
-    p->v[0].rgba[2] = (u32)c0->z;
-    p->v[0].rgba[3] = (u32)c0->w;
-    p->v[0].q = t0->z;
-    p->v[1].rgba[0] = (u32)c1->x;
-    p->v[1].rgba[1] = (u32)c1->y;
-    p->v[1].rgba[2] = (u32)c1->z;
-    p->v[1].rgba[3] = (u32)c1->w;
-    p->v[1].q = t1->z;
-    p->v[2].rgba[0] = (u32)c2->x;
-    p->v[2].rgba[1] = (u32)c2->y;
-    p->v[2].rgba[2] = (u32)c2->z;
-    p->v[2].rgba[3] = (u32)c2->w;
-    p->v[2].q = t2->z;
-    p->tex0 = tex0;
-    p->v[0].s = t0->x;
-    p->v[0].t = t0->y;
-    p->v[1].s = t1->x;
-    p->v[1].t = t1->y;
-    p->v[2].s = t2->x;
-    p->v[2].t = t2->y;
-    p->v[0].xyz.x = p0->x;
-    p->v[0].xyz.y = p0->y;
-    p->v[0].xyz.z = p0->z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = p1->x;
-    p->v[1].xyz.y = p1->y;
-    p->v[1].xyz.z = p1->z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = p2->x;
-    p->v[2].xyz.y = p2->y;
-    p->v[2].xyz.z = p2->z;
-    p->v[2].xyz.f = 0xFF;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the triangle as a record */
+        p = Ot_NewRec(0x5B, 3);
+        Ot_RecTex0(p, tex0);
+        Ot_RecVtx(p, 0, p0->x, p0->y, p0->z, t0->x, t0->y, t0->z,
+                  (u8)(u32)c0->x | (u8)(u32)c0->y << 8 | (u8)(u32)c0->z << 16 | (u32)(u8)(u32)c0->w << 24);
+        Ot_RecVtx(p, 1, p1->x, p1->y, p1->z, t1->x, t1->y, t1->z,
+                  (u8)(u32)c1->x | (u8)(u32)c1->y << 8 | (u8)(u32)c1->z << 16 | (u32)(u8)(u32)c1->w << 24);
+        Ot_RecVtx(p, 2, p2->x, p2->y, p2->z, t2->x, t2->y, t2->z,
+                  (u8)(u32)c2->x | (u8)(u32)c2->y << 8 | (u8)(u32)c2->z << 16 | (u32)(u8)(u32)c2->w << 24);
+    } else
+#endif
+    {
+        gOtCur = (u32 *)(p + 1);
+        p->prim = 0x5B;
+        p->h.tag = 0x20000007;
+        p->h.vif0 = 0x10000000;
+        p->h.vif1 = 0x50000007;
+        p->h.gif0 = 0xC400000000008001;
+        p->h.gif1 = 0xF42142142160;
+        p->h.next = 0;
+        p->pad = 0;
+        p->v[0].rgba[0] = (u32)c0->x;
+        p->v[0].rgba[1] = (u32)c0->y;
+        p->v[0].rgba[2] = (u32)c0->z;
+        p->v[0].rgba[3] = (u32)c0->w;
+        p->v[0].q = t0->z;
+        p->v[1].rgba[0] = (u32)c1->x;
+        p->v[1].rgba[1] = (u32)c1->y;
+        p->v[1].rgba[2] = (u32)c1->z;
+        p->v[1].rgba[3] = (u32)c1->w;
+        p->v[1].q = t1->z;
+        p->v[2].rgba[0] = (u32)c2->x;
+        p->v[2].rgba[1] = (u32)c2->y;
+        p->v[2].rgba[2] = (u32)c2->z;
+        p->v[2].rgba[3] = (u32)c2->w;
+        p->v[2].q = t2->z;
+        p->tex0 = tex0;
+        p->v[0].s = t0->x;
+        p->v[0].t = t0->y;
+        p->v[1].s = t1->x;
+        p->v[1].t = t1->y;
+        p->v[2].s = t2->x;
+        p->v[2].t = t2->y;
+        p->v[0].xyz.x = p0->x;
+        p->v[0].xyz.y = p0->y;
+        p->v[0].xyz.z = p0->z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = p1->x;
+        p->v[1].xyz.y = p1->y;
+        p->v[1].xyz.z = p1->z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = p2->x;
+        p->v[2].xyz.y = p2->y;
+        p->v[2].xyz.z = p2->z;
+        p->v[2].xyz.f = 0xFF;
+    }
     EftWaterOt_Add((OtPrim *)p, z, layer);
 }
 
