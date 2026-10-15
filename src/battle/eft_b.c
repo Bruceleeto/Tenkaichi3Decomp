@@ -1704,6 +1704,9 @@ void EftGeyser_DrawColumn(EftBTask *task) {
             abe = 1;
             tex0 = w->tex->tex[1].tex0;
             if (!(col[0].w <= 0.0f && col[1].w <= 0.0f && col[2].w <= 0.0f)) {
+#ifdef PORT
+                s32 i2;
+#endif
                 if (z < 0) {
                     e = &gOtZ[0].layer[0];
                 } else if (z >= 0x1000) {
@@ -1725,60 +1728,71 @@ void EftGeyser_DrawColumn(EftBTask *task) {
                 q->clamp2 = 0;
                 e->tail->next = (OtPrim *)q;
                 e->tail = (OtPrim *)q;
-                p = (EftBStripPkt *)gOtCur;
-                gOtCur = (u32 *)(p + 1);
-                p->vif0 = 0x10000000;
-                p->prim = ((u64)abe << 6) | 0x1C;
-                p->dmaTag = 0x20000008;
-                p->vif1 = 0x50000008;
-                p->gifTag = 0xE400000000008001;
-                p->regs = 0x42142142142160;
-                p->next = NULL;
-                p->rgbaq0.r = col[0].x;
-                p->rgbaq0.g = col[0].y;
-                p->rgbaq0.b = col[0].z;
-                p->rgbaq0.a = col[0].w;
-                p->rgbaq0.q = uv[0].z;
-                p->rgbaq1.r = col[1].x;
-                p->rgbaq1.g = col[1].y;
-                p->rgbaq1.b = col[1].z;
-                p->rgbaq1.a = col[1].w;
-                p->rgbaq1.q = uv[1].z;
-                p->rgbaq2.r = col[2].x;
-                p->rgbaq2.g = col[2].y;
-                p->rgbaq2.b = col[2].z;
-                p->rgbaq2.a = col[2].w;
-                p->rgbaq2.q = uv[2].z;
-                p->rgbaq3.r = col[3].x;
-                p->rgbaq3.g = col[3].y;
-                p->rgbaq3.b = col[3].z;
-                p->rgbaq3.a = col[3].w;
-                p->tex0 = tex0;
-                p->rgbaq3.q = uv[3].z;
-                p->st0.s = uv[0].x;
-                p->st0.t = uv[0].y;
-                p->st1.s = uv[1].x;
-                p->st1.t = uv[1].y;
-                p->st2.s = uv[2].x;
-                p->st2.t = uv[2].y;
-                p->st3.s = uv[3].x;
-                p->st3.t = uv[3].y;
-                p->xyz0.x = scr[0].x;
-                p->xyz0.y = scr[0].y;
-                p->xyz0.z = scr[0].z;
-                p->xyz0.f = 0xFF;
-                p->xyz1.x = scr[1].x;
-                p->xyz1.y = scr[1].y;
-                p->xyz1.z = scr[1].z;
-                p->xyz1.f = 0xFF;
-                p->xyz2.x = scr[2].x;
-                p->xyz2.y = scr[2].y;
-                p->xyz2.z = scr[2].z;
-                p->xyz2.f = 0xFF;
-                p->xyz3.x = scr[3].x;
-                p->xyz3.y = scr[3].y;
-                p->xyz3.z = scr[3].z;
-                p->xyz3.f = 0xFF;
+#ifdef PORT
+                if (Port_TakesRecords()) { /* the strip as a record behind the CLAMP packet */
+                    p = Ot_NewRec(((u64)abe << 6) | 0x1C, 4);
+                    Ot_RecTex0(p, tex0);
+                    for (i2 = 0; i2 < 4; i2++) {
+                        Ot_RecVtx(p, i2, scr[i2].x, scr[i2].y, scr[i2].z, uv[i2].x, uv[i2].y, uv[i2].z, Ot_RecRgba(col[i2].x, col[i2].y, col[i2].z, col[i2].w));
+                    }
+                } else
+#endif
+                {
+                    p = (EftBStripPkt *)gOtCur;
+                    gOtCur = (u32 *)(p + 1);
+                    p->vif0 = 0x10000000;
+                    p->prim = ((u64)abe << 6) | 0x1C;
+                    p->dmaTag = 0x20000008;
+                    p->vif1 = 0x50000008;
+                    p->gifTag = 0xE400000000008001;
+                    p->regs = 0x42142142142160;
+                    p->next = NULL;
+                    p->rgbaq0.r = col[0].x;
+                    p->rgbaq0.g = col[0].y;
+                    p->rgbaq0.b = col[0].z;
+                    p->rgbaq0.a = col[0].w;
+                    p->rgbaq0.q = uv[0].z;
+                    p->rgbaq1.r = col[1].x;
+                    p->rgbaq1.g = col[1].y;
+                    p->rgbaq1.b = col[1].z;
+                    p->rgbaq1.a = col[1].w;
+                    p->rgbaq1.q = uv[1].z;
+                    p->rgbaq2.r = col[2].x;
+                    p->rgbaq2.g = col[2].y;
+                    p->rgbaq2.b = col[2].z;
+                    p->rgbaq2.a = col[2].w;
+                    p->rgbaq2.q = uv[2].z;
+                    p->rgbaq3.r = col[3].x;
+                    p->rgbaq3.g = col[3].y;
+                    p->rgbaq3.b = col[3].z;
+                    p->rgbaq3.a = col[3].w;
+                    p->tex0 = tex0;
+                    p->rgbaq3.q = uv[3].z;
+                    p->st0.s = uv[0].x;
+                    p->st0.t = uv[0].y;
+                    p->st1.s = uv[1].x;
+                    p->st1.t = uv[1].y;
+                    p->st2.s = uv[2].x;
+                    p->st2.t = uv[2].y;
+                    p->st3.s = uv[3].x;
+                    p->st3.t = uv[3].y;
+                    p->xyz0.x = scr[0].x;
+                    p->xyz0.y = scr[0].y;
+                    p->xyz0.z = scr[0].z;
+                    p->xyz0.f = 0xFF;
+                    p->xyz1.x = scr[1].x;
+                    p->xyz1.y = scr[1].y;
+                    p->xyz1.z = scr[1].z;
+                    p->xyz1.f = 0xFF;
+                    p->xyz2.x = scr[2].x;
+                    p->xyz2.y = scr[2].y;
+                    p->xyz2.z = scr[2].z;
+                    p->xyz2.f = 0xFF;
+                    p->xyz3.x = scr[3].x;
+                    p->xyz3.y = scr[3].y;
+                    p->xyz3.z = scr[3].z;
+                    p->xyz3.f = 0xFF;
+                }
                 if (z < 0) {
                     e = &gOtZ[0].layer[0];
                 } else if (z >= 0x1000) {
