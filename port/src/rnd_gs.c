@@ -126,8 +126,9 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
     case 0x4C: { /* FRAME: the buffer, and which of its channels are written */
         uint64_t m = v >> 32;
         s->fbp = (uint32_t)v & 0x1FF;
-        s->flags = (uint16_t)((s->flags & ~(RND_NO_COLOUR | RND_NO_ALPHA)) | (m == 0x00FFFFFF ? RND_NO_COLOUR : 0) | (m == 0xFF000000u ? RND_NO_ALPHA : 0));
-        gRndCtxBad[c] = m == 0 || m == 0x00FFFFFF || m == 0xFF000000u ? gRndCtxBad[c] & ~RND_BAD_FRAME : gRndCtxBad[c] | RND_BAD_FRAME;
+        s->flags = (uint16_t)((s->flags & ~(RND_NO_COLOUR | RND_NO_ALPHA)) | (m == 0x00FFFFFF || m == 0xFFFFFFFFu ? RND_NO_COLOUR : 0) |
+                              (m == 0xFF000000u || m == 0xFFFFFFFFu ? RND_NO_ALPHA : 0)); /* (both: the depth alone, the fighters' depth pass) */
+        gRndCtxBad[c] = m == 0 || m == 0x00FFFFFF || m == 0xFF000000u || m == 0xFFFFFFFFu ? gRndCtxBad[c] & ~RND_BAD_FRAME : gRndCtxBad[c] | RND_BAD_FRAME;
         return 1;
     }
     case 0x4E: /* ZBUF: depth written or not */
@@ -621,7 +622,11 @@ uint32_t Rnd_Prim(uint32_t prim) {
 
 int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
     ctx &= 1;
-    if (!Port_TakesRecords() || gRndCtxBad[ctx] != 0) {
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    if (gRndCtxBad[ctx] != 0) {
+        Port_Lost("a polygon drawn in a state no record says (RND_BAD_)", gRndCtxBad[ctx], __builtin_return_address(0));
         return 0;
     }
     {

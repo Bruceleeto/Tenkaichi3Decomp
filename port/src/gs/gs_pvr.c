@@ -768,7 +768,13 @@ static void draw_one(uint32_t n, const PvrTex *t) {
        an opaque source. */
     pass[0] = cxt;
     np = 1;
-    if ((key >> 16 & 7) == 0) { /* the alpha alone */
+    if ((key >> 16 & 15) == 0) { /* nothing written but the depth (ObjDraw_SetLight's depth pass): the picture kept */
+        if (!((key >> 12) & 1)) {
+            return;
+        }
+        pass[0].blend.src = PVR_BLEND_ZERO;
+        pass[0].blend.dst = PVR_BLEND_ONE;
+    } else if ((key >> 16 & 7) == 0) { /* the alpha alone */
         pass[0].blend.src = PVR_BLEND_ONE;
         pass[0].blend.dst = PVR_BLEND_ZERO;
         pass[0].blend.dst_enable = PVR_BLEND_ENABLE;
@@ -1484,7 +1490,11 @@ int Port_TexNative(void *e, int tbp) {
     uint32_t blocks;
     NatTex *n;
     if (!sNatOn) { return 0; }
-    if ((n = nat_get(e)) == NULL || n->none) { sNatMiss[3]++; return 0; }
+    if ((n = nat_get(e)) == NULL || n->none) {
+        sNatMiss[3]++;
+        Port_Lost("a texture not in tex.pak (its entry's address)", Port_Addr(e), __builtin_return_address(0));
+        return 0;
+    }
     blocks = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
     sPalAsk = 1;
     if (n->direct && Port_PalNative(Port_Ptr(rd32((uint8_t *)e + 0x38)), (int)rd32((uint8_t *)e + 8), rd32((uint8_t *)e + 0x18), tbp)) {
@@ -1594,7 +1604,11 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         }
     }
     if (p == NULL) {
-        if ((p = pal_new(addr)) == NULL) { sPalMiss += !sPalAsk; return 0; }
+        if ((p = pal_new(addr)) == NULL) {
+            sPalMiss += !sPalAsk;
+            if (!sPalAsk) { Port_Lost("a palette: no room for another (MAX_PAL)", addr, __builtin_return_address(0)); }
+            return 0;
+        }
         p->sample = pal_sample(pkt, (uint32_t)size);
         if (pkt_key(pkt, (uint32_t)size, blt, &key, 1, &img) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
             (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
@@ -1606,6 +1620,7 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     }
     if (p->pak < 0) {
         sPalMiss += !sPalAsk;
+        if (!sPalAsk) { Port_Lost("a palette not in tex.pak (its packet's address)", addr, __builtin_return_address(0)); }
         if (!sPalAsk && getenv("BT3_TEX_LOG") != NULL) {
             fprintf(stderr, "nat: frame %u: palette packet %08X (%d bytes) to block %X not in the pack\n", (unsigned)gGsFrame, (unsigned)addr, size, (unsigned)block);
         }

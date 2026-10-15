@@ -107,13 +107,22 @@ static uint32_t tag_prim(const uint32_t *tag) {
    quadwords; 0 when none were). 0 = a batch the program cannot take as it is (the chain is not drawn). */
 typedef int (*BatchFn)(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv);
 
+/* Which check refused a chain (its line in this file; a refused state's RND_BAD_ << 16): what Port_Lost reports. */
+static uint32_t sRefused;
+
+static int refuse(uint32_t why) {
+    sRefused = why;
+    return 0;
+}
+
 /* Walks the VIF codes of a chain; fn for each batch. 0 = a chain of another shape (or a batch fn refused). */
 static int walk(const void *chain, BatchFn fn, void *arg) {
     const uint32_t *t = (const uint32_t *)chain, *w, *end, *hdr = NULL, *vtx = NULL;
     uint32_t nh = 0, nv = 0;
 
+    sRefused = 0; /* (0: a check of the batch's own function) */
     if (t == NULL || ((t[0] >> 28) & 7) != 6) { /* one "ret" tag: its VIF codes, then its quadwords */
-        return 0;
+        return refuse(__LINE__);
     }
     w = t + 2;
     end = t + 4 + (t[0] & 0xFFFF) * 4;
@@ -124,12 +133,15 @@ static int walk(const void *chain, BatchFn fn, void *arg) {
             break;
         case 0x01: /* STCYCL: only the plain 1 / 1 */
             if (imm != 0x0101) {
-                return 0;
+                return refuse(__LINE__);
             }
             break;
         case 0x17: /* MSCNT: the program runs on what was unpacked */
-            if (hdr == NULL || !fn(arg, hdr, nh, vtx, nv)) {
-                return 0;
+            if (hdr == NULL) {
+                return refuse(__LINE__);
+            }
+            if (!fn(arg, hdr, nh, vtx, nv)) {
+                return 0; /* (its reason in sRefused) */
             }
             hdr = vtx = NULL;
             nh = nv = 0;
@@ -138,7 +150,7 @@ static int walk(const void *chain, BatchFn fn, void *arg) {
             num = (code >> 16) & 0xFF;
             num = num != 0 ? num : 256;
             if (!(imm & 0x8000) || num * 4 > (uint32_t)(end - w)) {
-                return 0;
+                return refuse(__LINE__);
             }
             if ((imm & 0x3FF) == 0) {
                 hdr = w;
@@ -149,12 +161,12 @@ static int walk(const void *chain, BatchFn fn, void *arg) {
                 vtx = w;
                 nv = num;
             } else {
-                return 0;
+                return refuse(__LINE__);
             }
             w += num * 4;
             break;
         default:
-            return 0;
+            return refuse(__LINE__);
         }
     }
     return 1;
@@ -407,6 +419,7 @@ int Vu1Native_Prog4(const void *chain) {
     memset(&wk, 0, sizeof(wk));
     if (!walk(chain, p4_batch, &wk) || !wk.header) {
         gVu1NativeStat[VU1N_P4][0]++;
+        Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P4 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P4][1]++;
@@ -461,13 +474,13 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
 
     split(hdr, &nh, &vtx, &nv, 5);
     if (nh != 5 || vtx == NULL) {
-        return 0;
+        return refuse(__LINE__);
     }
     if (wk->prog == 1 && (vtx[7] & 0xFFFF) == 0) {
         return 1; /* a batch without the fade layer: the program draws nothing */
     }
     if (!ad_tag_ok(hdr) || !tag_ok(hdr + 12, 4, 0) || !tag_ok(hdr + 16, 4, 1)) {
-        return 0;
+        return refuse(__LINE__);
     }
     prim[0] = tag_prim(hdr + 12);
     prim[1] = tag_prim(hdr + 16);
@@ -477,10 +490,10 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
     /* (layer 1's strip has layer 0's corners: its tag must say as many) */
     if (n > FIG_MAXV || n * 3 > nv || (hdr[16] & 0x7FFF) != n || !ad_tex0(hdr + 4, ctx[0], &tex0[0]) ||
         (wk->prog == 0 && !ad_tex0(hdr + 8, ctx[1], &tex0[1]))) {
-        return 0;
+        return refuse(__LINE__);
     }
     if (!wk->draw) {
-        return gRndCtxBad[ctx[0]] == 0 && gRndCtxBad[ctx[1]] == 0;
+        return gRndCtxBad[ctx[0]] == 0 && gRndCtxBad[ctx[1]] == 0 ? 1 : refuse(__LINE__ | (gRndCtxBad[ctx[0]] | gRndCtxBad[ctx[1]]) << 16);
     }
     if (wk->prog == 1) {
         memcpy(&tex0[1], k + 104, 8); /* constant 26: TEX0_2 of the fade texture, as ObjDraw_DrawParts writes it */
@@ -544,7 +557,11 @@ int Vu1Native_Takes(int prog, const void *chain) {
     FigWalk wk;
     int stat;
 
-    if (!Port_TakesRecords() || prog < 0 || prog > 2 || (prog == 2 && sP2 == NULL)) {
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    if (prog < 0 || prog > 2 || (prog == 2 && sP2 == NULL)) {
+        Port_Lost("a VU1 program the native code does not have (its number)", (uint32_t)prog, __builtin_return_address(0));
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
@@ -552,6 +569,7 @@ int Vu1Native_Takes(int prog, const void *chain) {
     stat = prog == 2 ? VU1N_P2A + sP2Alt : prog;
     if (!walk(chain, prog == 2 ? p2_batch : fig_batch, &wk)) {
         gVu1NativeStat[stat][0]++;
+        Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)stat | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[stat][1]++;
@@ -778,6 +796,7 @@ int Vu1Native_Prog6(const void *chain) {
     memset(&wk, 0, sizeof(wk));
     if (!walk(chain, p6_batch, &wk) || !wk.header) {
         gVu1NativeStat[VU1N_P6][0]++;
+        Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P6 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P6][1]++;
@@ -859,6 +878,7 @@ int Vu1Native_Prog7(const void *chain, const void *consts) {
     memset(&wk, 0, sizeof(wk));
     if (!walk(chain, p7_batch, &wk)) {
         gVu1NativeStat[VU1N_P7][0]++;
+        Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P7 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P7][1]++;
@@ -964,13 +984,18 @@ static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 int Vu1Native_Prog8(const void *chain, const void *consts) {
     P8Walk wk;
 
-    if (!Port_TakesRecords() || sP8 == NULL) {
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    if (sP8 == NULL) {
+        Port_Lost("a VU1 program 8 chain before its program was loaded (sP8)", 8, __builtin_return_address(0));
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
     wk.k = (const float *)consts;
     if (!walk(chain, p8_batch, &wk)) {
         gVu1NativeStat[VU1N_P8][0]++;
+        Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P8 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P8][1]++;

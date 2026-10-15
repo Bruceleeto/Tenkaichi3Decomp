@@ -29,6 +29,48 @@ extern int gDmaBufIdx;        /* the one being built */
 RndState gRndCtx[2];
 int gRndCtxValid;
 
+/* What the renderer was handed on the records path and did not take, where the PS2 packet the game then builds is
+   not read (Port_ListRead 0: the Dreamcast, BT3_WALK=3 on PC): it is not drawn. Never silent: an error on stderr
+   once per place it came from (`from`: the code that asked), and counted (gPortLost). `what` says what was lost,
+   `why` the decliner's reason (its bits). Where the list is read the packet is drawn instead: nothing to say. */
+#include <stdio.h>
+#if defined(__linux__)
+typedef struct { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; } PortDlInfo;
+extern int dladdr(const void *addr, PortDlInfo *info);
+#endif
+unsigned gPortLost;
+
+void Port_Lost(const char *what, uint32_t why, const void *from) {
+    static const void *seen[256];
+    static unsigned nSeen;
+    char name[160];
+    unsigned i;
+
+    if (Port_ListRead()) {
+        return;
+    }
+    gPortLost++;
+    for (i = 0; i < nSeen; i++) {
+        if (seen[i] == from) {
+            return;
+        }
+    }
+    if (nSeen < sizeof(seen) / sizeof(seen[0])) {
+        seen[nSeen++] = from;
+    }
+    snprintf(name, sizeof(name), "0x%08x", (unsigned)(uintptr_t)from);
+#if defined(__linux__)
+    {
+        PortDlInfo info;
+        if (dladdr(from, &info) && info.dli_sname != NULL) {
+            snprintf(name, sizeof(name), "%s+0x%x", info.dli_sname, (unsigned)((uintptr_t)from - (uintptr_t)info.dli_saddr));
+        }
+    }
+#endif
+    fprintf(stderr, "bt3: ERROR: not drawn: %s (0x%X), from %s: the renderer did not take it and its PS2 packet is not "
+                    "read here\n", what, (unsigned)why, name);
+}
+
 int Port_Quad(const RndQuad *q) {
     if (!Gs_TakesRecords()) {
         return 0;

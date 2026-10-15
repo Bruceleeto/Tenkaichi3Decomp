@@ -256,7 +256,11 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
     if (f->n == f->cap) {
         uint32_t cap = f->cap ? f->cap * 2 : 1024;
         RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
-        if (c == NULL) { sRndLost++; return 0; }
+        if (c == NULL) {
+            sRndLost++;
+            Port_Lost("a record: the frame's queue is full (its records)", f->n, __builtin_return_address(0));
+            return 0;
+        }
         f->cmd = c;
         f->cap = cap;
     }

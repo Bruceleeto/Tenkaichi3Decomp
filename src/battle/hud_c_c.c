@@ -447,7 +447,11 @@ static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, Hu
     RndQuad r;
     s32 i;
 
-    if (!gRndCtxValid || !Port_TakesRecords()) {
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    if (!gRndCtxValid) {
+        Port_Lost("a HUD sprite drawn before the HUD's state (gRndCtxValid 0)", (u32)ctx, __builtin_return_address(0));
         return 0;
     }
     Dma_EndDirect(end);

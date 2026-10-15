@@ -30,7 +30,7 @@
 /* RndState.flags */
 #define RND_REPEAT 0x01     /* the texture wraps (else it is clamped at its edges) */
 #define RND_SMOOTH 0x02     /* filtered */
-#define RND_NO_COLOUR 0x04  /* writes the alpha alone */
+#define RND_NO_COLOUR 0x04  /* writes the alpha alone (with RND_NO_ALPHA: the depth alone) */
 #define RND_NO_ALPHA 0x08   /* writes the colour alone */
 #define RND_DEST_ALPHA 0x10 /* blended by the alpha already in the picture instead of its own */
 #define RND_MARK 0x20       /* marks the pixels it writes (bit 7 of their alpha set: the GS's FBA) */
@@ -118,6 +118,8 @@ int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
 int Port_ListRead(void);         /* 1: the display list is read for what only the PS2 needs (the PS2 reference): 0 = such
                                     packets need not be built (the Dreamcast; BT3_WALK=3 on PC) */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
+void Port_Lost(const char *what, uint32_t why, const void *from); /* gs_marker.c: a record or handle declined where its
+                                    PS2 packet is not read (the Dreamcast): an error on stderr, once per place */
 int Rnd_TestsMarks(void);        /* gs_draw.c: 0 = a draw's RndState.mask is not tested (the PVR): the caller cuts it */
 #ifdef PORT_GS_REF
 /* port/src/rnd_gs.c. The PS2 reference only (where the display list is read: Port_ListRead): the GS state the game

@@ -235,6 +235,12 @@ s32 Ot_Send(void) {
                 dst = (u8 *)Dma_BeginDirect();
             } else {
                 u8 *at = dst;
+                if (Port_TakesRecords()) {
+                    RndOtRec *r = OT_REC(prim);
+                    u32 why = r->type | (u32)r->n << 8 | (gRndCtxBad[r->ctx & 1] & 0xFFFF) << 16;
+                    Port_Lost("an ordering table record (its type | corners << 8 | its context's RND_BAD_ << 16)", why,
+                              (const void *)(uintptr_t)(0xFFFF0000u | (why & 0xFFFF)));
+                }
                 dst = (u8 *)Rnd_OtState((u64 *)dst);
                 dst = (u8 *)Rnd_OtRecPacket(OT_REC(prim), (u64 *)dst);
                 if (!Port_ListRead()) {
