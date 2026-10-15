@@ -40,8 +40,9 @@ GS_PC    += gs_core.c gs_vu1.c
 GS_SRC   := $(filter-out $(addprefix port/src/gs/,$(GS_PC)),$(sort $(wildcard port/src/gs/*.c)))
 # (the data check, plat_verify.c and plat_fprint.c, left out: port/src/null/verify_null.c)
 # (and the PSS decoder, plat_mpeg2.c: the Dreamcast plays the converted movies, plat_movie.c)
-PC_SRC   := $(filter-out port/src/plat_crash.c port/src/plat_verify.c port/src/plat_fprint.c port/src/plat_mpeg2.c,$(sort $(wildcard port/src/*.c)))
-DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c verify_null.c songs_null.c menutext_null.c)
+# (and the screen reader's game side, a11y_game.c, and the heap report, plat_heapstat.c: port/src/null/extras_null.c)
+PC_SRC   := $(filter-out port/src/plat_crash.c port/src/plat_verify.c port/src/plat_fprint.c port/src/plat_mpeg2.c port/src/a11y_game.c port/src/plat_heapstat.c,$(sort $(wildcard port/src/*.c)))
+DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c verify_null.c songs_null.c menutext_null.c extras_null.c)
 
 GAME_OBJ := $(foreach f,$(GAME_SRC),$(OBJ)/$(subst /,_,$(patsubst src/%.c,%,$(f))).o)
 NL_OBJ   := $(patsubst port/third_party/newlib_libm/%.c,$(OBJ)/nl_%.o,$(NL_SRC))
