@@ -8,7 +8,7 @@
  *   gcc -m32 -O2 -msse2 -mfpmath=sse -ffp-contract=off -Iinclude -Iport/include -Iport/src/gs port/tests/work/vu1_check.c \
  *       port/src/vu1_native.c port/src/gs/gs_vu1.c -lm -o /tmp/vu1_check
  *   /tmp/vu1_check 4 gamedata/pzs3us1/00424.bin 1          (program, file, part of its offset table)
- *   /tmp/vu1_check 0 gamedata/pzs3us1/02877.bin 3          (a fighter's model parts)
+ *   /tmp/vu1_check 0 gamedata/pzs3us1/02877.bin 3          (a fighter's model parts; 1: their fade pass)
  *
  * Constants: cameras made here (inside the mesh's bounds looking along each axis, and from outside seeing all of
  * it), so that triangles cross every plane of the clip volume; for the fighters two bones a little apart, a light,
@@ -447,7 +447,7 @@ int main(int argc, char **argv) {
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
-    if (prog != 0 && prog != 4) {
+    if (prog != 0 && prog != 1 && prog != 4) {
         fprintf(stderr, "program %d: not here\n", prog);
         return 2;
     }
@@ -541,7 +541,7 @@ int main(int argc, char **argv) {
                     printf("chain at +0x%zX: not taken\n", off);
                     sBad++;
                 } else {
-                    Vu1Native_Prog0(t, k);
+                    (prog == 0 ? Vu1Native_Prog0 : Vu1Native_Prog1)(t, k);
                 }
             }
             {

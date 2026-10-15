@@ -23,5 +23,6 @@ int Vu1Native_Prog4(const void *chain);
    quadwords of ObjDrawPkt from mtxA, as they would have gone to VU address 0). */
 int Vu1Native_Takes(int prog, const void *chain);
 void Vu1Native_Prog0(const void *chain, const void *consts);
+void Vu1Native_Prog1(const void *chain, const void *consts);
 
 #endif

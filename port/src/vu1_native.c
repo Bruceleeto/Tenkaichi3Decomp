@@ -550,3 +550,7 @@ static void fig_draw(int prog, const void *chain, const void *consts) {
 void Vu1Native_Prog0(const void *chain, const void *consts) {
     fig_draw(0, chain, consts);
 }
+
+void Vu1Native_Prog1(const void *chain, const void *consts) {
+    fig_draw(1, chain, consts);
+}

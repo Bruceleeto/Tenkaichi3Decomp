@@ -674,7 +674,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                     }
                 } else if (mode == 1) {
                     if (part->flags & 1) {
+#ifdef PORT
+                        ObjDrawPkt *pkt = Vu1Native_Takes(1, part->chain) ? &sPortPkt : Vu1Pkt_CallProg1(part);
+#else
                         ObjDrawPkt *pkt = Vu1Pkt_CallProg1(part);
+#endif
 
                         pkt->tex0[0] = tex0;
                         pkt->tex0[1] = tex0 >> 32;
@@ -703,6 +707,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                         pkt->light.m[3][2] = 0.0f;
                         Vu0Screen_StoreMtx(&pkt->screen);
                         Vu0Clip_StoreMtx(&pkt->clip);
+#ifdef PORT
+                        if (pkt == &sPortPkt) {
+                            Vu1Native_Prog1(part->chain, &pkt->mtxA);
+                        }
+#endif
                     }
                 } else if (mode == 2) {
                     ObjDrawPkt *pkt = Vu1Pkt_CallProg2(part);
