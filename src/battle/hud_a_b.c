@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "battle/hud_a.h"
 #include "battle/battle.h"
 #include "sys/heap.h"
@@ -77,6 +80,12 @@ void HudTeam_GsBeginMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_IF_UNMARKED);                /* TEST_1 0x34000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_COLOUR);
+    Rnd_SetMark(1, 1);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_NOTEQUAL, 0, RND_AFAIL_NOTHING, RND_MASK_NONE); /* TEST_2 0x3000F */
+#endif
 }
 
 /* GS state after the masked sprite: context 2 writes all channels again, FBA off, normal test. */
@@ -91,6 +100,12 @@ void HudTeam_GsEndMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetMark(1, 0);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+#endif
 }
 
 /* Root node: steps the slide and flip ramps (not while paused) and places the root and the two face groups.

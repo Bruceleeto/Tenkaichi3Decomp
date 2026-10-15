@@ -6,6 +6,28 @@
 
 extern void TexFile_UploadOne(SpriteRes *res, s32 index, s32 tbp, s32 cbp); /* uploads one texture and its palette */
 
+#ifdef PORT
+#include "port/rnd.h"
+extern u32 Tex_PalHandle(void *e); /* sys/gfxm_b_b.h */
+
+/* One sprite as a record (include/port/rnd.h) under the state the packets in front of it have set (gRndCtx[0]):
+   corners in GS pixels, texels in sixteenths, the texture of entry t (NULL: the colour alone) as TEX0 names it
+   and by its handles. 0 = not taken: the registers are sent. */
+static s32 Sprite_PortSprite(SpriteTex *t, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 v0, s32 u1, s32 v1, u32 rgba,
+                             u64 tex0) {
+    int keep = gRndSprites;
+
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    gRndSprites = 1;
+    Rnd_Sprite(x0, y0, x1, y1, u0, v0, u1, v1, rgba, t != NULL ? Port_TexHandle(t) : 0, t != NULL ? Tex_PalHandle(t) : 0,
+               tex0);
+    gRndSprites = keep;
+    return 1;
+}
+#endif
+
 /* Unpacks a BPE-compressed sprite sheet. */
 void *Sprite_Unpack(void *src, void *dst, s32 *rawSize) {
     return Bpe_Decode(src, dst, rawSize);
@@ -58,11 +80,26 @@ void Sprite_DrawPicture(SpriteRes *res, s32 x, s32 y, s32 alpha) {
     p[1] = GS_CLAMP_1;
     p += 2;
     Dma_EndDirect(p);
+#ifdef PORT
+    Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);
+    Rnd_SetMark(0, 0);
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE);
+    Rnd_SetFlag(0, RND_REPEAT, 0);
+#endif
     for (row = 0; row < 2; row++) {
         for (col = 0; col < 4; col++) {
             idx = col + row * 4;
             TexFile_UploadOne(res, idx, SPRITE_TBP, res->tex[idx].cbpOfs + SPRITE_CBP_PICTURE);
             Dma_AddTexFlush();
+#ifdef PORT
+            if (Sprite_PortSprite(&res->tex[idx], x + col * 0x80 + 0x700, (row ? yy - 0x20 : yy) + 0x720,
+                                  x + col * 0x80 + 0x780, (row ? yy + 0xC0 : yy + 0xE0) + 0x720, 0, 0, 0x80 << 4,
+                                  0x100 << 4, ((u32)alpha << 24) | 0x808080,
+                                  res->tex[idx].tex0 | ((u64)(res->tex[idx].cbpOfs + SPRITE_CBP_PICTURE) << 37) |
+                                      (((u64)4 << 32) | SPRITE_TBP))) {
+                continue;
+            }
+#endif
             p = Dma_BeginDirect();
             y1 = row ? yy + 0xC0 : yy + 0xE0;
             y0 = row ? yy - 0x20 : yy;
@@ -110,6 +147,11 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
     p[1] = GS_TEST_1;
     p += 2;
     Dma_EndDirect(p);
+#ifdef PORT
+    Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);
+    Rnd_SetFlag(0, RND_SMOOTH, 1);
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE);
+#endif
     for (i = 0; !(list[i].flags & LOAD_SPR_END); i++) {
         LoadSprite *spr = &list[i];
 
@@ -118,6 +160,21 @@ void Sprite_DrawList(SpriteRes *res, s32 x, s32 y, LoadSprite *list) {
                 TexFile_UploadOne(res, spr->tex, SPRITE_TBP, res->tex[spr->tex].cbpOfs + SPRITE_CBP_LIST);
                 Dma_AddTexFlush();
             }
+#ifdef PORT
+            {
+                s32 flat = (spr->flags & 4) || res == NULL;
+                SpriteTex *t = flat ? NULL : &res->tex[spr->tex];
+
+                if (Sprite_PortSprite(t, spr->x0 + x + 0x700, Sprite_ConvY(spr->y0 + y) + 0x720, spr->x1 + x + 0x700,
+                                      Sprite_ConvY(spr->y1 + y) + 0x720, spr->u0 << 4, spr->v0 << 4, spr->u1 << 4,
+                                      spr->v1 << 4,
+                                      (u32)spr->r | ((u32)spr->g << 8) | ((u32)spr->b << 16) | ((u32)spr->a << 24),
+                                      flat ? 0 : t->tex0 | ((u64)(t->cbpOfs + SPRITE_CBP_LIST) << 37) |
+                                                     (((u64)4 << 32) | SPRITE_TBP))) {
+                    continue;
+                }
+            }
+#endif
             p = Dma_BeginDirect();
             p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 8);
             p[1] = 0x535306E1; /* RGBAQ, A+D (ignored), TEX0_1, PRIM, UV, XYZ2, UV, XYZ2 */

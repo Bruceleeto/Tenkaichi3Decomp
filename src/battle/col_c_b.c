@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/col_c.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Inline icon tags of the text printer: 0x23C310..0x23D1E8. A 16-bit string may contain
@@ -110,6 +113,11 @@ void FontIcon_PutSprite(u64 **pkt, FontCmd *cmd, FontIconDef *icon, s32 frame, s
         tv0 = size * (frame / perRow);
         tu1 = (frame % perRow + 1) * size;
         tv1 = (frame / perRow + 1) * size;
+#ifdef PORT
+        if (Rnd_Sprite(x0, y0, x1, y1, tu0 << 4, tv0 << 4, tu1 << 4, tv1 << 4, color, 0, 0, reg)) {
+            return;
+        }
+#endif
         (*pkt)[0] = reg;
         (*pkt)[1] = (u64)color | ((u64)0x3F800000 << 32);
         *pkt += 2;

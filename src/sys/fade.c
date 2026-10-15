@@ -1,6 +1,10 @@
 #include "common.h"
 #include "sys/dma.h"
 #include "sys/fade.h"
+#ifdef PORT
+#include "port/rnd.h"
+extern s32 Gfx_PortFill(u32 rgba);
+#endif
 
 extern void *memset(void *dst, s32 c, u32 n);
 extern void Vec4_Copy(f32 *dst, f32 *src);
@@ -25,7 +29,11 @@ void Fade_DrawRect(Fade *fade) {
     Gfx_PutDefaultEnv(&p);
     rgba = ((u32)fade->color[0] & 0xFF) | (((u32)fade->color[1] & 0xFF) << 8) | (((u32)fade->color[2] & 0xFF) << 16) |
            ((u32)fade->color[3] << 24);
+#ifdef PORT
+    p[0] = GIF_TAG(4, Port_TakesRecords(), 1); /* (the end of the packet when the sprites are a record) */
+#else
     p[0] = GIF_TAG(4, 0, 1);
+#endif
     p[1] = GIF_REG_AD;
     p += 2;
     p[0] = 0x30000; /* alpha and depth tests always pass */
@@ -40,6 +48,14 @@ void Fade_DrawRect(Fade *fade) {
     p[0] = (u64)rgba | (0x3F800000ULL << 32);
     p[1] = GS_RGBAQ;
     p += 2;
+#ifdef PORT
+    /* The sprites as a record (include/port/rnd.h): the default state with no test and depth not written. */
+    if (Port_TakesRecords()) {
+        Dma_EndDirect(p);
+        Gfx_PortFill(rgba);
+        return;
+    }
+#endif
     p[0] = GIF_TAG_EX(FADE_STRIPS, 1, GIF_FLG_REGLIST, 2);
     p[1] = GS_REG_XYZ2 | (GS_REG_XYZ2 << 4);
     p += 2;

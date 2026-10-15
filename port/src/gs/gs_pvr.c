@@ -1189,10 +1189,11 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u quads from GS memory\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback);
         sTintDraws = 0;
+        gsRndFallback = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
         memset(sPalMade, 0, sizeof(sPalMade));
     }
@@ -1267,10 +1268,12 @@ typedef struct NatTex {
     uint16_t view;     /* direct: its first 8-bit view at a draw's size + 1 (a record of its own: isView) */
     int isView;        /* an 8-bit view of a direct one: its pak the view's, vw x vh of it at the corner */
     uint32_t vw, vh;
+    uint16_t gen;      /* the record's use: a handle names it with this (Port_TexNative), and outlives it */
 } NatTex;
 #define KEY_DIRECT 0x9E3779B97F4A7C15ull /* (as port/tools/dc_tex.c) */
 #define KEY_T8     0xC2B2AE3D27D4EB4Full
 static NatTex sNat[MAX_NAT];
+static uint16_t sNatGen;
 static uint16_t sNatHash[MAX_NAT]; /* by the entry's address (its bits from 6: entries are 0x40 bytes): record + 1 */
 #define NAT_HASH(addr) (((addr) >> 6) * 2654435761u >> 20 & (MAX_NAT - 1))
 /* the palette RAM: 64 banks of 16 colours, by palette (clut hash), each free once no frame used it for two
@@ -1345,6 +1348,7 @@ static NatTex *nat_get(uint8_t *e) {
     n = &sNat[i];
     memset(n, 0, sizeof(*n));
     n->e = addr;
+    n->gen = ++sNatGen != 0 ? sNatGen : ++sNatGen;
     n->bank = -1;
     n->next = sNatHash[NAT_HASH(addr)];
     sNatHash[NAT_HASH(addr)] = (uint16_t)(i + 1);
@@ -1414,7 +1418,7 @@ static NatTex *nat_get(uint8_t *e) {
     return n;
 }
 
-/* The game uploads entry e's pixels to block tbp (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c): 1 = it is a PVR texture of
+/* The game uploads entry e's pixels to block tbp (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c): not 0 (its handle, include/port/rnd.h) = it is a PVR texture of
    its own, the upload is left out. In its place in the DMA chain, a write of register 0x7E telling the GS layer
    which record the blocks hold from there on (the chain runs after the game has built all of it). */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block);
@@ -1430,7 +1434,7 @@ int Port_TexNative(void *e, int tbp) {
         pkt[9] &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
     }
     Dma_AddData(pkt, sizeof(pkt));
-    return 1;
+    return (int)((uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
 }
 
 /* The palettes of tex.pak, by the address of the upload packet the game sends (the ones it changes while it runs it
@@ -1450,7 +1454,7 @@ static uint32_t sPalGen;
 #define PAL_HASH(addr) (((addr) >> 4) * 2654435761u >> 21 & (MAX_PAL - 1))
 
 /* The game has just queued the upload of pkt to block `block` (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c, hud_c_c.c,
-   eft_det_a.c): 1 = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
+   eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
    layer which it is. */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
@@ -1489,7 +1493,7 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     m[8] = (uint32_t)block & 0x3FFF;
     m[9] = (uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16; /* (the blocks it covers) */
     Dma_AddData(m, sizeof(m));
-    return 1;
+    return (int)((uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16);
 }
 
 /* The palette of the pack at block cbp, if it has n colours: in the order the indices count, as GS memory would
@@ -1677,15 +1681,62 @@ static NatTex *nat_view(NatTex *n, uint32_t tw, uint32_t th) {
 
 /* A draw samples the texture at block tbp (gs_draw.c): the native one there, if it is the one asked for, with the
    palette at cbp (palKey: its hash). 0 = none. */
+static GsTex nat_resolve(NatTex *n, uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, const NatPal *pal, uint32_t cbp, uint32_t cpsm, uint32_t palKey);
+
 GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey) {
-    uint32_t idx = gGsNat[tbp & 16383], i, b;
+    uint32_t idx = gGsNat[tbp & 16383];
     NatTex *n;
-    uint16_t col[256];
     const NatPal *pal;
 
     if (idx == 0) { sNatMiss[0]++; return 0; }
     n = &sNat[idx - 1];
     if (n->e == 0 || n->none) { sNatMiss[1]++; return 0; }
+    pal = gGsPal[cbp & 16383] != 0 ? &sPal[gGsPal[cbp & 16383] - 1] : NULL;
+    return nat_resolve(n, tbp, psm, tw, th, pal, cbp, cpsm, palKey);
+}
+
+/* include/port/rnd.h: the handle of entry e's texture record (one Port_TexNative made), of the palette record of
+   upload packet pkt (Port_PalNative); 0 = none. */
+uint32_t Port_TexHandle(const void *e) {
+    uint32_t addr = Port_Addr((void *)e), i;
+    for (i = sNatHash[NAT_HASH(addr)]; i != 0; i = sNat[i - 1].next) {
+        if (sNat[i - 1].e == addr) { return sNat[i - 1].none ? 0 : (i | (uint32_t)sNat[i - 1].gen << 16); }
+    }
+    return 0;
+}
+
+uint32_t Port_PalHandle(const void *pkt) {
+    uint32_t addr = Port_Addr((void *)pkt), i;
+    for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
+        if (sPal[i - 1].addr == addr) { return sPal[i - 1].pak < 0 ? 0 : (i | (sPal[i - 1].gen & 0xFFFF) << 16); }
+    }
+    return 0;
+}
+
+/* What a record the game handed over names (include/port/rnd.h): texture `tex` and palette `pal` as Port_TexNative
+   and Port_PalNative gave them, and its size. 0 = not (or no longer) one: the record's GS fallback is drawn. */
+static GsTex tex_handle(uint32_t tex, uint32_t pal, uint32_t *tw, uint32_t *th) {
+    uint32_t ti = tex & 0xFFFF, pi = pal & 0xFFFF;
+    NatTex *n;
+    const NatPal *p = NULL;
+
+    if (ti == 0 || ti > MAX_NAT || sNat[ti - 1].e == 0 || sNat[ti - 1].none || sNat[ti - 1].gen != tex >> 16) { return 0; }
+    n = &sNat[ti - 1];
+    if (!n->direct) {
+        if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 ||
+            sPal[pi - 1].n != (n->bits == 8 ? 256u : 16u)) { return 0; }
+        p = &sPal[pi - 1];
+    }
+    *tw = n->tw;
+    *th = n->th;
+    return nat_resolve(n, 0, n->psm, n->tw, n->th, p, 0, 0, p != NULL ? 0x80000000u | p->gen : 0);
+}
+
+/* Native record n drawn as a psm texture of tw x th with palette pal (NULL: the one at cbp in GS memory; palKey
+   names it). 0 = not drawable so. */
+static GsTex nat_resolve(NatTex *n, uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, const NatPal *pal, uint32_t cbp, uint32_t cpsm, uint32_t palKey) {
+    uint32_t i, b;
+    uint16_t col[256];
     if (n->direct && n->psm == psm && n->tw == tw && n->th == th) { /* as uploaded: no palette */
         n->drawn = gGsFrame;
         if (n->t.mem == NULL && !nat_reload(n)) { return 0; }
@@ -1714,7 +1765,6 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
         n->drawn = gGsFrame;
         if (n->t.mem == NULL && !nat_reload(n)) { return 0; }
     }
-    pal = gGsPal[cbp & 16383] != 0 ? &sPal[gGsPal[cbp & 16383] - 1] : NULL;
     if (pal != NULL && (pal->addr == 0 || pal->n != (n->bits == 8 ? 256u : 16u))) { pal = NULL; }
     sPalMade[pal == NULL]++;
     for (i = 0; i < (n->bits == 8 ? 256u : 16u); i++) { /* the palette, in the order the indices count: the pack's, or
@@ -1768,5 +1818,6 @@ GsBackend sPvrBackend = {
     pipe_get,
     target_read,
     target_copy,
+    tex_handle,
 };
 #endif

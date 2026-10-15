@@ -1,5 +1,8 @@
 #include "common.h"
 #include "sys/gfx.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "sys/hwreg.h"
 #include "sys/debug.h"
 #include "sys/file.h"
@@ -205,12 +208,44 @@ s32 Gfx_Stub102118(void) {
     return 1;
 }
 
+#ifdef PORT
+/* Gfx_ClearScreen's fill as a record (include/port/rnd.h): the state it has just set (the frame and its write mask,
+   the whole picture, depth not written) and the fill's own (blended normally, no test, no mark). 0 = not taken
+   (a write mask other than the colour's or the alpha's): the sprites are sent. */
+static s32 Gfx_PortClear(s32 fbmsk, u32 rgba) {
+    RndState st;
+
+    if (!Port_TakesRecords() || (fbmsk != 0 && fbmsk != 0xFFFFFF && (u32)fbmsk != 0xFF000000)) {
+        return 0;
+    }
+    Dma_AddFillState(rgba);
+    Rnd_StateInit(&st, (u32)GFX_FRAME_FBP());
+    st.flags = fbmsk == 0xFFFFFF ? RND_NO_COLOUR : fbmsk != 0 ? RND_NO_ALPHA : 0;
+    return Rnd_Fill(&st, rgba);
+}
+
+/* The whole picture in colour `rgba` as a record, in the default state (Gfx_PutDefaultEnv) with no test and depth
+   not written: src/sys/fade.c Fade_DrawRect's. */
+s32 Gfx_PortFill(u32 rgba) {
+    RndState st;
+
+    Rnd_StateInit(&st, (u32)(GFX_FRAME_REG() & 0x1FF));
+    return Rnd_Fill(&st, rgba);
+}
+#endif
+
 /* Queues a full-screen rectangle of colour `rgba` on the current buffer, with depth writes off and `fbmsk` as write mask. */
 void Gfx_ClearScreen(s32 fbmsk, u32 rgba) {
     Dma_AddFrame(GFX_FRAME_FBP(), GFX_FBW, fbmsk);
     Dma_AddScissor(0, GFX_WIDTH - 1, 0, GFX_HEIGHT - 1);
     Dma_AddZbuf(GFX_ZBP, 1);
+#ifdef PORT
+    if (!Gfx_PortClear(fbmsk, rgba)) {
+        Dma_AddFillRect(GFX_OFX >> 4, GFX_OFY >> 4, GFX_WIDTH, GFX_HEIGHT, rgba);
+    }
+#else
     Dma_AddFillRect(GFX_OFX >> 4, GFX_OFY >> 4, GFX_WIDTH, GFX_HEIGHT, rgba);
+#endif
     Dma_AddZbuf(GFX_ZBP, 0);
     Dma_AddFrame(GFX_FRAME_FBP(), GFX_FBW, 0);
 }
@@ -264,6 +299,9 @@ void Gfx_PutDefaultEnv(GsQword **pp) {
     (*pp)->d[0] = 0x60; /* bilinear magnify and minify, no mipmaps */
     (*pp)->d[1] = GS_TEX1_1;
     (*pp)++;
+#ifdef PORT
+    Rnd_DefaultEnv((u32)(GFX_FRAME_REG() & 0x1FF));
+#endif
 }
 
 /* Empty in the retail build. */

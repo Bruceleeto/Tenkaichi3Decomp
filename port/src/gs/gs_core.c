@@ -1138,7 +1138,7 @@ static void reg_write(uint32_t addr, uint64_t d) {
     case 0x52: gs.trxreg = d; break;
     case 0x53: gs.trxdir = d; transfer_begin(); break;
     case 0x79: if (sRndN < 16) { sRnd[sRndN++] = d; } break; /* a record the game hands over (port/src/gs_marker.c Port_Quad), */
-    case 0x7A: if (sGpu && d == 1 && sRndN == 9) { GsGpu_Quad((const void *)sRnd); } sRndN = 0; break; /* and its end */
+    case 0x7A: if (sGpu && d == 1 && sRndN == 14) { GsGpu_Quad((const void *)sRnd); } sRndN = 0; break; /* and its end */
     case 0x7F: if (sGpu) { GsGpu_Native((int)d); } break; /* not a GS register: the port's marker (gs_marker.c) */
     case 0x7B: sTintNext = d; break; /* (a tint of the palettes of the two pages from page d: gs_pvr.c Port_ClutTint) */
     case 0x7C: gGsTint[d & 511] = gGsTint[(d + 1) & 511] = sTintNext; break;

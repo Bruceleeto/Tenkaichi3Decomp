@@ -1,5 +1,11 @@
 #include "common.h"
 #include "battle/hud_0.h"
+#ifdef PORT
+#include "port/rnd.h"
+extern u32 Tex_PalHandle(void *e); /* sys/gfxm_b_b.h */
+extern u64 *Dma_BeginDirect(void);
+extern void Dma_EndDirect(u64 *end);
+#endif
 
 /*
  * Battle pause menu, part 3: head of the skill-list text module. Source range 0x215010-0x215420.
@@ -84,6 +90,15 @@ void BtlText_PutSprite(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 v0
     y0 += 0x720;
     y1 += 0x720;
     if (BtlText_IsOnScreen(x0, y0, x1, y1)) {
+#ifdef PORT
+        if (gRndSprites) { /* (BtlMenu_BeginDraw's packet: a record) */
+            BtlMenuTex *e = &BtlMenu_GetWork()->tex->ent[part];
+
+            Rnd_Sprite(x0, y0, x1, y1, u0 << 4, v0 << 4, u1 << 4, v1 << 4, color, Port_TexHandle(e), Tex_PalHandle(e),
+                       BtlText_GetTex0(part));
+            return;
+        }
+#endif
         (*pkt)[0] = 0x8400000000008001;
         (*pkt)[1] = 0x535316F0;
         y0++;
@@ -119,6 +134,19 @@ u64 BtlText_GetTex0(s32 part) {
 
 /* Writes SCISSOR_1 for a clip rectangle (inclusive pixel bounds). */
 void BtlText_PutScissor(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1) {
+#ifdef PORT
+    Rnd_SetScissor(0, x0, x1, y0, y1);
+    if (gRndSprites) { /* (the sprites are records: the register in a packet of its own) */
+        u64 *p = Dma_BeginDirect();
+
+        p[0] = 0x1000000000008001;
+        p[1] = 0xE;
+        p[2] = (((s64)x0 | ((s64)x1 << 16)) | ((s64)y0 << 32)) | ((s64)y1 << 48);
+        p[3] = 0x40;
+        Dma_EndDirect(p + 4);
+        return;
+    }
+#endif
     (*pkt)[0] = 0x1000000000008001;
     (*pkt)[1] = 0xE;
     *pkt += 2;

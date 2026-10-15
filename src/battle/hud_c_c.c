@@ -4,6 +4,9 @@
 #include "sys/gfx.h"
 #include "sys/gfxm_b_b.h"
 #include "sys/sprite.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Battle HUD: the sprite library, 0x224B50-0x226488 (it ends with HudSprite_Draw and the node setters of
@@ -211,6 +214,41 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
 #define HUDC_XYZ_CONV(v) \
     ((((s32)(v)[0] << 4) + SPRITE_OFS_X) | ((u64)((Sprite_ConvY((s32)(v)[1]) << 4) + SPRITE_OFS_Y) << 16))
 
+#ifdef PORT
+/* The sprite as a record (include/port/rnd.h) instead of its vertices: the corners at the whole pixels the packet
+   gives them, the texels with its half-texel offset, a colour per corner, and the state of GS context ctx as the
+   HUD has set it (gRndCtx). t: the texture entry, pal: the one whose palette it is drawn with, tex0 the TEX0 the
+   packet sends. `end`: the end of the packet begun for it (its state, ended in front of the record). 0 = not
+   taken: the vertices are sent. */
+static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, HudCTex *pal, u64 tex0, const u32 *rgba, u64 *end) {
+    RndQuad r;
+    s32 i;
+
+    if (!gRndCtxValid || !Port_TakesRecords()) {
+        return 0;
+    }
+    Dma_EndDirect(end);
+    memset(&r, 0, sizeof(r));
+    r.st = gRndCtx[ctx];
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = (f32)(s32)v[i][0];
+        r.xy[i][1] = (f32)(s32)v[i][1];
+        r.rgba[i] = rgba[i];
+        if (uv != NULL) {
+            r.uv[i][0] = (int16_t)((uv[i][0] << 4) + 8);
+            r.uv[i][1] = (int16_t)((uv[i][1] << 4) + 8);
+        }
+    }
+    if (t != NULL) {
+        r.tex = Port_TexHandle(t);
+        r.pal = pal->clutSize != 0 ? Port_PalHandle(pal->clut) : 0;
+        r.gsTex0 = tex0;
+    }
+    r.gsCtx = (u32)ctx;
+    return Port_Quad(&r);
+}
+#endif
+
 /* Draws the sprite's rectangle with colour 0, alpha 0 (source alpha blend, no texture, no tests): with the
    blend equation in force this leaves the picture and clears the destination alpha, which the gauge part uses as
    a mask. */
@@ -257,6 +295,19 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
     p[0] = 0x44; /* triangle strip, alpha blended */
     p[1] = GS_PRIM;
     p += 2;
+#ifdef PORT
+    Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST_1 0x30000 */
+    Rnd_SetMark(0, 0);                                                  /* FBA_1 0 */
+    {
+        u32 c[4] = {(u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ};
+        p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
+        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
+            return;
+        }
+        p[-12] &= ~(1ull << 15);
+    }
+#endif
     p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
     p[1] = 0x5555;
     p += 2;
@@ -313,6 +364,19 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
     p[0] = 0x44;
     p[1] = GS_PRIM;
     p += 2;
+#ifdef PORT
+    Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST_1 0x30000 */
+    Rnd_SetMark(0, 0);                                                  /* FBA_1 0 */
+    {
+        u32 c[4] = {0xFF000000u, 0xFF000000u, 0xFF000000u, 0xFF000000u};
+        p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
+        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
+            return;
+        }
+        p[-12] &= ~(1ull << 15);
+    }
+#endif
     p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
     p[1] = 0x5555;
     p += 2;
@@ -332,6 +396,41 @@ void HudGfx_ClearAlpha(void) {
     s32 i;
     s32 n;
     u64 *tag;
+
+#ifdef PORT
+    if (gRndCtxValid && Port_TakesRecords()) {
+        /* The fill as a record between the state it is drawn in and the state after it: the whole picture, colour 0,
+           alpha 0, under context 1's state with its depth (0) written. */
+        static f32 v[4][4] = {{0, 0}, {GFX_WIDTH, 0}, {0, GFX_HEIGHT}, {GFX_WIDTH, GFX_HEIGHT}};
+        u32 c[4] = {0, 0, 0, 0};
+        RndState keep = gRndCtx[0];
+
+        p[0] = GIF_TAG(2, 1, 1);
+        p[1] = GIF_REG_AD;
+        p += 2;
+        p[0] = GFX_CLEAR_RGBAQ;
+        p[1] = GS_RGBAQ;
+        p += 2;
+        p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
+        p[1] = GS_ZBUF_1;
+        p += 2;
+        Rnd_SetFlag(0, RND_ZWRITE, 1);
+        HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p);
+        gRndCtx[0] = keep;
+        p = Dma_BeginDirect();
+        p[0] = GIF_TAG(2, 1, 1);
+        p[1] = GIF_REG_AD;
+        p += 2;
+        p[0] = 0x3F80000080808080;
+        p[1] = GS_RGBAQ;
+        p += 2;
+        p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
+        p[1] = GS_ZBUF_1;
+        p += 2;
+        Dma_EndDirect(p);
+        return;
+    }
+#endif
 
     p[0] = GIF_TAG(3, 0, 1);
     p[1] = GIF_REG_AD;
@@ -400,6 +499,17 @@ void HudGfx_SetEnv(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    {   /* both contexts: the frame, depth not written, the whole picture, blended normally, no test, filtered,
+           repeating */
+        s32 i;
+        for (i = 0; i < 2; i++) {
+            Rnd_StateInit(&gRndCtx[i], (u32)(HUDC_FRAME_WORD() & 0x1FF));
+            gRndCtx[i].flags = RND_SMOOTH | RND_REPEAT;
+        }
+        gRndCtxValid = 1;
+    }
+#endif
 }
 
 /* Draws a sprite as a four-vertex triangle strip under the current VU0 matrix. A textured sprite uploads its
@@ -464,6 +574,16 @@ void HudSprite_DrawAt(HudCSprite *spr, HudCRes *res, u8 ctx2, s32 tbp, s32 cbp) 
         uv[2][1] = spr->v1;
         uv[3][1] = spr->v1;
     }
+#ifdef PORT
+    {
+        u32 c = (u32)spr->r | ((u32)spr->g << 8) | ((u32)spr->b << 16) | ((u32)spr->a << 24);
+        u32 cs[4] = {c, c, c, c};
+        u64 t0 = spr->tex >= 0 ? t->tex0 | ((u64)(pal->clutBlock + cbp) << 37) | (t->imageBlock + tbp) | ((u64)0x8000 << 19) : 0;
+        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag)) {
+            return;
+        }
+    }
+#endif
     if (spr->tex >= 0) {
         s32 block = t->imageBlock + tbp;
         u64 clut = (u64)(pal->clutBlock + cbp) << 37;
@@ -567,6 +687,16 @@ void HudSprite_DrawGradient(HudCSprite *spr, HudCRes *res, u8 ctx2, s32 colorL, 
         uv[2][1] = spr->v1;
         uv[3][1] = spr->v1;
     }
+#ifdef PORT
+    {
+        u32 cl = (u32)HUDC_RGBA(colorL), cr = (u32)HUDC_RGBA(colorR);
+        u32 cs[4] = {cl, cr, cl, cr};
+        u64 t0 = spr->tex >= 0 ? t->tex0 | ((u64)(pal->clutBlock + HUDC_GRADIENT_CBP) << 37) | (t->imageBlock + HUDC_GRADIENT_TBP) | ((u64)0x8000 << 19) : 0;
+        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag)) {
+            return;
+        }
+    }
+#endif
     if (spr->tex >= 0) {
         s32 block = t->imageBlock + HUDC_GRADIENT_TBP;
         u64 clut = (u64)(pal->clutBlock + HUDC_GRADIENT_CBP) << 37;

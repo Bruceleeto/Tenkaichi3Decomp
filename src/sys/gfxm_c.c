@@ -669,6 +669,10 @@ f32 FlashDraw_AdjustY(f32 y) {
     return y;
 }
 
+#ifdef PORT
+static u32 sFlashTex, sFlashPal; /* the handles the last FlashDraw_UploadTex was given (0: sent to GS memory) */
+#endif
+
 /* Queues the upload of texture `index` of an image's entry table to block `tbp` and its CLUT to the blocks behind
    it (+0x40), and returns the TEX0 value. Entry `index` holds the CLUT; when it has no pixels of its own the
    pixels are entry 0's (several palettes for one picture). */
@@ -683,14 +687,22 @@ u64 FlashDraw_UploadTex(FlashTex *tex, s32 index, s32 tbp) {
         index = 0;
     }
     pix = (TexEntry *)((index << 6) + (u32)tex);
+#ifdef PORT
+    if (!(sFlashTex = (u32)Port_TexNative(pix, base))) {
+#else
     if (!Port_TexNative(pix, base)) {
+#endif
         pkt.bitbltbuf = (base << 32) | ((u64)pix->pixBlt << 48);
         Dma_AddData(&pkt, sizeof(pkt));
         Dma_AddRef(pix->pix, pix->pixSize);
     }
     tbp += pix->tbpStep;
     tbp += 0x40;
+#ifdef PORT
+    if (!(sFlashPal = (u32)Port_PalNative(clut->clut, clut->clutSize, clut->clutBlt, tbp))) {
+#else
     if (!Port_PalNative(clut->clut, clut->clutSize, clut->clutBlt, tbp)) {
+#endif
         pkt.bitbltbuf = ((s64)tbp << 32) | ((u64)clut->clutBlt << 48);
         Dma_AddData(&pkt, sizeof(pkt));
         Dma_AddRef(clut->clut, clut->clutSize);
@@ -753,16 +765,27 @@ u64 *FlashDraw_PutSprite(u64 *p, FlashQuad *q, u64 tex0) {
 }
 
 #ifdef PORT
-/* The quad as a record for the renderer (include/port/rnd.h) instead of a GS packet: the same corners, texels
-   (FlashDraw_PutSprite's), colour and blending. 0 = not taken: the packet is sent. */
-static s32 FlashDraw_PortQuad(FlashQuad *q, u64 tex0) {
+/* The quad as a record for the renderer (include/port/rnd.h) instead of its vertices: the same corners, texels
+   (FlashDraw_PutSprite's), colour, and the state the packet in front of it has just set; tex0 0: flat. `mask` as
+   FlashDraw_MaskQuad's `set` (-1: not through the mask): 1 writes the alpha alone, 0 the colour alone where the
+   texel's alpha is above 0x3C, blended by the alpha there; both with the depth test ">=" (at depth 0: where
+   nothing with depth was drawn). `end`: the end of the state packet in front of it (ended before the record).
+   0 = not taken: the vertices are sent. */
+static s32 FlashDraw_PortQuad(FlashQuad *q, u64 tex0, s32 mask, u64 *end) {
     RndQuad r;
     s32 uv[4];
     s32 i;
 
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    Dma_EndDirect(end);
+    memset(&r, 0, sizeof(r));
+    Rnd_StateInit(&r.st, (u32)(GFX_FRAME_REG() & 0x1FF));
     for (i = 0; i < 4; i++) {
         r.xy[i][0] = q->pt[i][0];
         r.xy[i][1] = FlashDraw_AdjustY(q->pt[i][1]);
+        r.rgba[i] = (u32)FLASH_RGBA(q);
     }
     uv[0] = q->uv.u0 + 1;
     uv[2] = q->uv.u1 - 1;
@@ -777,14 +800,26 @@ static s32 FlashDraw_PortQuad(FlashQuad *q, u64 tex0) {
         uv[3] = q->uv.v0;
     }
     for (i = 0; i < 4; i++) {
-        r.uv[i][0] = (int16_t)uv[(i & 1) ? 2 : 0];
-        r.uv[i][1] = (int16_t)uv[(i & 2) ? 3 : 1];
+        r.uv[i][0] = (int16_t)(uv[(i & 1) ? 2 : 0] << 4);
+        r.uv[i][1] = (int16_t)(uv[(i & 2) ? 3 : 1] << 4);
     }
-    r.rgba = (u32)FLASH_RGBA(q);
-    r.fbp = (u32)(GFX_FRAME_REG() & 0x1FF);
-    r.tex0 = tex0;
-    r.blend = (q->flags & FLASH_QUAD_ADD) ? RND_BLEND_ADD : (q->flags & FLASH_QUAD_SUB) ? RND_BLEND_SUB : RND_BLEND_NORMAL;
-    r.flags = tex0 != 0 ? RND_SMOOTH | ((q->flags & FLASH_QUAD_REPEAT) ? RND_REPEAT : 0) : 0;
+    if (tex0 != 0) {
+        r.tex = sFlashTex;
+        r.pal = sFlashPal;
+        r.gsTex0 = tex0;
+        r.st.flags = RND_SMOOTH | ((q->flags & FLASH_QUAD_REPEAT) ? RND_REPEAT : 0);
+    }
+    r.st.blend = (q->flags & FLASH_QUAD_ADD) ? RND_BLEND_ADD : (q->flags & FLASH_QUAD_SUB) ? RND_BLEND_SUB : RND_BLEND_NORMAL;
+    if (mask == 1) {
+        r.st.flags |= RND_NO_COLOUR;
+        r.st.ztest = RND_Z_GEQUAL;
+    } else if (mask == 0) {
+        r.st.flags |= RND_NO_ALPHA | RND_DEST_ALPHA;
+        r.st.ztest = RND_Z_GEQUAL;
+        r.st.atest = RND_ATEST_GREATER; /* TEST 0x503CD */
+        r.st.aref = 0x3C;
+    }
+    r.gsCtx = 0;
     return Port_Quad(&r);
 }
 #endif
@@ -816,6 +851,11 @@ void FlashDraw_FlatQuad(FlashQuad *q) {
     p[0] = 0x30000;
     p[1] = 0x47;
     p += 2;
+#ifdef PORT
+    if (FlashDraw_PortQuad(q, 0, -1, p)) {
+        return;
+    }
+#endif
     p[0] = 0x6400000000008001;
     p[1] = 0x555510;
     p += 2;
@@ -884,6 +924,11 @@ void FlashDraw_MaskQuad(FlashQuad *q, u64 tex0, s32 set) {
     }
     p[1] = 8;
     p += 2;
+#ifdef PORT
+    if (FlashDraw_PortQuad(q, tex0, set, p)) {
+        return;
+    }
+#endif
     Dma_EndDirect(FlashDraw_PutSprite(p, q, tex0));
 }
 
@@ -900,11 +945,6 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
         tex0 = FlashDraw_UploadTex(tex, q->uv.tex, 0x3000);
         Dma_AddTexFlush();
     } else {
-#ifdef PORT
-        if (FlashDraw_PortQuad(q, 0)) {
-            return;
-        }
-#endif
         FlashDraw_FlatQuad(q);
         return;
     }
@@ -917,11 +957,6 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
         FlashDraw_MaskQuad(q, tex0, 0);
         return;
     }
-#ifdef PORT
-    if (FlashDraw_PortQuad(q, tex0)) {
-        return;
-    }
-#endif
     p = Dma_BeginDirect();
     p[0] = 0x1000000000008006;
     p[1] = 0xE;
@@ -954,6 +989,11 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
     }
     p[1] = 8;
     p += 2;
+#ifdef PORT
+    if (FlashDraw_PortQuad(q, tex0, -1, p)) {
+        return;
+    }
+#endif
     Dma_EndDirect(FlashDraw_PutSprite(p, q, tex0));
 }
 

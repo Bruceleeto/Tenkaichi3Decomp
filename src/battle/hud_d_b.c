@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "battle/hud_d.h"
 #include "sys/dma.h"
 #include "sys/gfx.h"
@@ -64,6 +67,11 @@ void HudNotice_GsBeginAdd(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_GEQUAL, 1, RND_AFAIL_RGB, RND_MASK_NONE); /* TEST_1 0x3301B */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_ALPHA);
+    Rnd_SetBlend(1, RND_BLEND_ADD, 1); /* ALPHA_2 0x58 */
+#endif
 }
 
 /* Leaves it: TEST_1 = 0x30000, FRAME_2 without mask, ALPHA_2 = 0x44. */
@@ -77,6 +85,11 @@ void HudNotice_GsEndAdd(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetBlend(1, RND_BLEND_NORMAL, 0);
+#endif
 }
 
 /* The same as HudNotice_GsBeginAdd, and FRAME_1 writes only alpha. */
@@ -91,6 +104,12 @@ void HudNotice_GsBeginAddAlpha(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_GEQUAL, 1, RND_AFAIL_RGB, RND_MASK_NONE); /* TEST_1 0x3301B */
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_COLOUR);
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_ALPHA);
+    Rnd_SetBlend(1, RND_BLEND_ADD, 1); /* ALPHA_2 0x58 */
+#endif
 }
 
 /* Leaves it. */
@@ -105,6 +124,12 @@ void HudNotice_GsEndAddAlpha(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetBlend(1, RND_BLEND_NORMAL, 0);
+#endif
 }
 
 /* GS state for drawing a mask into the alpha plane: FBA_1 on, FRAME_1 writes only alpha, TEST_2 = 0x3C000
@@ -120,6 +145,12 @@ void HudNotice_GsBeginMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetMark(0, 1);
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_COLOUR);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_IF_MARKED); /* TEST_2 0x3C000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+#endif
 }
 
 /* Leaves it: FBA_1 off, FRAME_1 without mask, TEST_2 = 0x30000. */
@@ -134,6 +165,12 @@ void HudNotice_GsEndMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetMark(0, 0);
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+#endif
 }
 
 /* Draw callback: all sprites of the node, plain. */

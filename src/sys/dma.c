@@ -490,6 +490,34 @@ s32 Dma_Stub101870(void) {
 }
 
 /* Queues a flat-colour rectangle drawn as 32-pixel-wide sprites (depth test off, plain alpha blend). */
+#ifdef PORT
+/* What Dma_AddFillRect leaves set (ALPHA_1, TEST_1, FBA_1, PRIM, RGBAQ) without its sprites: for a fill drawn as a
+   record (include/port/rnd.h). */
+void Dma_AddFillState(u32 rgba) {
+    u64 *p = Dma_BeginDirect();
+
+    p[0] = GIF_TAG(5, 1, 1);
+    p[1] = GIF_REG_AD;
+    p += 2;
+    p[0] = 0x44;
+    p[1] = GS_ALPHA_1;
+    p += 2;
+    p[0] = 0x30000;
+    p[1] = GS_TEST_1;
+    p += 2;
+    p[0] = 0;
+    p[1] = GS_FBA_1;
+    p += 2;
+    p[0] = 0x46;
+    p[1] = GS_PRIM;
+    p += 2;
+    p[0] = (u64)rgba | (0x3F800000ULL << 32);
+    p[1] = GS_RGBAQ;
+    p += 2;
+    Dma_EndDirect(p);
+}
+#endif
+
 void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     s32 n = w / 32;
     u64 *p = Dma_BeginDirect();

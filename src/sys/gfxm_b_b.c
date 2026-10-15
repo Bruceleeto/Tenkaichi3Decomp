@@ -8,6 +8,9 @@
 #include "sys/dma.h"
 #include "sys/gfxm_b.h"
 #include "sys/gfxm_b_b.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 extern void *memset(void *dst, s32 c, u32 n);
 
@@ -268,6 +271,12 @@ void Tex_UploadPixels(TexEntry *e, s32 tbp) {
 }
 
 /* Queues the upload of a texture's CLUT to GS block `cbp`. */
+#ifdef PORT
+u32 Tex_PalHandle(TexEntry *e) {
+    return e->clutOfs != 0 ? Port_PalHandle(e->clut) : 0;
+}
+#endif
+
 void Tex_UploadClut(TexEntry *e, s32 cbp) {
     if (e->clutOfs != 0) {
         if (!Port_PalNative(e->clut, e->clutSize, e->clutBlt, cbp)) {

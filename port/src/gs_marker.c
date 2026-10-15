@@ -19,40 +19,139 @@ void Port_GsMarker(int effect) {
     Dma_AddData(pkt, sizeof(pkt));
 }
 
-/* include/port/rnd.h: the quad as nine writes of register 0x79 and one of 0x7A, which ends it (1: a quad). */
+/* include/port/rnd.h: the quad as fourteen writes of register 0x79 and one of 0x7A, which ends it (1: a quad). */
 #include <string.h>
 #include "../../include/port/rnd.h"
 
+#define RND_WORDS (sizeof(RndQuad) / 8)
+typedef char RndQuadSize[sizeof(RndQuad) == 112 ? 1 : -1];
+
 extern int Gs_TakesRecords(void); /* gs/gs_core.c */
 
-typedef char RndQuadSize[sizeof(RndQuad) == 72 ? 1 : -1];
+RndState gRndCtx[2];
+int gRndCtxValid;
 
 int Port_Quad(const RndQuad *q) {
-    uint32_t pkt[4 + 4 + 10 * 4];
-    int i;
+    uint32_t pkt[4 + 4 + (RND_WORDS + 1) * 4];
+    uint32_t i;
 
     if (!Gs_TakesRecords()) {
         return 0;
     }
-    pkt[0] = 0x10000000u | 11;          /* DMA CNT, 11 quadwords */
+    pkt[0] = 0x10000000u | (RND_WORDS + 2); /* DMA CNT: the GIF tag and the writes */
     pkt[1] = 0;
-    pkt[2] = 0x10000000u;               /* VIF FLUSHE */
-    pkt[3] = 0x50000000u | 11;          /* VIF DIRECT 11 */
-    pkt[4] = 0x8000u | 10;              /* GIF tag: 10 loops, EOP, one register: A+D */
+    pkt[2] = 0x10000000u;                   /* VIF FLUSHE */
+    pkt[3] = 0x50000000u | (RND_WORDS + 2); /* VIF DIRECT */
+    pkt[4] = 0x8000u | (RND_WORDS + 1);     /* GIF tag: a loop per write, EOP, one register: A+D */
     pkt[5] = 0x10000000u;
     pkt[6] = 0xE;
     pkt[7] = 0;
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i <= RND_WORDS; i++) {
         uint32_t *w = &pkt[8 + i * 4];
-        if (i < 9) {
+        if (i < RND_WORDS) {
             memcpy(w, (const uint8_t *)q + i * 8, 8);
         } else {
             w[0] = 1;
             w[1] = 0;
         }
-        w[2] = i < 9 ? 0x79 : 0x7A;
+        w[2] = i < RND_WORDS ? 0x79 : 0x7A;
         w[3] = 0;
     }
     Dma_AddData(pkt, sizeof(pkt));
     return 1;
+}
+
+int Port_TakesRecords(void) {
+    return Gs_TakesRecords();
+}
+
+void Rnd_StateInit(RndState *s, uint32_t fbp) {
+    memset(s, 0, sizeof(*s));
+    s->fbp = fbp;
+    s->scissor[2] = 511;
+    s->scissor[3] = 447;
+}
+
+int Rnd_Fill(const RndState *st, uint32_t rgba) {
+    RndQuad r;
+    int i;
+
+    memset(&r, 0, sizeof(r));
+    r.st = *st;
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = (i & 1) ? 512.0f : 0.0f;
+        r.xy[i][1] = (i & 2) ? 448.0f : 0.0f;
+        r.rgba[i] = rgba;
+    }
+    return Port_Quad(&r);
+}
+
+int gRndSprites;
+
+int Rnd_Sprite(int x0, int y0, int x1, int y1, int u0, int v0, int u1, int v1, uint32_t rgba, uint32_t tex,
+               uint32_t pal, uint64_t tex0) {
+    RndQuad r;
+    int i;
+
+    if (!gRndSprites) {
+        return 0;
+    }
+    memset(&r, 0, sizeof(r));
+    r.st = gRndCtx[0];
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = (float)(((i & 1) ? x1 : x0) - 0x700);
+        r.xy[i][1] = (float)(((i & 2) ? y1 : y0) - 0x720);
+        r.uv[i][0] = (int16_t)((i & 1) ? u1 : u0);
+        r.uv[i][1] = (int16_t)((i & 2) ? v1 : v0);
+        r.rgba[i] = rgba;
+    }
+    r.tex = tex;
+    r.pal = pal;
+    r.gsTex0 = tex0;
+    Port_Quad(&r);
+    return 1;
+}
+
+void Rnd_DefaultEnv(uint32_t fbp) {
+    RndState *s = &gRndCtx[0];
+    Rnd_StateInit(s, fbp);
+    s->flags = RND_ZWRITE | RND_SMOOTH; /* (ZBUF without mask; TEX1 0x60; CLAMP clamped) */
+    s->ztest = RND_Z_GEQUAL;            /* (TEST 0x50000) */
+}
+
+void Rnd_SetTest(int ctx, int ztest, int atest, int aref, int afail, int mask) {
+    RndState *s = &gRndCtx[ctx & 1];
+    s->ztest = (uint8_t)ztest;
+    s->atest = (uint8_t)atest;
+    s->aref = (uint8_t)aref;
+    s->afail = (uint8_t)afail;
+    s->mask = (uint8_t)mask;
+}
+
+void Rnd_SetWrite(int ctx, uint32_t fbp, int noWrite) {
+    RndState *s = &gRndCtx[ctx & 1];
+    s->fbp = fbp;
+    s->flags = (uint16_t)((s->flags & ~(RND_NO_COLOUR | RND_NO_ALPHA)) | (noWrite & (RND_NO_COLOUR | RND_NO_ALPHA)));
+}
+
+void Rnd_SetMark(int ctx, int on) {
+    Rnd_SetFlag(ctx, RND_MARK, on);
+}
+
+void Rnd_SetBlend(int ctx, int blend, int destAlpha) {
+    gRndCtx[ctx & 1].blend = (uint8_t)blend;
+    Rnd_SetFlag(ctx, RND_DEST_ALPHA, destAlpha);
+}
+
+void Rnd_SetFlag(int ctx, int flag, int on) {
+    RndState *s = &gRndCtx[ctx & 1];
+    s->flags = (uint16_t)(on ? s->flags | flag : s->flags & ~flag);
+}
+
+void Rnd_SetScissor(int ctx, int x0, int x1, int y0, int y1) {
+    RndState *s = &gRndCtx[ctx & 1];
+    s->scissor[0] = (int16_t)x0;
+    s->scissor[1] = (int16_t)y0;
+    s->scissor[2] = (int16_t)x1;
+    s->scissor[3] = (int16_t)y1;
 }

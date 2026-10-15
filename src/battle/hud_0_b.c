@@ -2,6 +2,10 @@
 #include "battle/hud_0.h"
 #include "sys/pad.h"
 #include "sys/heap.h"
+#ifdef PORT
+#include "port/rnd.h"
+extern u32 Tex_PalHandle(void *e); /* sys/gfxm_b_b.h */
+#endif
 
 /*
  * Battle pause menu, part 2: the menu engine. Source range 0x213238-0x215010.
@@ -83,12 +87,34 @@ void BtlMenu_BeginDraw(u64 **pkt) {
     (*pkt)[0] = 0x1310000E0;
     (*pkt)[1] = 0x4E;
     *pkt += 2;
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST_1 0 */
+    Rnd_SetFlag(0, RND_ZWRITE, 0);                                      /* ZBUF_1 without writes */
+    if (Port_TakesRecords()) { /* the state sent, the sprites as records (Rnd_Sprite): nothing written through pkt */
+        Dma_EndDirect(*pkt);
+        gRndSprites = 1;
+    }
+#endif
 }
 
 /* Sends the packet. */
 void BtlMenu_EndDraw(u64 **pkt) {
+#ifdef PORT
+    if (gRndSprites) {
+        gRndSprites = 0;
+        return;
+    }
+#endif
     Dma_EndDirect(*pkt);
 }
+
+#ifdef PORT
+/* The handles of sheet entry `tex`'s pixels and entry `clut`'s palette (include/port/rnd.h). */
+static void BtlMenu_PortTex(s32 tex, s32 clut, u32 *t, u32 *p) {
+    *t = Port_TexHandle(&gBtlMenu->tex->ent[tex]);
+    *p = Tex_PalHandle(&gBtlMenu->tex->ent[clut]);
+}
+#endif
 
 /* Writes one textured sprite: corners in screen pixels, UV in texels, pixels of sheet entry `tex` with the
    CLUT of entry `clut`. REGLIST GIF tag with 8 registers (PRIM, NOP, TEX0_1, RGBAQ, UV, XYZ2, UV, XYZ2);
@@ -99,6 +125,15 @@ void BtlMenu_PutSprite(u64 **pkt, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 v0
     y0 += 0x720;
     x1 += 0x700;
     y1 += 0x720;
+#ifdef PORT
+    if (gRndSprites) {
+        u32 t, p;
+
+        BtlMenu_PortTex(tex, clut, &t, &p);
+        Rnd_Sprite(x0, y0, x1, y1, u0 << 4, v0 << 4, u1 << 4, v1 << 4, color, t, p, BtlMenu_GetTex0(tex, clut));
+        return;
+    }
+#endif
     (*pkt)[0] = 0x8400000000008001;
     (*pkt)[1] = 0x535316F0;
     *pkt += 2;
@@ -128,6 +163,25 @@ void BtlMenu_PutMirrored(u64 **pkt, s32 x0, s32 x1, s32 y0, s32 y1, u32 color, s
 
     cx += 0x700;
     cy += 0x720;
+#ifdef PORT
+    if (gRndSprites) { /* the same sprites (UV 0 at the centre, w / h at the outer corner: mirrored by the corners) */
+        u32 t, p;
+        u64 t0 = BtlMenu_GetTex0(tex, clut);
+        s32 tw = halves == 1 ? hw * 2 : hw, th = halves == 1 ? hh * 2 : hh;
+
+        BtlMenu_PortTex(tex, clut, &t, &p);
+        if (halves == 1) {
+            Rnd_Sprite(cx - hw, cy - hh, cx, cy + hh, 0, 0, tw << 4, th << 4, color, t, p, t0);
+            Rnd_Sprite(cx + hw, cy - hh, cx, cy + hh, 0, 0, tw << 4, th << 4, color, t, p, t0);
+        } else {
+            Rnd_Sprite(cx - hw, cy - hh, cx, cy, 0, 0, tw << 4, th << 4, color, t, p, t0);
+            Rnd_Sprite(cx + hw, cy - hh, cx, cy, 0, 0, tw << 4, th << 4, color, t, p, t0);
+            Rnd_Sprite(cx - hw, cy + hh, cx, cy, 0, 0, tw << 4, th << 4, color, t, p, t0);
+            Rnd_Sprite(cx + hw, cy + hh, cx, cy, 0, 0, tw << 4, th << 4, color, t, p, t0);
+        }
+        return;
+    }
+#endif
     (*pkt)[0] = 0x4400000000008001;
     (*pkt)[1] = 0x16F0;
     *pkt += 2;

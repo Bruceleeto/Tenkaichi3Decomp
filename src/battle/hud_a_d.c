@@ -1,4 +1,7 @@
 #include "common.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "battle/hud_a.h"
 #include "sys/dma.h"
 #include "sys/gfx.h"
@@ -27,6 +30,12 @@ void HudGauge_GsBeginMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_IF_UNMARKED);                /* TEST_1 0x34000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_COLOUR);
+    Rnd_SetMark(1, 1);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_NOTEQUAL, 0, RND_AFAIL_NOTHING, RND_MASK_NONE); /* TEST_2 0x3000F */
+#endif
 }
 
 /* GS state after the masked sprite (the same packet as HudTeam_GsEndMask). */
@@ -41,6 +50,12 @@ void HudGauge_GsEndMask(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetMark(1, 0);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+#endif
 }
 
 /* A second mask state: ALPHA_2 = 0x48, TEST_2 = 0x3C000, TEST_1 = 0x307FB, FRAME_1 writing only alpha, FBA on
@@ -58,6 +73,14 @@ void HudGauge_GsBeginMask2(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetBlend(1, RND_BLEND_ADD, 0);                                                     /* ALPHA_2 0x48 */
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_IF_MARKED);                  /* TEST_2 0x3C000 */
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_GEQUAL, 0x7F, RND_AFAIL_NOTHING, RND_MASK_NONE); /* TEST_1 0x307FB */
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), RND_NO_COLOUR);
+    Rnd_SetMark(0, 1);
+    Rnd_SetMark(1, 1);
+#endif
 }
 
 /* Leaves it: both FRAME registers without mask, ALPHA_2 = 0x44, FBA off, TEST_2 = 0x30000. */
@@ -74,6 +97,14 @@ void HudGauge_GsEndMask2(void) {
     };
 
     Dma_AddData(pkt, sizeof(pkt));
+#ifdef PORT
+    Rnd_SetWrite(1, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetBlend(1, RND_BLEND_NORMAL, 0);
+    Rnd_SetWrite(0, (u32)(GFX_FRAME_REG() & 0x1FF), 0);
+    Rnd_SetMark(0, 0);
+    Rnd_SetMark(1, 0);
+    Rnd_SetTest(1, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST 0x30000 */
+#endif
 }
 
 /* Health bars of the side being shown. Health is drawn in bars of 10000, each 160 pixels wide; a bar that is

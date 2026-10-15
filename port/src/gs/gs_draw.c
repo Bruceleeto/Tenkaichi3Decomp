@@ -138,6 +138,8 @@ static const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) { (void)cbp; (void)n;
 static uint32_t GsPvr_PalKey(uint32_t cbp) { (void)cbp; return 0; }
 int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) { (void)cbp; (void)k; (void)o; (void)alpha; return 0; }
 void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
+uint32_t Port_TexHandle(const void *e) { (void)e; return 0; }
+uint32_t Port_PalHandle(const void *pkt) { (void)pkt; return 0; }
 #endif
 
 static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
@@ -191,6 +193,7 @@ static void tex_sweep(unsigned keep) {
    registers (regs_of), or filled in by a draw the game hands over itself (GsGpu_Quad). */
 typedef struct GsRegs {
     uint64_t prim, texa, tex0, tex1, clamp, scissor, alpha, test, frame, zbuf, fba;
+    GsTex tex; /* the texture itself (a handle's: GsGpu_Quad), its size in tex0; 0: the one tex0 names in GS memory */
 } GsRegs;
 
 static const GsRegs *regs_of(int ctx) {
@@ -198,6 +201,7 @@ static const GsRegs *regs_of(int ctx) {
     r.prim = gGs.prim; r.texa = gGs.texa;
     r.tex0 = gGs.tex0[ctx]; r.tex1 = gGs.tex1[ctx]; r.clamp = gGs.clamp[ctx]; r.scissor = gGs.scissor[ctx];
     r.alpha = gGs.alpha[ctx]; r.test = gGs.test[ctx]; r.frame = gGs.frame[ctx]; r.zbuf = gGs.zbuf[ctx]; r.fba = gGs.fba[ctx];
+    r.tex = 0;
     return &r;
 }
 
@@ -704,7 +708,9 @@ static int draw_state(const GsRegs *r, int topo, int sprite, int vu, GsDraw *d, 
     if (!tme && sprite) {
         gsTargets[d->target].stale = 0; /* cleared by the game: what is drawn into it from here on is real */
     }
-    if (tme) {
+    if (tme && r->tex != 0) {
+        d->tex = r->tex;
+    } else if (tme) {
         int kept = 0;
         src = GsDraw_TargetGet((uint32_t)((t0 & 0x3FFF) / 32), 0);
         if (sWholeFrame) { /* the cross-fade's picture: the frame kept on the card (GsGpu_Snapshot), if there is one */
@@ -1224,37 +1230,96 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     draw_prim(type, regs_of(ctx), v);
 }
 
+/* BT3_RND_CHECK=1: a record's state against the GS context's where it is drawn (the state packets are still sent,
+   include/port/rnd.h): each register that differs, once per register and pair of values. */
+static void rnd_check(const GsRegs *r, int ctx) {
+    static int on = -1, seen;
+    static uint64_t told[64][3];
+    static const char *names[] = {"FRAME", "ALPHA", "TEST", "FBA", "TEX1", "CLAMP", "SCISSOR", "ZBUF"};
+    uint64_t want[8], have[8], t;
+    int i, k;
+
+    if (on < 0) { on = getenv("BT3_RND_CHECK") != NULL && atoi(getenv("BT3_RND_CHECK")) != 0; }
+    if (!on || ctx < 0 || ctx > 1) { return; }
+    want[0] = r->frame & 0xFFFFFFFF000001FFull;  have[0] = gGs.frame[ctx] & 0xFFFFFFFF000001FFull;
+    want[1] = r->alpha & 0xFF;                   have[1] = gGs.alpha[ctx] & 0xFF;
+    for (k = 0; k < 2; k++) { /* (the same tests written two ways: no depth test, and an alpha test that always passes) */
+        t = k ? gGs.test[ctx] : r->test;
+        if (!((t >> 16) & 1)) { t = (t & ~(7ull << 16)) | 1ull << 16 | 1ull << 17; }
+        if ((t & 1) && ((t >> 1) & 7) == 1) { t &= ~0x3FFFull; }
+        if (!(t & 1)) { t &= ~0x3FFFull; }
+        (k ? have : want)[2] = t & 0x7FFFF;
+    }
+    want[3] = r->fba & 1;                        have[3] = gGs.fba[ctx] & 1;
+    want[4] = r->tex0 != 0 ? (r->tex1 >> 5) & 1 : 0; have[4] = r->tex0 != 0 ? (gGs.tex1[ctx] >> 5) & 1 : 0;
+    want[5] = r->tex0 != 0 ? r->clamp & 15 : 0;  have[5] = r->tex0 != 0 ? gGs.clamp[ctx] & 15 : 0;
+    want[6] = r->scissor & 0x07FF07FF07FF07FFull; have[6] = gGs.scissor[ctx] & 0x07FF07FF07FF07FFull;
+    want[7] = (r->zbuf >> 32) & 1;               have[7] = (gGs.zbuf[ctx] >> 32) & 1;
+    for (i = 0; i < 8; i++) {
+        if (want[i] == have[i]) { continue; }
+        for (k = 0; k < seen && !(told[k][0] == (uint64_t)i && told[k][1] == want[i] && told[k][2] == have[i]); k++) {}
+        if (k < seen) { continue; }
+        if (seen < 64) { told[seen][0] = (uint64_t)i; told[seen][1] = want[i]; told[seen][2] = have[i]; seen++; }
+        fprintf(stderr, "rnd: frame %u: a record's %s_%d is %llX, the GS's %llX\n", gGsFrame, names[i], ctx + 1,
+                (unsigned long long)want[i], (unsigned long long)have[i]);
+    }
+}
+
+/* Quads drawn from GS memory this frame (no handle, or one that names nothing now): what is left of the GS in 2D. */
+unsigned gsRndFallback;
+
 /* A quad the game handed over instead of a GS packet (include/port/rnd.h): recorded as the strip the packet drew,
-   from the state the record names and nothing of the GS's. 2D: depth neither tested nor written, the whole
-   picture. (The depth page is still named: draw_state tells drawing into it, and textures in it, by its address.) */
+   from the state the record names and nothing of the GS's. (The depth page is still named: draw_state tells
+   drawing into it, and textures in it, by its address.) */
 void GsGpu_Quad(const void *rec) {
-    static const uint64_t blend[3] = {0x44, 0x48, 0x42}; /* (Cs - Cd) * As + Cd, Cs * As + Cd, Cd - Cs * As */
+    static const uint64_t blend[3] = {0x44, 0x48, 0x42}; /* (Cs - Cd) * A + Cd, Cs * A + Cd, Cd - Cs * A */
+    static const uint8_t atst[8] = {1, 0, 2, 3, 4, 5, 6, 7}; /* RND_ATEST_ -> the GS's ATST */
     const RndQuad *q = (const RndQuad *)rec;
+    const RndState *st = &q->st;
     GsRegs r;
     GsVertex v[4];
+    uint32_t tw = 0, th = 0;
     int i;
 
     memset(&r, 0, sizeof(r));
-    r.prim = 4 | 1 << 6 | (q->tex0 != 0 ? 1 << 4 | 1 << 8 : 0); /* a strip, blended; textured by texel coordinates */
+    if (q->tex != 0 && sBackend->texHandle != NULL && (r.tex = sBackend->texHandle(q->tex, q->pal, &tw, &th)) != 0) {
+        uint32_t lw = 0, lh = 0;
+        while ((1u << lw) < tw) { lw++; }
+        while ((1u << lh) < th) { lh++; }
+        r.tex0 = (uint64_t)lw << 26 | (uint64_t)lh << 30 | 1ull << 34; /* its size; the texture's alpha used, modulated */
+    } else if (q->tex != 0 || q->gsTex0 != 0) {
+        static int log = -1;
+        if (log < 0) { log = getenv("BT3_TEX_LOG") != NULL; }
+        if (log) { fprintf(stderr, "rnd: frame %u: a quad from GS memory (handles %08X %08X, TEX0 %016llX)\n", gGsFrame, q->tex, q->pal, (unsigned long long)q->gsTex0); }
+        gsRndFallback++;
+        r.tex0 = q->gsTex0;
+    }
+    /* a strip, blended; textured by texel coordinates */
+    r.prim = 4 | 1 << 6 | (st->flags & RND_GOURAUD ? 1 << 3 : 0) | (r.tex0 != 0 ? 1 << 4 | 1 << 8 : 0);
     r.texa = 0x80ull << 32;
-    r.tex0 = q->tex0;
-    r.tex1 = q->flags & RND_SMOOTH ? 0x60 : 0;
-    r.clamp = q->flags & RND_REPEAT ? 0 : 5;
-    r.scissor = (uint64_t)(512 - 1) << 16 | (uint64_t)(448 - 1) << 48;
-    r.alpha = blend[q->blend < 3 ? q->blend : 0];
-    r.test = 0x30000; /* depth test "always", no alpha test */
-    r.frame = q->fbp & 0x1FF;
-    r.zbuf = 0xE0 | 0x31ull << 24 | 1ull << 32; /* the game's depth page (24-bit), not written */
+    r.tex1 = st->flags & RND_SMOOTH ? 0x60 : 0;
+    r.clamp = st->flags & RND_REPEAT ? 0 : 5;
+    r.scissor = (uint64_t)(uint16_t)st->scissor[0] | (uint64_t)(uint16_t)st->scissor[2] << 16 |
+                (uint64_t)(uint16_t)st->scissor[1] << 32 | (uint64_t)(uint16_t)st->scissor[3] << 48;
+    r.alpha = blend[st->blend < 3 ? st->blend : 0] | (st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by Ad instead of As) */
+    r.test = (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)atst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
+             (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
+             1ull << 16 | (uint64_t)(st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1) << 17;
+    r.frame = (st->fbp & 0x1FF) | (st->flags & RND_NO_COLOUR ? 0x00FFFFFFull << 32 : 0) | (st->flags & RND_NO_ALPHA ? 0xFF000000ull << 32 : 0);
+    r.fba = st->flags & RND_MARK ? 1 : 0;
+    r.zbuf = 0xE0 | 0x31ull << 24 | (st->flags & RND_ZWRITE ? 0 : 1ull << 32); /* the game's depth page (24-bit) */
+    rnd_check(&r, (int)q->gsCtx);
     memset(v, 0, sizeof(v));
     for (i = 0; i < 4; i++) {
         v[i].x = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
         v[i].y = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
-        v[i].u = q->uv[i][0] * 16;
-        v[i].v = q->uv[i][1] * 16;
-        v[i].r = (uint8_t)q->rgba;
-        v[i].g = (uint8_t)(q->rgba >> 8);
-        v[i].b = (uint8_t)(q->rgba >> 16);
-        v[i].a = (uint8_t)(q->rgba >> 24);
+        v[i].z = q->z;
+        v[i].u = q->uv[i][0];
+        v[i].v = q->uv[i][1];
+        v[i].r = (uint8_t)q->rgba[i];
+        v[i].g = (uint8_t)(q->rgba[i] >> 8);
+        v[i].b = (uint8_t)(q->rgba[i] >> 16);
+        v[i].a = (uint8_t)(q->rgba[i] >> 24);
     }
     draw_prim(3, &r, &v[0]);
     draw_prim(3, &r, &v[1]);

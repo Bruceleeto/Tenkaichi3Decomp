@@ -8,6 +8,9 @@
  * primitive coordinate ((x + 0x700) << 4, (y + 0x720) << 4): the window origin is (1792, 1824).
  */
 #include "common.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "battle/col_b.h"
 
 extern u64 *Dma_BeginDirect(void);
@@ -47,6 +50,11 @@ void Font_BeginPacket(CbFontOut *out) {
     out->p[0] = 0x156;
     out->p[1] = 0;
     out->p += 2;
+#ifdef PORT
+    Rnd_SetFlag(0, RND_REPEAT, 1);                                      /* CLAMP_1 0 */
+    Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST_1 0 */
+    Rnd_SetFlag(0, RND_ZWRITE, 0);                                      /* ZBUF_1 without writes */
+#endif
 }
 
 /* Closes the direct packet. */
@@ -63,6 +71,12 @@ void Font_PutSprite(CbFontOut *out, s32 x0, s32 y0, s32 x1, s32 y1, s32 u0, s32 
     y0 += 0x720;
     y1 += 0x720;
     if (Font_IsInGsRange(x0, y0, x1, y1)) {
+#ifdef PORT
+        /* (a font's palettes are the 4 at CBP + 0..3 of one upload, which no palette handle names: TEX0) */
+        if (Rnd_Sprite(x0, y0, x1, y1, u0 * 16 + 8, v0 * 16 + 8, u1 * 16 + 8, v1 * 16 + 8, rgba, 0, 0, tex0)) {
+            return;
+        }
+#endif
         out->p[0] = tex0;
         out->p[1] = (u64)rgba | ((u64)0x3F800000 << 32);
         out->p += 2;
@@ -165,6 +179,9 @@ void Font_PutScissor(u64 **pkt, FontCmd *cmd) {
     (*pkt)[0] = (u64)x0 | ((u64)x1 << 16) | ((u64)y0 << 32) | ((u64)y1 << 48);
     (*pkt)[1] = 0x40;
     *pkt += 2;
+#ifdef PORT
+    Rnd_SetScissor(0, x0, x1, y0, y1);
+#endif
 }
 
 /* Opens a REGLIST tag of sprites (TEX0_1, RGBAQ, UV, XYZ2, UV, XYZ2 per sprite) and remembers where it is. */
@@ -315,6 +332,28 @@ void Font_Flush(s32 first) {
             }
         }
         Font_BeginPacket(&pkt);
+#ifdef PORT
+        if (Port_TakesRecords()) {
+            /* The state packet, each command's scissor as one of its own, the sprites as records
+               (Rnd_Sprite: nothing is written through pkt). */
+            u64 *p;
+            int keep = gRndSprites; /* (inside BtlMenu_BeginDraw's packet, also records) */
+
+            Font_EndPacket(&pkt);
+            gRndSprites = 1;
+            cmd = &gFontCmds[first];
+            for (i = first; i < gFontCmdCount; i++, cmd++) {
+                p = Dma_BeginDirect();
+                Font_PutScissor(&p, cmd);
+                Dma_EndDirect(p);
+                Font_DrawCmd(&p, cmd);
+            }
+            gRndSprites = keep;
+            Font_Home();
+            Font_SetCmdCount(first);
+            return;
+        }
+#endif
         cmd = &gFontCmds[first];
         for (i = first; i < gFontCmdCount; i++, cmd++) {
             Font_PutScissor(&pkt, cmd);

@@ -2,6 +2,9 @@
 #include "battle/hud_a.h"
 #include "battle/battle.h"
 #include "sys/heap.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Battle HUD manager. Source range 0x2187E0-0x219EB0.
@@ -754,4 +757,7 @@ void Hud_Draw(void) {
         }
     }
     Hud_ClearTexMarks();
+#ifdef PORT
+    gRndCtxValid = 0; /* (HudGfx_SetEnv made it known) */
+#endif
 }

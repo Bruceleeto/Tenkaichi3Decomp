@@ -147,6 +147,9 @@ void Dma_AddZbuf(s32 zbp, s32 zmsk);
 void Dma_AddFba(s32 fba);
 s32 Dma_Stub101870(void);
 void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba);
+#ifdef PORT
+void Dma_AddFillState(u32 rgba);
+#endif
 void Dma_PutTexStrips(GsQword **pp, s32 x0, s32 y0, s32 x1, s32 y1, s32 xFrac, s32 yFrac, s32 u0, s32 v0, s32 u1, s32 v1,
                       s32 uFrac, s32 vFrac, u32 rgba, s32 blend);
 
