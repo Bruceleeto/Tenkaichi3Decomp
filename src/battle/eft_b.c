@@ -1185,48 +1185,67 @@ void EftBubble_DrawOne(EftBVec pos, EftBMtx m, f32 size, f32 rot, u8 r, u8 g, u8
     if (p == NULL) {
         return;
     }
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the flat strip as a record, in the packet's place */
+        u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
+        gOtCur = (u32 *)p;
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p = Ot_NewRec(0x54, 4);
+        Ot_RecTex0(p, tex->tex0);
+        Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, 0.0f, 0.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, 1.0f, 0.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, 0.0f, 1.0f, 1.0f, rgba);
+        Ot_RecVtx(p, 3, scr[3].x, scr[3].y, scr[3].z, 1.0f, 1.0f, 1.0f, rgba);
+        z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
+    } else
+#endif
+    {
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->prim = 0x54;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = 0xF42424242160;
+        p->rgbaq.r = r;
+        p->rgbaq.g = g;
+        p->rgbaq.b = b;
+        p->rgbaq.a = a;
+        p->next = NULL;
+        p->rgbaq.q = 1.0f;
+        p->st0.s = 0.0f;
+        p->st0.t = 0.0f;
+        p->st1.s = 1.0f;
+        p->st1.t = 0.0f;
+        p->st2.s = 0.0f;
+        p->st2.t = 1.0f;
+        p->st3.s = 1.0f;
+        p->st3.t = 1.0f;
+        p->xyz0.x = scr[0].x;
+        p->xyz0.y = scr[0].y;
+        p->xyz0.z = scr[0].z;
+        p->xyz0.f = 0xFF;
+        p->xyz1.x = scr[1].x;
+        p->xyz1.y = scr[1].y;
+        p->xyz1.z = scr[1].z;
+        p->xyz1.f = 0xFF;
+        p->xyz2.x = scr[2].x;
+        p->xyz2.y = scr[2].y;
+        p->xyz2.z = scr[2].z;
+        p->xyz2.f = 0xFF;
+        p->xyz3.x = scr[3].x;
+        p->xyz3.y = scr[3].y;
+        p->xyz3.z = scr[3].z;
+        p->xyz3.f = 0xFF;
+        z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
+        p->tex0 = tex->tex0;
     }
-    p->prim = 0x54;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = 0xF42424242160;
-    p->rgbaq.r = r;
-    p->rgbaq.g = g;
-    p->rgbaq.b = b;
-    p->rgbaq.a = a;
-    p->next = NULL;
-    p->rgbaq.q = 1.0f;
-    p->st0.s = 0.0f;
-    p->st0.t = 0.0f;
-    p->st1.s = 1.0f;
-    p->st1.t = 0.0f;
-    p->st2.s = 0.0f;
-    p->st2.t = 1.0f;
-    p->st3.s = 1.0f;
-    p->st3.t = 1.0f;
-    p->xyz0.x = scr[0].x;
-    p->xyz0.y = scr[0].y;
-    p->xyz0.z = scr[0].z;
-    p->xyz0.f = 0xFF;
-    p->xyz1.x = scr[1].x;
-    p->xyz1.y = scr[1].y;
-    p->xyz1.z = scr[1].z;
-    p->xyz1.f = 0xFF;
-    p->xyz2.x = scr[2].x;
-    p->xyz2.y = scr[2].y;
-    p->xyz2.z = scr[2].z;
-    p->xyz2.f = 0xFF;
-    p->xyz3.x = scr[3].x;
-    p->xyz3.y = scr[3].y;
-    p->xyz3.z = scr[3].z;
-    p->xyz3.f = 0xFF;
-    z = (scr[0].z + scr[2].z + (scr[3].z + scr[1].z)) >> 10;
-    p->tex0 = tex->tex0;
     if (z < 0) {
         e = &gOtZ[0].layer[l];
     } else if (z >= 0x1000) {
