@@ -11,7 +11,8 @@
  * what port/src/gs/gs_core.c keeps of every 32-bit upload, Gs_SrcKey), so a texture is found however the game
  * loaded its file:
  *     "BT3T" u32 count, then count x {u64 key; u32 offset; u16 w, h; u8 bits, psm, 0, 0} sorted by key, then data
- * (a palette: bits 32, w its colours (16 or 256), h 1, psm its format; one u32 a colour)
+ * (a palette: bits 32, w its colours (16 or 256), h 1, psm its format; one u32 a colour; keyed without the alpha of a
+ * 32-bit one's first 16 colours, pal_emit)
  * The 32-, 24- and 16-bit textures too, as 16-bit PVR texels in twiddled order (bits 16, psm the entry's | the PVR
  * format << 6: 0 ARGB1555, 1 RGB565, 2 ARGB4444), keyed by the upload's hash ^ KEY_DIRECT: the 24- and 16-bit ones
  * opaque (the game's TEXA, gfxm_e.c: 0x80 both), a 32-bit one 1555 when its alpha is only none or all. One that
@@ -106,11 +107,12 @@ static int psm_bits(uint32_t psm) {
    with BITBLTBUF's width and format from the entry (`blt`, BITBLTBUF bits 48..63); write = 0: only read through.
    0 = not such a packet. */
 static uint64_t sKey;              /* upload(): the hash of the image data */
+static int sKeyPal;                /* and it is a palette's: a 32-bit one's first 16 alphas left out (as gs_pvr.c pkt_key) */
 static uint32_t sSx, sSy, sRw, sRh; /* and its rectangle */
 static int upload(const uint8_t *p, uint32_t size, uint32_t blt, uint32_t dbp, int write) {
     uint32_t dbw = blt & 63, dpsm = (blt >> 8) & 63, bits = (uint32_t)psm_bits(dpsm);
     uint32_t sx = 0, sy = 0, rw = 0, rh = 0, x = 0, y = 0, i, n, at = 0, images = 0;
-    uint32_t want = 0;
+    uint32_t want = 0, skip = sKeyPal && dpsm == 0 ? 64 : 0;
     if (bits == 0) { return 0; }
     sKey = 0xCBF29CE484222325ull;
     if (size >= 16 && (p[15] & 0x7F) == 0x50) { at = 16; } /* VIF DIRECT */
@@ -136,7 +138,10 @@ static int upload(const uint8_t *p, uint32_t size, uint32_t blt, uint32_t dbp, i
             n = nloop * 16;
             if (at + n > size) { n = size - at; }
             if (images == 0) { want = rw * rh * bits / 8; }
-            for (i = 0; i < n && want != 0; i++, want--) { sKey = (sKey ^ p[at + i]) * 0x100000001B3ull; }
+            for (i = 0; i < n && want != 0; i++, want--) {
+                if (rw * rh * 4 - want < skip && ((rw * rh * 4 - want) & 3) == 3) { continue; } /* (a slot alpha) */
+                sKey = (sKey ^ p[at + i]) * 0x100000001B3ull;
+            }
             for (i = 0; i < n * 8 / bits && y < rh; i++) {
                 uint32_t v;
                 switch (bits) {
@@ -279,10 +284,17 @@ static void out_add(uint64_t key, uint32_t w, uint32_t h, uint32_t bits, uint32_
 }
 
 /* A palette upload (16x16: 256 colours, 8x2: 16), its colours in the order the indices count (256: bits 3 and 4
-   exchanged, CSM1), as GS memory holds them: the game's own expansion (TEXA) stays the renderer's. */
+   exchanged, CSM1), as GS memory holds them: the game's own expansion (TEXA) stays the renderer's. Keyed without
+   the alpha of a 32-bit one's first 16 colours: the game writes its objects' alpha table slots there before the
+   upload (src/sys/gfxm_e_b.c BtlObjMdl_InitAlphaSlots), gs_pvr.c Port_PalNative puts them in. */
 static void pal_emit(const uint8_t *p, uint32_t size, uint32_t blt) {
     uint32_t dpsm = (blt >> 8) & 63, n, i, col[256];
-    if ((dpsm != 0x00 && dpsm != 0x02 && dpsm != 0x0A) || !upload(p, size, blt, 0, 1)) { return; }
+    int ok;
+    if (dpsm != 0x00 && dpsm != 0x02 && dpsm != 0x0A) { return; }
+    sKeyPal = 1;
+    ok = upload(p, size, blt, 0, 1);
+    sKeyPal = 0;
+    if (!ok) { return; }
     n = sRw == 16 && sRh == 16 ? 256 : sRw == 8 && sRh == 2 ? 16 : 0;
     if (n == 0) { return; }
     for (i = 0; i < n; i++) {

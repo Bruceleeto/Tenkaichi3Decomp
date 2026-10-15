@@ -1335,10 +1335,12 @@ static uint32_t pkt_sample(const uint8_t *p, uint32_t size) {
 }
 
 /* The hash the converted ones are keyed by (port/tools/dc_tex.c): the upload packet's image data, its first
-   width x height pixels. 0 = not such a packet. */
-static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key) {
+   width x height pixels. A palette of 32 bits (pal) leaves out the alpha of its first 16 colours: the game writes
+   its objects' alpha table slots there (gfxm_e_b.c BtlObjMdl_InitAlphaSlots), and Port_PalNative puts the live
+   ones in. *img: where the image data starts. 0 = not such a packet. */
+static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key, int pal, const uint8_t **img) {
     uint32_t dpsm = (blt >> 8) & 63, bits = dpsm == 0 ? 32 : dpsm == 1 ? 24 : dpsm == 2 || dpsm == 0xA ? 16 : dpsm == 0x13 ? 8 : 4;
-    uint32_t rw = 0, rh = 0, at = 0, want = 0, images = 0, i;
+    uint32_t rw = 0, rh = 0, at = 0, want = 0, images = 0, i, skip = pal && dpsm == 0 ? 64 : 0;
     uint64_t h = 0xCBF29CE484222325ull;
     if (size >= 16 && (p[15] & 0x7F) == 0x50) { at = 16; } /* VIF DIRECT */
     while (at + 16 <= size) {
@@ -1350,9 +1352,12 @@ static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key)
                 if (p[at + 8] == 0x52) { rw = rd32(p + at) & 0xFFF; rh = rd32(p + at + 4) & 0xFFF; }
             }
         } else if (flg == 2) { /* IMAGE */
-            if (images++ == 0) { want = rw * rh * bits / 8; }
+            if (images++ == 0) { want = rw * rh * bits / 8; if (img != NULL) { *img = p + at; } }
             n = nloop * 16 < size - at ? nloop * 16 : size - at;
-            for (i = 0; i < n && want != 0; i++, want--) { h = (h ^ p[at + i]) * 0x100000001B3ull; }
+            for (i = 0; i < n && want != 0; i++, want--) {
+                if (rw * rh * 4 - want < skip && ((rw * rh * 4 - want) & 3) == 3) { continue; } /* (a slot alpha) */
+                h = (h ^ p[at + i]) * 0x100000001B3ull;
+            }
             at += nloop * 16;
         } else {
             break;
@@ -1398,7 +1403,7 @@ static NatTex *nat_get(uint8_t *e) {
     n->viewPak = -1;
     if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) { /* 16-bit PVR texels, and its 8-bit view */
         uint32_t fmt, vb;
-        if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key)) { sNatWhy[1]++; return n; }
+        if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; return n; }
         key = KEY_SHAPE(key, t0);
         if ((k = TexPak_Find(key ^ KEY_DIRECT, &w, &h, &bits)) < 0) { goto missing; }
         if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != 16) { sNatWhy[3]++; return n; }
@@ -1420,7 +1425,7 @@ static NatTex *nat_get(uint8_t *e) {
         return n;
     }
     if (psm != 0x13 && psm != 0x14) { sNatWhy[0]++; return n; }
-    if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key)) { sNatWhy[1]++; return n; }
+    if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; return n; }
     key = KEY_SHAPE(key, t0);
     if ((k = TexPak_Find(key, &w, &h, &bits)) < 0) {
     missing:
@@ -1484,7 +1489,7 @@ typedef struct NatPal {
     int pak;         /* its number in the pack; -1 = not a palette of it */
     uint32_t n, gen; /* colours (16 / 256); gen: the record's use, for GsPvr_PalKey */
     uint32_t *col;   /* as GS memory holds them, in the order the indices count */
-    uint32_t sample; /* pkt_sample of the packet when it was made */
+    uint32_t sample; /* pal_sample of the packet when it was made */
     uint16_t next;   /* the next record of its sPalHash chain + 1 */
     uint16_t sub[4]; /* 256 colours of 32 bits uploaded as 16 x 16: the four palettes of 16 its four blocks hold (records
                         + 1, at addr + 1 + k: the font's, src/battle/col_c.c Font_MakeTex0) */
@@ -1527,6 +1532,24 @@ static void pal_split(NatPal *p) {
     }
 }
 
+/* A palette packet's record sample: pkt_sample's and its first 256 bytes (the tags and the first colours: the game
+   writes the alpha of its first 16 while it runs, BtlObjMdl_InitAlphaSlots, which pkt_sample may not see). */
+static uint32_t pal_sample(const uint8_t *p, uint32_t size) {
+    uint32_t h = pkt_sample(p, size), i;
+    for (i = 0; i < size && i < 256; i++) { h = (h ^ p[i]) * 16777619u; }
+    return h;
+}
+
+/* The alpha of the first 16 colours of a 32-bit palette upload (img: its image data) into p's colours: the pack's
+   are keyed without them (pkt_key), these are the ones the GS gets. */
+static void pal_alphas(NatPal *p, const uint8_t *img) {
+    uint32_t k, i;
+    for (k = 0; k < 16; k++) {
+        i = p->n == 16 ? k : (k & 0xE7) | (k & 8) << 1 | (k & 0x10) >> 1; /* (256: bits 3 and 4 exchanged) */
+        p->col[i] = (p->col[i] & 0xFFFFFFu) | (uint32_t)img[k * 4 + 3] << 24;
+    }
+}
+
 /* The palette record at block cbp for a texture of n colours (a 256's first block: its palette of 16); NULL = none. */
 static const NatPal *pal_at(uint32_t cbp, uint32_t n) {
     uint32_t i = gGsPal[cbp & 16383];
@@ -1545,24 +1568,26 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     uint32_t m[24] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
     uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4;
     uint64_t key;
+    const uint8_t *img = NULL;
     NatPal *p = NULL;
     int k;
 
     if (!sNatOn) { return 0; }
     for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
         if (sPal[i - 1].addr == addr) {
-            if (sPal[i - 1].sample == pkt_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
+            if (sPal[i - 1].sample == pal_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
             Port_TexFreed(addr, addr + 16); /* (another packet there now; and the four palettes of its blocks) */
             break;
         }
     }
     if (p == NULL) {
         if ((p = pal_new(addr)) == NULL) { return 0; }
-        p->sample = pkt_sample(pkt, (uint32_t)size);
-        if (pkt_key(pkt, (uint32_t)size, blt, &key) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
-            TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
+        p->sample = pal_sample(pkt, (uint32_t)size);
+        if (pkt_key(pkt, (uint32_t)size, blt, &key, 1, &img) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
+            (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
             p->pak = k;
             p->n = w;
+            if (TexPak_Psm(k) == 0 && img + 64 <= (const uint8_t *)pkt + size) { pal_alphas(p, img); }
             if (w == 256 && TexPak_Psm(k) == 0) { pal_split(p); }
         }
     }
