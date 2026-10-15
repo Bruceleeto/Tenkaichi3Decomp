@@ -1641,6 +1641,12 @@ extern void Port_GsMarker(s32 effect);
 /* The outline pass: edges of the id image into the frame's alpha, then a dark rectangle blended by it. */
 void ObjOutline_Draw(void) {
 #ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) {
+        /* No depth texture, no frame buffers: of the outline only the clear of the frame's alpha, which is no effect
+           pass (what is drawn after it reads that alpha cleared, as before). */
+        Gfx_ClearScreen(0xFFFFFF, 0);
+        return;
+    }
     Port_GsMarker(PORT_FX_OUTLINE); /* the GPU renderer draws the outline natively here and drops the passes below */
 #endif
     Dma_AddData(gObjOutline->tex.upload, 0x10);
