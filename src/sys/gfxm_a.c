@@ -676,6 +676,86 @@ void StgPanBlur_RestoreEnv(void) {
     Dma_EndDirect(p);
 }
 
+#ifdef PORT
+/* A+D writes of n registers (value, address pairs): the state a converted pass leaves in the GS, as its packets
+   would have (the draws that are still packets read it). */
+static void GfxPost_PortRegs(const u64 *regs, s32 n) {
+    u64 *p = Dma_BeginDirect();
+    s32 i;
+
+    p[0] = GIF_TAG(n, 1, 1);
+    p[1] = GIF_REG_AD;
+    for (i = 0; i < n * 2; i++) {
+        p[2 + i] = regs[i];
+    }
+    Dma_EndDirect(p + 2 + n * 2);
+}
+
+/* GfxPost_DrawGlow as records, the same pages, sizes and order: 0x150 cleared (black, alpha 0x80), the frame drawn
+   into it halved and tinted with `color`, blended by its alpha; to 0x170 (128 x 128) and 0x1F6 (64 x 64, twice, one
+   texel apart), alpha 0x80; `passes` blur passes between 0x1F6 and 0x1F8, filtered, every other one a texel
+   shifted; 0x1F8 up to 0x170 tinted with `glow`, to 0x150, and added to the frame. Then the state the packets
+   leave. */
+static void GfxPost_PortGlow(s32 passes, u32 color, u32 glow) {
+    RndState st;
+    u32 work = Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB;
+    u32 half = Rnd_TargetTex(0x170, 0x80, 0x80, 0) | RND_TEX_RGB;
+    s32 i;
+    u64 regs[] = {
+        GFX_RGBAQ_NEUTRAL, GS_RGBAQ,
+        !(gGfx.frame & 1) ? 0x80070 : 0x80000, GS_FRAME_1,
+        GS_SET_ZBUF(0xE0, GS_PSMZ24, 1), GS_ZBUF_1,
+        GS_SET_XYOFFSET(0x7000, 0x7200), GS_XYOFFSET_1,
+        GS_SET_SCISSOR(0, 0x1FF, 0, 0x1BF), GS_SCISSOR_1,
+        0x70000, GS_TEST_1,
+        0, GS_CLAMP_1,
+        ((u64)Tex_Log2Size(0x100) << 26) | ((u64)Tex_Log2Size(0x100) << 30) | 0x12A00, GS_TEX0_1,
+        0x8000000068, GS_ALPHA_1,
+        0x60, GS_TEX1_1,
+        0x156, GS_PRIM,
+        1, GS_COLCLAMP,
+        0, GS_FBA_1,
+        0, GS_FBA_2,
+        0x101F8, GS_FRAME_2,
+        GS_SET_ZBUF(0xE0, GS_PSMZ24, 1), GS_ZBUF_2,
+        GS_SET_SCISSOR(0, 0x3F, 0, 0x3F), GS_SCISSOR_2,
+        GS_SET_XYOFFSET(0x7E00, 0x7E00), GS_XYOFFSET_2,
+        0x8000000064, GS_ALPHA_2,
+        ((u64)Tex_Log2Size(0x40) << 26) | ((u64)Tex_Log2Size(0x40) << 30) | 0x7EC0, GS_TEX0_2,
+        GS_SET_CLAMP(2, 2, 0, 0x3F, 0, 0x3F), GS_CLAMP_2,
+        0x60, GS_TEX1_2,
+        0x30000, GS_TEST_2,
+    };
+
+    GfxPost_PortState(&st, 0x150, 0, 0, 0xFF, 0xFF, RND_BLEND_NONE, 0);
+    Rnd_FillRect(&st, 0.0f, 0.0f, 256.0f, 256.0f, 0x80000000);
+    st.blend = RND_BLEND_NORMAL;
+    st.flags = RND_SMOOTH;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0), 0.0f, 0.0f, 256.0f, 256.0f, 0, 0, 0x200 << 4,
+             0x1C0 << 4, color);
+    GfxPost_PortState(&st, 0x170, 0, 0, 0x7F, 0x7F, RND_BLEND_NORMAL, RND_SMOOTH);
+    Rnd_Blit(&st, work, 0.0f, 0.0f, 128.0f, 128.0f, 0, 0, 0x1000, 0x1000, 0x80808080);
+    GfxPost_PortState(&st, 0x1F6, 0, 0, 0x3F, 0x3F, RND_BLEND_NORMAL, RND_SMOOTH);
+    Rnd_Blit(&st, half, 0.0f, 0.0f, 64.0f, 64.0f, 0, 0, 0x800, 0x800, 0x80808080);
+    Rnd_Blit(&st, half, 0.0f, 0.0f, 64.0f, 64.0f, 0x10, 0x10, 0x810, 0x810, 0x80808080);
+    for (i = 0; i < passes; i++) { /* (FIX 0x80: the source as it is) */
+        s32 uv = (i & 1) ? 0 : 0x10;
+
+        GfxPost_PortState(&st, (i & 1) ? 0x1F6 : 0x1F8, 0, 0, 0x3F, 0x3F, RND_BLEND_NONE, RND_SMOOTH);
+        Rnd_Blit(&st, Rnd_TargetTex((i & 1) ? 0x1F8 : 0x1F6, 0x40, 0x40, 0) | RND_TEX_RGB, 0.0f, 0.0f, 64.0f, 64.0f,
+                 uv, uv, uv + 0x400, uv + 0x400, 0x80808080);
+    }
+    GfxPost_PortState(&st, 0x170, 0, 0, 0x7F, 0x7F, RND_BLEND_NONE, RND_SMOOTH);
+    Rnd_Blit(&st, Rnd_TargetTex(0x1F8, 0x40, 0x40, 0) | RND_TEX_RGB, 0.0f, 0.0f, 128.0f, 128.0f, 4, 4, 0x404, 0x404,
+             glow);
+    GfxPost_PortState(&st, 0x150, 0, 0, 0xFF, 0xFF, RND_BLEND_NONE, RND_SMOOTH);
+    Rnd_Blit(&st, half, 0.0f, 0.0f, 256.0f, 256.0f, 8, 8, (0x80 << 4) + 8, 0x808, 0x80808080);
+    GfxPost_PortState(&st, GFX_FRAME_FBP(), 0, 0, 0x1FF, 0x1BF, RND_BLEND_ADD, RND_SMOOTH);
+    Rnd_Blit(&st, work, 0.0f, 0.0f, 512.0f, 448.0f, 8, 8, (0x100 << 4) + 8, 0x1008, 0x80808080);
+    GfxPost_PortRegs(regs, sizeof(regs) / sizeof(regs[0]) / 2);
+}
+#endif
+
 /*
  * The glow pass. The frame's destination alpha is the mask (set up by the caller through a depth CLUT).
  *   1. clear the 256x256 work page (0x150) and draw the frame into it, halved, blended by the frame's alpha and
@@ -696,6 +776,15 @@ void GfxPost_DrawGlow(s32 passes, u32 color, u32 glow) {
     s32 x;
 
     passes += passes & 1;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing) */
+        if (Rnd_FxOn()) {
+            Gfx_AddDefaultEnv();
+            GfxPost_PortGlow(passes, color, glow);
+        }
+        return;
+    }
+#endif
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(13, 0, 1);
