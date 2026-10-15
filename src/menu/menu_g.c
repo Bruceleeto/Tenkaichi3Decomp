@@ -4,6 +4,8 @@
 #include "sys/save.h"
 #include "sys/common.h"
 
+extern char *strcpy(char *dst, const char *src);
+
 ItemPanel *gItemPanel[2] = {NULL, NULL}; /* 0x3B38E0, one per side */
 
 /*

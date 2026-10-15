@@ -1,6 +1,8 @@
 #include "common.h"
 #include "menu/menu_v.h"
 
+extern char *strcpy(char *dst, const char *src);
+
 /*
  * Menu overlay DBZP.BIN, 0x396838..0x399240: the second source file of the character customising screen
  * (EvoZ): its input, the confirmation dialog, the status numbers and the edits of the saved item sets. The

@@ -2,6 +2,9 @@
 #include "sys/dma.h"
 #include "sys/gfx.h"
 #include "sys/gfxm_e.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * GS environment packets of the battle object renderer, 0x112A30..0x1131D8. See include/sys/gfxm_e.h.

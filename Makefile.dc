@@ -48,10 +48,11 @@ OBJS     := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(PC_OBJ) $(DC_OBJ)
 
 # kos-cc adds KOS's own (-m4-single -ml ...); LTO off (as iortcw's), and C's float rules rather than KOS's
 # -ffast-math, so the game's maths is the PC build's in what it means
-DC_FLAGS    := -fno-lto -O2 -g -fno-fast-math -ffp-contract=off -fno-strict-aliasing -w -DPORT_GAME_HARD_FLOAT
-GAME_CFLAGS := $(DC_FLAGS) -std=gnu89 -c -fcommon -fno-builtin -include port_libm.h -iquote include -Iport/include -include port_compat.h
-NL_CFLAGS   := $(DC_FLAGS) -std=gnu89 -c -fno-builtin -Iport/include -Iport/third_party/newlib_libm -include newlib_shim.h
-GS_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
+DC_FLAGS    := -fno-lto -O2 -g -fno-fast-math -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
+# (game code without -w: a call to a function not declared is an error, see Makefile)
+GAME_CFLAGS := $(DC_FLAGS) -Wno-attributes -Werror=implicit-function-declaration -std=gnu89 -c -fcommon -fno-builtin -include port_libm.h -iquote include -Iport/include -include port_compat.h
+NL_CFLAGS   := $(DC_FLAGS) -w -std=gnu89 -c -fno-builtin -Iport/include -Iport/third_party/newlib_libm -include newlib_shim.h
+GS_CFLAGS   := $(DC_FLAGS) -w -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
 PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/include -Iport/src -Iport/src/dc
 PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
 PC_HARD     := plat_libm plat_fastvec vu1_native

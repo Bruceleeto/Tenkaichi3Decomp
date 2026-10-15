@@ -1595,6 +1595,9 @@ void BtlAct_SuperQuickLongBeamHandler(BtlSuperChr *chr, s32 phase) {
  * the first part's types are reached through cast macros.
  * ------------------------------------------------------------------------------------------------------------ */
 #include "battle/btl_act_g.h"
+#ifdef PORT
+extern void Port_ClashLog(int player, const char *what, int fromInput, int total, int frame); /* port/src/gs/gs_input.c */
+#endif
 
 /*
  * Blast 2 / Ultimate Blast actions, second part: 0x1F8C00..0x1FC2B0 (same helpers as the first part, the float

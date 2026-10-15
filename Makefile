@@ -74,7 +74,9 @@ OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ) $(N
 # ------------------------------------------------------------------------------------------------------ the flags
 
 # the game: software float (port/src/softfloat_ps2.c), PS2 structure layout
-GAME_CFLAGS := -m32 -std=gnu89 -c -O2 -g -fno-strict-aliasing -ffp-contract=off -fcommon -w -fno-pic -fno-stack-protector \
+# (no -w: the only warning the game code gives otherwise is -Wattributes; a call to a function not declared is an
+#  error, as gnu89 would take it as int f(int ...) and pass a 64-bit argument as 32 bits)
+GAME_CFLAGS := -m32 -std=gnu89 -c -O2 -g -fno-strict-aliasing -ffp-contract=off -fcommon -Wno-attributes -Werror=implicit-function-declaration -fno-pic -fno-stack-protector \
                -fno-builtin -msoft-float -mno-sse -mno-mmx -malign-double -include port_libm.h -Iinclude -Iport/include \
                -include port_compat.h
 # the PS2's maths library, software float

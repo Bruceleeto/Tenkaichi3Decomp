@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/btl_act_e.h"
+#ifdef PORT
+extern void Port_ClashLog(int player, const char *what, int fromInput, int total, int frame); /* port/src/gs/gs_input.c */
+#endif
 
 /*
  * Fighter action handlers, 0x1F1930..0x1F5460: actions 0x1A..0x35 and 0xFA..0xFC.

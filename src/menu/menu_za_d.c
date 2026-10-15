@@ -1,6 +1,8 @@
 #include "common.h"
 #include "menu/menu_za.h"
 
+extern char *strcpy(char *dst, const char *src);
+
 /* The screen's work (overlay .data, 0x3BC9F8). */
 ReplayMenu *gReplayMenu = NULL;
 

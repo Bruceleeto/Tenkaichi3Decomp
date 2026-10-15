@@ -112,6 +112,7 @@ void DcPass_WrapPos(DcKeyPos *pos) {
 }
 #else
 INCLUDE_ASM("asm/nonmatchings/menu/menu_z_d", DcPass_WrapPos);
+void DcPass_WrapPos(DcKeyPos *pos);
 #endif
 
 /* Puts a keyboard position on the middle (1) or right (2) button of the bottom row. */
@@ -637,6 +638,7 @@ void DcPass_DrawStatus(DcPassView *view, ZStatus *status) {
 }
 #else
 INCLUDE_ASM("asm/nonmatchings/menu/menu_z_d", DcPass_DrawStatus);
+void DcPass_DrawStatus(DcPassView *view, ZStatus *status);
 #endif
 
 /*

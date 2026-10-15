@@ -9,6 +9,8 @@
 #include "sys/heap.h"
 #include "sys/pad.h"
 
+extern char *strcpy(char *dst, const char *src);
+
 /* One entry of the replay slot list in the progress block (what the replay menu shows). */
 typedef struct McFlowSlotInfo {
     /* 0x00 */ s32 flags;        /* bit 0: the entry was filled in */
