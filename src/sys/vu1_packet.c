@@ -180,6 +180,9 @@ u32 *Vu1Pkt_LoadProg2(s32 alt) {
     p[0x51] = VU1_VIF_BASE(0x13);
     p[0x52] = VU1_VIF_OFFSET(0x1F6);
     p[0x53] = VU1_VIF_NOP;
+#ifdef PORT
+    Vu1Native_SetProg2(alt, p + 4); /* (the parts' draws as records read the matrices the caller puts here) */
+#endif
     return p;
 }
 

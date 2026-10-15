@@ -9,6 +9,8 @@
  *       port/src/vu1_native.c port/src/gs/gs_vu1.c -lm -o /tmp/vu1_check
  *   /tmp/vu1_check 4 gamedata/pzs3us1/00424.bin 1          (program, file, part of its offset table)
  *   /tmp/vu1_check 0 gamedata/pzs3us1/02877.bin 3          (a fighter's model parts; 1: their fade pass)
+ *   VU1_PRMODE=0x48 /tmp/vu1_check 2 gamedata/pzs3us1/02877.bin 3   (2: program 2a, 3: 2b, the same chains; with
+ *                                                                   PRMODECONT 0 and that PRMODE, as the shadows)
  *
  * Constants: cameras made here (inside the mesh's bounds looking along each axis, and from outside seeing all of
  * it), so that triangles cross every plane of the clip volume; for the fighters two bones a little apart, a light,
@@ -71,6 +73,7 @@ typedef struct List {
 static List sRef, sNat;
 static size_t sFanTris; /* of the microcode's: from the clipper */
 static size_t sAdc;     /* its triangles left out (ADC) */
+static size_t sBatches; /* MSCNTs run */
 
 static void add(List *l, const Tri *t) {
     if (l->n == l->cap) {
@@ -87,7 +90,10 @@ static void add(List *l, const Tri *t) {
 /* ---- the native side's renderer ---- */
 uint32_t gRndCtxBad[2];
 int Port_TakesRecords(void) { return 1; }
-uint64_t Rnd_Tex0(int ctx) { return ctx == 0 ? STAGE_TEX0 : 0; }
+#define BOUND_TEX0_2 0x0006580400003D40ull /* the TEX0_2 bound before program 2 (a stand-in) */
+uint64_t Rnd_Tex0(int ctx) { return ctx == 0 ? STAGE_TEX0 : BOUND_TEX0_2; }
+static uint32_t sPrmode; /* PRMODE with PRMODECONT 0 (VU1_PRMODE: the shadow passes' 0x48), 0: PRMODECONT 1 */
+uint32_t Rnd_Prim(uint32_t prim) { return sPrmode ? (prim & 7) | (sPrmode & 0x7F8) : prim & 0x7FF; }
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
     (void)ctx;
     o->x = (float)((x & 0xFFFF) - XYOFF_X) / 16.0f;
@@ -169,7 +175,7 @@ void Gs_Gif(const uint8_t *p, uint32_t qwc) {
             exit(2);
         }
         if (nloop != 0 && ((tag >> 46) & 1)) {
-            gs.prim = (tag >> 47) & 0x7FF;
+            gs.prim = Rnd_Prim((uint32_t)(tag >> 47) & 0x7FF);
             gs.n = 0;
         }
         for (i = 0; i < nloop && qwc != 0; i++) {
@@ -181,7 +187,7 @@ void Gs_Gif(const uint8_t *p, uint32_t qwc) {
                 case 0x4: gs_vertex(lo & 0xFFFF, (lo >> 32) & 0xFFFF, (uint32_t)((hi >> 4) & 0xFFFFFF), !((hi >> 47) & 1)); break;
                 case 0xE:
                     if ((hi & 0xFF) == 6 || (hi & 0xFF) == 7) { gs.tex0[(hi & 0xFF) - 6] = lo; }
-                    else if ((hi & 0xFF) == 0) { gs.prim = lo & 0x7FF; gs.n = 0; }
+                    else if ((hi & 0xFF) == 0) { gs.prim = Rnd_Prim((uint32_t)lo & 0x7FF); gs.n = 0; }
                     break;
                 case 0xF: break;
                 default: fprintf(stderr, "vu1_check: GIF register %u\n", (unsigned)((regs >> (4 * j)) & 15)); exit(2);
@@ -227,6 +233,7 @@ static void run_chain(const uint32_t *t) {
             w += num * 4;
         } else if (cmd == 0x17) {
             GsVu1_Call(-1);
+            sBatches++;
         } else if (cmd == 0x01) {
             GsVu1_SetCycle(code & 0xFF, (code >> 8) & 0xFF);
         }
@@ -383,7 +390,7 @@ static void compare(const char *what) {
             if (dxy > 1.0 / 16 || dz > 1 || d > 1e-5 || p->rgba != q->rgba) { bad = 1; }
         }
         if (bad && sBad++ < 10) {
-            printf("%s: triangle %zu differs\n", what, i);
+            printf("%s: triangle %zu differs (ctx %d %d, bits %X %X, TEX0 %016llX %016llX)\n", what, i, a->ctx, b->ctx, (unsigned)a->bits, (unsigned)b->bits, (unsigned long long)a->tex0, (unsigned long long)b->tex0);
             for (k = 0; k < 3; k++) {
                 const RndVtx *p = &a->v[k], *q = &b->v[k];
                 printf("   ref %9.4f %9.4f %8u %10.6g %10.6g %10.6g %08X | nat %9.4f %9.4f %8u %10.6g %10.6g %10.6g %08X\n", p->x, p->y, p->z,
@@ -433,14 +440,17 @@ int main(int argc, char **argv) {
     FILE *f;
 
     if (argc < 4) {
-        fprintf(stderr, "usage: vu1_check <program 0, 1 or 4> <file> <part>\n");
+        fprintf(stderr, "usage: vu1_check <program 0, 1, 2 (2a), 3 (2b) or 4> <file> <part>\n");
         return 2;
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
-    if (prog != 0 && prog != 1 && prog != 4) {
+    if (prog < 0 || prog > 4) {
         fprintf(stderr, "program %d: not here\n", prog);
         return 2;
+    }
+    if (getenv("VU1_PRMODE") != NULL) {
+        sPrmode = (uint32_t)strtoul(getenv("VU1_PRMODE"), NULL, 0);
     }
     hdrSize = prog == 4 ? 1 : 5;
     f = fopen(blobPath, "rb");
@@ -519,6 +529,31 @@ int main(int argc, char **argv) {
                     printf("chain at +0x%zX: not taken\n", off);
                     sBad++;
                 }
+            } else if (prog == 2 || prog == 3) {
+                /* Vu1Pkt_LoadProg2 (0x13 quadwords: bones, pivots, colour, then screen 11..14 and clip 15..18), then
+                   Vu1Pkt_CallProg2 (0..10 again) and the chain */
+                static float k2[0x13 * 4];
+                memcpy(k2, k, 40 * sizeof(float));
+                memcpy(k2 + 40, k + 88, 4 * sizeof(float)); /* the colour: program 0's layer 0 colour */
+                memcpy(k2 + 44, consts, 32 * sizeof(float));
+                load_program(prog == 2 ? 0x2BFEA0 - 0x2BF6B0 : 0x2C01C0 - 0x2BF6B0, prog == 2 ? 0x320 : 0x330);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 0x13, 0, (const uint32_t *)k2);
+                GsVu1_SetBase(0x13);
+                GsVu1_SetOffset(0x1F6);
+                GsVu1_Unpack(0x6C, 0xB, 0, (const uint32_t *)k2);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0x13);
+                GsVu1_SetOffset(0x1F6);
+                gs.tex0[1] = BOUND_TEX0_2;
+                run_chain(t);
+                Vu1Native_SetProg2(prog == 3, k2);
+                if (!Vu1Native_Takes(2, t)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                } else {
+                    Vu1Native_Prog2(t, k2);
+                }
             } else {
                 /* Vu1Pkt_LoadProg0 / 1, then Vu1Pkt_CallProg0 / 1 and the chain */
                 load_program(prog == 0 ? 0 : 0x400, prog == 0 ? 0x400 : 0x3F0);
@@ -545,7 +580,7 @@ int main(int argc, char **argv) {
             off += (t[0] & 0xFFFF) * 16;
         }
     }
-    printf("%zu triangles from the microcode (%zu of them clipped; %zu left out), %zu from records; worst corner %.4f px, depth %.0f, s t q %.3g relative; %zu differences\n",
-           tris, sFanTris, sAdc, recs, sWorstXY, sWorstZ, sWorstSTQ, sBad);
+    printf("%zu batches; %zu triangles from the microcode (%zu of them clipped; %zu left out), %zu from records; worst corner %.4f px, depth %.0f, s t q %.3g relative; %zu differences\n",
+           sBatches, tris, sFanTris, sAdc, recs, sWorstXY, sWorstZ, sWorstSTQ, sBad);
     return sBad != 0;
 }

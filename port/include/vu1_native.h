@@ -18,14 +18,20 @@ void Vu1Native_SetProg4(const void *consts);
 /* A mesh's chain drawn by program 4 with them; 1 = taken. */
 int Vu1Native_Prog4(const void *chain);
 
-/* Programs 0 (a fighter's part, lit) and 1 (its fade pass): whether the part's chain (part->chain; the part record
-   + 0x60 for program 1) can be drawn so, before its constants are made; then the draw with them (the 0x22
-   quadwords of ObjDrawPkt from mtxA, as they would have gone to VU address 0). */
+/* Programs 0 (a fighter's part, lit), 1 (its fade pass) and 2 (2a or 2b, as Vu1Pkt_LoadProg2 loaded last: the part
+   in one colour, for the shadows): whether the part's chain (part->chain, the part record + 0x60) can be drawn so,
+   before its constants are made; then the draw with them (ObjDrawPkt from mtxA, as it would have gone to VU
+   address 0: 0x22 quadwords, 0xB for program 2). */
 int Vu1Native_Takes(int prog, const void *chain);
 void Vu1Native_Prog0(const void *chain, const void *consts);
 void Vu1Native_Prog1(const void *chain, const void *consts);
+void Vu1Native_Prog2(const void *chain, const void *consts);
+/* Program 2's setup: which of the two (alt: 2b) and its constant block at VU address 0 (the 0x13 quadwords of
+   Vu1Pkt_LoadProg2; its caller fills 11..18 before the parts are drawn, read then). */
+void Vu1Native_SetProg2(int alt, const void *consts);
 
-/* The calls of programs 0, 1 and 4 (index 2) sent as packets [0] and drawn as records [1] (BT3_GS_VERBOSE). */
-extern unsigned gVu1NativeStat[3][2];
+/* The calls of each program sent as packets [0] and drawn as records [1] (BT3_GS_VERBOSE). */
+enum { VU1N_P0, VU1N_P1, VU1N_P4, VU1N_P2A, VU1N_P2B, VU1N_STATS };
+extern unsigned gVu1NativeStat[VU1N_STATS][2];
 
 #endif

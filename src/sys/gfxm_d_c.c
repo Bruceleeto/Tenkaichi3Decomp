@@ -601,7 +601,7 @@ void ObjDraw_AddClutPass(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view
 }
 
 #ifdef PORT
-/* A part that programs 0 and 1 draw as records (port/include/vu1_native.h, when Vu1Native_Takes its chain): its
+/* A part that programs 0, 1 and 2 draw as records (port/include/vu1_native.h, when Vu1Native_Takes its chain): its
    constants are made here instead of in a packet, and drawn with once they are in. */
 static ObjDrawPkt sPortPkt;
 #endif
@@ -714,7 +714,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
 #endif
                     }
                 } else if (mode == 2) {
+#ifdef PORT
+                    ObjDrawPkt *pkt = Vu1Native_Takes(2, part->chain) ? &sPortPkt : Vu1Pkt_CallProg2(part);
+#else
                     ObjDrawPkt *pkt = Vu1Pkt_CallProg2(part);
+#endif
 
                     Mtx_Copy(&pkt->mtxB, &node->mtxB);
                     Mtx_Copy(&pkt->mtxA, &node->mtxA);
@@ -722,6 +726,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                     Vec4_Copy(&pkt->ofsB, &part->ofsB);
                     Vec4_Copy((Vec4 *)&pkt->light, &flat);
                     pkt->light.m[0][3] = k;
+#ifdef PORT
+                    if (pkt == &sPortPkt) {
+                        Vu1Native_Prog2(part->chain, &pkt->mtxA);
+                    }
+#endif
                 }
             }
         }

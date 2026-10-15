@@ -131,6 +131,9 @@ int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud);
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
 /* The TEX0 of context ctx as the packets followed have set it (a draw whose texture was bound before it). */
 uint64_t Rnd_Tex0(int ctx);
+/* The PRIM the GS draws by when a packet sets prim: prim itself, or with PRMODECONT.AC 0 (the shadow passes) its type
+   with the attributes of PRMODE (texturing, shading, blending, the context). */
+uint32_t Rnd_Prim(uint32_t prim);
 /* An untextured flat rectangle (a sprite's two corners, as Rnd_Vtx takes them) as Rnd_Draw. */
 int Rnd_Rect(int ctx, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t z, uint32_t rgba, int abe);
 /* The ordering table's packets as polygons (from src/sys/gfx_ot.c Ot_Send, between Rnd_OtBegin and Rnd_OtEnd):

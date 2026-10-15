@@ -30,6 +30,7 @@ uint32_t gRndCtxBad[2];       /* RND_BAD_: what of a context's state a record ca
 static uint64_t sTex0[2];     /* TEX0 of each context */
 static uint64_t sXyOff[2] = {0x7200ull << 32 | 0x7000, 0x7200ull << 32 | 0x7000}; /* XYOFFSET */
 static uint64_t sPrim;        /* PRIM */
+static uint64_t sPrmodeCont = 1, sPrmode; /* PRMODECONT, PRMODE: with AC 0 a primitive's attributes are PRMODE's */
 static int sInOt;             /* the table is being sent: its packets are read by Rnd_OtTake, not again when closed */
 
 /* The registers a draw taken set that the GS does not have yet (Rnd_OtState): the values as written. */
@@ -125,11 +126,17 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
     case 0x4E: /* ZBUF: depth written or not */
         s->flags = (uint16_t)((v >> 32) & 1 ? s->flags & ~RND_ZWRITE : s->flags | RND_ZWRITE);
         return 1;
+    case 0x1A: /* PRMODECONT */
+        sPrmodeCont = v;
+        return 1;
+    case 0x1B: /* PRMODE */
+        sPrmode = v;
+        return 1;
     }
-    /* what leaves nothing a record reads: TEXFLUSH, COLCLAMP, DTHE, PABE, PRMODECONT and PRMODE, TEXA, TEXCLUT, FOGCOL, the transfers,
+    /* what leaves nothing a record reads: TEXFLUSH, COLCLAMP, DTHE, PABE, TEXA, TEXCLUT, FOGCOL, the transfers,
        FINISH, SIGNAL, LABEL, the port's markers (0x7B..0x7F: port/src/gs/gs_core.c), and the vertex registers by
        address (draws, not state) */
-    return addr <= 0x05 || addr == 0x0A || addr == 0x0C || addr == 0x0D || addr == 0x0F || addr == 0x1A || addr == 0x1B || addr == 0x1C || addr == 0x3B ||
+    return addr <= 0x05 || addr == 0x0A || addr == 0x0C || addr == 0x0D || addr == 0x0F || addr == 0x1C || addr == 0x3B ||
            addr == 0x3D || addr == 0x3F || addr == 0x44 || addr == 0x45 || addr == 0x46 || addr == 0x49 || (addr >= 0x50 && addr <= 0x54) ||
            (addr >= 0x60 && addr <= 0x62) || (addr >= 0x7B && addr <= 0x7F);
 }
@@ -341,7 +348,7 @@ void Rnd_OtEnd(void) {
 int Rnd_OtTake(const uint64_t *pkt, unsigned qwc) {
     RndState ctx[2];
     uint32_t bad[2], dirtyMask = sDirty;
-    uint64_t tex0[2], xy[2], prim = sPrim, dv[2][D_N], dp = sDirtyPrim;
+    uint64_t tex0[2], xy[2], prim = sPrim, dv[2][D_N], dp = sDirtyPrim, prc = sPrmodeCont, prm = sPrmode;
     int n;
 
     if (!Port_TakesRecords()) {
@@ -360,6 +367,8 @@ int Rnd_OtTake(const uint64_t *pkt, unsigned qwc) {
     memcpy(sXyOff, xy, sizeof(xy));
     memcpy(sDirtyVal, dv, sizeof(dv));
     sPrim = prim;
+    sPrmodeCont = prc;
+    sPrmode = prm;
     sDirtyPrim = dp;
     sDirty = dirtyMask;
     if (n > 0) {
@@ -524,6 +533,10 @@ void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, floa
 
 uint64_t Rnd_Tex0(int ctx) {
     return sTex0[ctx & 1];
+}
+
+uint32_t Rnd_Prim(uint32_t prim) {
+    return (sPrmodeCont & 1) ? prim & 0x7FF : (prim & 7) | ((uint32_t)sPrmode & 0x7F8);
 }
 
 int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {

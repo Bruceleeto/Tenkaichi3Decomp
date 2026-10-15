@@ -17,8 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "gs_internal.h"
-
-extern unsigned gVu1NativeStat[3][2]; /* (port/src/vu1_native.c) */
+#include "../../include/vu1_native.h"
 
 typedef union Reg {
     float f[4];
@@ -789,10 +788,13 @@ void GsVu1_FrameEnd(void) {
     int k, i;
 
     if (getenv("BT3_GS_VERBOSE") != NULL && (gGsFrame < 4 || gGsFrame % 60 == 0)) {
+        static const char *const names[VU1N_STATS] = {"0", "1", "4", "2a", "2b"};
         fprintf(stderr, "vu1: frame %u: %u interpreted runs, %u instructions, %u kicks; %u calls served by shaders; as records "
-                "(packets / records): program 0 %u / %u, 1 %u / %u, 4 %u / %u\n", gGsFrame, sStatRuns, sStatInstr, sStatKicks, sHle,
-                gVu1NativeStat[0][0], gVu1NativeStat[0][1], gVu1NativeStat[1][0], gVu1NativeStat[1][1], gVu1NativeStat[2][0],
-                gVu1NativeStat[2][1]);
+                "(packets / records): program", gGsFrame, sStatRuns, sStatInstr, sStatKicks, sHle);
+        for (k = 0; k < VU1N_STATS; k++) {
+            fprintf(stderr, "%s %s %u / %u", k ? "," : "", names[k], gVu1NativeStat[k][0], gVu1NativeStat[k][1]);
+        }
+        fprintf(stderr, "\n");
         for (k = 0; k < 16 && sProg[k].size != 0; k++) {
             fprintf(stderr, "vu1:   program of %u instructions: %u runs, %u instructions (%u%%), %u kicks\n", sProg[k].size, sProg[k].runs,
                     sProg[k].instr, sStatInstr ? sProg[k].instr * 100 / sStatInstr : 0, sProg[k].kicks);

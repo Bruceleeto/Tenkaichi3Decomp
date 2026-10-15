@@ -96,11 +96,11 @@ static int tag_ok(const uint32_t *tag, unsigned type, int eop) {
            (prim & 7) == type && !((prim >> 5) & 1) && !((prim >> 8) & 1) && (lo & 0x7FFF) != 0;
 }
 
-/* The PRIM a tag carries. */
+/* The PRIM a tag carries, as the GS draws by it (with PRMODECONT 0 the attributes are PRMODE's: Rnd_Prim). */
 static uint32_t tag_prim(const uint32_t *tag) {
     uint64_t lo;
     memcpy(&lo, tag, 8);
-    return (uint32_t)(lo >> 47) & 0x7FF;
+    return Rnd_Prim((uint32_t)(lo >> 47) & 0x7FF);
 }
 
 /* What MSCNT finds at TOP: the header quadwords unpacked to TOPS + 0 (nh) and the vertices unpacked behind them (nv
@@ -392,7 +392,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     return 1;
 }
 
-unsigned gVu1NativeStat[3][2];
+unsigned gVu1NativeStat[VU1N_STATS][2];
 
 int Vu1Native_Prog4(const void *chain) {
     P4Walk wk;
@@ -402,10 +402,10 @@ int Vu1Native_Prog4(const void *chain) {
     }
     memset(&wk, 0, sizeof(wk));
     if (!walk(chain, p4_batch, &wk) || !wk.header) {
-        gVu1NativeStat[2][0]++;
+        gVu1NativeStat[VU1N_P4][0]++;
         return 0;
     }
-    gVu1NativeStat[2][1]++;
+    gVu1NativeStat[VU1N_P4][1]++;
     memset(&wk, 0, sizeof(wk));
     wk.draw = 1;
     walk(chain, p4_batch, &wk);
@@ -532,19 +532,25 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
     return 1;
 }
 
+static const float *sP2; /* program 2: the constant block of the last Vu1Pkt_LoadProg2 (VU 0..18; 11..18 read from it) */
+static int sP2Alt;       /* it loaded 2b */
+static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv);
+
 int Vu1Native_Takes(int prog, const void *chain) {
     FigWalk wk;
+    int stat;
 
-    if (!Port_TakesRecords() || (prog != 0 && prog != 1)) {
+    if (!Port_TakesRecords() || prog < 0 || prog > 2 || (prog == 2 && sP2 == NULL)) {
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
     wk.prog = prog;
-    if (!walk(chain, fig_batch, &wk)) {
-        gVu1NativeStat[prog][0]++;
+    stat = prog == 2 ? VU1N_P2A + sP2Alt : prog;
+    if (!walk(chain, prog == 2 ? p2_batch : fig_batch, &wk)) {
+        gVu1NativeStat[stat][0]++;
         return 0;
     }
-    gVu1NativeStat[prog][1]++;
+    gVu1NativeStat[stat][1]++;
     return 1;
 }
 
@@ -564,4 +570,83 @@ void Vu1Native_Prog0(const void *chain, const void *consts) {
 
 void Vu1Native_Prog1(const void *chain, const void *consts) {
     fig_draw(1, chain, consts);
+}
+
+/* ---------------------------------------------------------------------------------------------- program 2 */
+
+/* Programs 2a and 2b draw a fighter's parts in one flat colour (ObjDraw_DrawParts mode 2): 2a the flat shadow in
+   the view (ObjShadow_BeginFlat), 2b the silhouette into the shadow page (ObjShadow_LoadProg). The chains are
+   program 0's: of a batch's header the program sends the A+D tag and its TEX0 (+0, +1) and layer 1's strip tag
+   (+4), then the corners skinned between the two bones as program 0 does it, in the colour of constant 10, with
+   the texture coordinates of the corner. 2a leaves out a triangle with a corner outside the clip volume (ADC), 2b
+   draws every one. Constants: 0..10 bones A, B, their pivots, the colour (Vu1Pkt_CallProg2: ObjDrawPkt from mtxA);
+   11..14 screen, 15..18 clip (Vu1Pkt_LoadProg2's block, filled by its caller). The shadow passes draw with
+   PRMODECONT 0: the strip's attributes are PRMODE's (tag_prim). */
+void Vu1Native_SetProg2(int alt, const void *consts) {
+    sP2 = (const float *)consts;
+    sP2Alt = alt != 0;
+}
+
+static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    static RndVtx out[FIG_MAXV];
+    static uint8_t adc[FIG_MAXV];
+    FigWalk *wk = (FigWalk *)arg;
+    const float *k = wk->k, *sc = sP2 + 44, *cm = sP2 + 60;
+    uint32_t prim, n, i, c, flags[3] = {0, 0, 0};
+    uint64_t tex0;
+    int ctx;
+    int32_t col[4];
+
+    split(hdr, &nh, &vtx, &nv, 5);
+    if (nh != 5 || vtx == NULL || !ad_tag_ok(hdr) || !tag_ok(hdr + 16, 4, 1) || ((hdr[6] & 0xFF) != 6 && (hdr[6] & 0xFF) != 7)) {
+        return 0;
+    }
+    prim = tag_prim(hdr + 16);
+    ctx = (int)(prim >> 9) & 1;
+    n = hdr[16] & 0x7FFF;
+    if (n > FIG_MAXV || n * 3 > nv) {
+        return 0;
+    }
+    if (!wk->draw) {
+        return gRndCtxBad[ctx] == 0;
+    }
+    if (!ad_tex0(hdr + 4, ctx, &tex0)) { /* (the A+D writes the other context's TEX0: this one's is the one bound) */
+        tex0 = Rnd_Tex0(ctx);
+    }
+    for (c = 0; c < 4; c++) {
+        col[c] = vu_ftoi(k[40 + c], 1.0f);
+    }
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12); /* position (w: bone A's weight), normal (not read), s t q */
+        float pa[4], pb[4], p[4], s[4], cl[4], q;
+
+        mtx_apply(pa, k, vu_clamp(v[0] - k[32]), vu_clamp(v[1] - k[33]), vu_clamp(v[2] - k[34]), 1.0f);
+        mtx_apply(pb, k + 16, vu_clamp(v[0] - k[36]), vu_clamp(v[1] - k[37]), vu_clamp(v[2] - k[38]), 1.0f);
+        for (c = 0; c < 4; c++) {
+            p[c] = vu_clamp(pb[c] + vu_clamp(vu_clamp(pa[c] - pb[c]) * v[3]));
+        }
+        mtx_apply(s, sc, p[0], p[1], p[2], 1.0f);
+        mtx_apply(cl, cm, p[0], p[1], p[2], 1.0f);
+        q = vu_div(1.0f, s[3]);
+        for (c = 0; c < 4; c++) {
+            s[c] = vu_clamp(s[c] * q);
+        }
+        put_vtx(&out[i], ctx, s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col);
+        flags[0] = flags[1];
+        flags[1] = flags[2];
+        flags[2] = clip_flags(cl);
+        adc[i] = !sP2Alt && (flags[0] | flags[1] | flags[2]) != 0; /* (2b: none) */
+    }
+    put_strip(out, adc, n, prim, tex0);
+    return 1;
+}
+
+void Vu1Native_Prog2(const void *chain, const void *consts) {
+    FigWalk wk;
+
+    memset(&wk, 0, sizeof(wk));
+    wk.prog = 2;
+    wk.draw = 1;
+    wk.k = (const float *)consts;
+    walk(chain, p2_batch, &wk);
 }
