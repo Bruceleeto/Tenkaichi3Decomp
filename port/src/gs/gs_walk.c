@@ -132,6 +132,9 @@ int GsGpu_Enabled(void) {
    leaves them out (the software reference is slow, and so is the PVR's on PC): a run reaches a late frame sooner. */
 void Gs_FrameCount(void) {
     static int at = -2, from = -2;
+#ifdef PORT_GS_REF
+    Rnd_GsFollowFrame();
+#endif
     if (at == -2) {
         at = getenv("BT3_XFADE_AT") != NULL ? atoi(getenv("BT3_XFADE_AT")) : -1;
         from = getenv("BT3_GS_FROM") != NULL ? atoi(getenv("BT3_GS_FROM")) : 0;

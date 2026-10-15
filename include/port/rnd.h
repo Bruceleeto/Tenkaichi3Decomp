@@ -120,7 +120,12 @@ int Port_ListRead(void);         /* 1: the display list is read for what only th
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
 /* port/src/rnd_gs.c. The GS state the game sets, followed into gRndCtx from each packet the display list gets
    (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them). */
-int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes); /* 1: the packet only sets state, all of it followed */
+int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from); /* 1: the packet only sets state, all of it
+                                                                           followed; from: its producer (BT3_FOLLOW_LOG) */
+void Rnd_GsFollowFrame(void);
+/* A GS register's value as the game sets it (address of context 1's register, + 1 for context 2's; PRIM 0x00,
+   RGBAQ 0x01, ST 0x02, UV 0x03 too), straight into the renderer's state: a producer's state without a packet. */
+void Rnd_GsReg(uint32_t addr, uint64_t v);
 /* What of a context's state a record cannot say (gRndCtxBad): a blend that is none of RND_BLEND_, a write mask of
    some channels, a depth test that never passes, a region clamp. */
 #define RND_BAD_BLEND 1

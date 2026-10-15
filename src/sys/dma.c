@@ -36,7 +36,7 @@ void Dma_AddData(void *src, s32 size) {
 #ifdef PORT
     /* the GS state it sets, as the renderer's (port/src/rnd_gs.c); a packet of only that is not kept where nothing
        reads the list (Port_ListRead 0: the Dreamcast) */
-    if (Rnd_GsFollow(src, size) && !Port_ListRead()) {
+    if (Rnd_GsFollow(src, size, __builtin_return_address(0)) && !Port_ListRead()) {
         return;
     }
 #endif
@@ -126,7 +126,7 @@ void Dma_EndDirect(u64 *end) {
         tag[2] = VIF_FLUSHE;
         tag[3] = VIF_DIRECT | qwc;
 #ifdef PORT
-        if (Rnd_GsFollow(tag, (qwc + 1) << 4) && !Port_ListRead()) {
+        if (Rnd_GsFollow(tag, (qwc + 1) << 4, __builtin_return_address(0)) && !Port_ListRead()) {
             return; /* (only state, followed: as Dma_AddData) */
         }
 #endif
@@ -371,6 +371,12 @@ void Dma_SendToIop(void *iopAddr, void *data, s32 size) {
 
 /* Queues a GS TEXFLUSH (wait for texture writes before the next primitive). */
 void Dma_AddTexFlush(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_TEXFLUSH, 0);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -383,6 +389,13 @@ void Dma_AddTexFlush(void) {
 /* Queues GS FRAME_1 and FRAME_2: frame buffer page, width (in 64-pixel units) and write mask; pixel format 0 (32-bit). */
 void Dma_AddFrame(s32 fbp, s32 fbw, s32 fbmsk) {
     u64 frame = GS_SET_FRAME(fbp, fbw, 0, fbmsk);
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, frame);
+    Rnd_GsReg(GS_FRAME_2, frame);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
@@ -396,6 +409,13 @@ void Dma_AddFrame(s32 fbp, s32 fbw, s32 fbmsk) {
 /* Queues GS CLAMP_1 and CLAMP_2: texture wrap modes and the clamp/repeat region. */
 void Dma_AddClamp(s32 wms, s32 wmt, s32 minu, s32 maxu, s32 minv, s32 maxv) {
     u64 clamp = GS_SET_CLAMP(wms, wmt, minu, maxu, minv, maxv);
+#ifdef PORT
+    Rnd_GsReg(GS_CLAMP_1, clamp);
+    Rnd_GsReg(GS_CLAMP_2, clamp);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
@@ -409,6 +429,13 @@ void Dma_AddClamp(s32 wms, s32 wmt, s32 minu, s32 maxu, s32 minv, s32 maxv) {
 /* Queues GS SCISSOR_1 and SCISSOR_2: the drawing window in pixels. */
 void Dma_AddScissor(s32 x0, s32 x1, s32 y0, s32 y1) {
     u64 scissor = GS_SET_SCISSOR(x0, x1, y0, y1);
+#ifdef PORT
+    Rnd_GsReg(GS_SCISSOR_1, scissor);
+    Rnd_GsReg(GS_SCISSOR_2, scissor);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
@@ -421,6 +448,13 @@ void Dma_AddScissor(s32 x0, s32 x1, s32 y0, s32 y1) {
 
 /* Queues GS XYOFFSET_1 and XYOFFSET_2: the primitive coordinate offset, given in pixels. */
 void Dma_AddXyOffset(s32 x, s32 y) {
+#ifdef PORT
+    Rnd_GsReg(GS_XYOFFSET_1, GS_SET_XYOFFSET(x << 4, y << 4));
+    Rnd_GsReg(GS_XYOFFSET_2, GS_SET_XYOFFSET(x << 4, y << 4));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
@@ -433,6 +467,12 @@ void Dma_AddXyOffset(s32 x, s32 y) {
 
 /* Queues GS ZBUF_1: depth buffer page (24-bit format) and the "do not write depth" flag. */
 void Dma_AddZbuf(s32 zbp, s32 zmsk) {
+#ifdef PORT
+    Rnd_GsReg(GS_ZBUF_1, GS_SET_ZBUF(zbp, GS_PSMZ24, zmsk));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -444,6 +484,12 @@ void Dma_AddZbuf(s32 zbp, s32 zmsk) {
 
 /* Queues GS TEX0_1 with a ready-made register value. */
 void Dma_AddTex0(u64 tex0) {
+#ifdef PORT
+    Rnd_GsReg(GS_TEX0_1, tex0);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -455,6 +501,12 @@ void Dma_AddTex0(u64 tex0) {
 
 /* Queues GS TEX1_1 with a ready-made register value. */
 void Dma_AddTex1(u64 tex1) {
+#ifdef PORT
+    Rnd_GsReg(GS_TEX1_1, tex1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -466,6 +518,12 @@ void Dma_AddTex1(u64 tex1) {
 
 /* Queues GS FBA_1 (forces the alpha bit of written pixels). */
 void Dma_AddFba(s32 fba) {
+#ifdef PORT
+    Rnd_GsReg(GS_FBA_1, (u64)fba);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -477,6 +535,12 @@ void Dma_AddFba(s32 fba) {
 
 /* Queues GS COLCLAMP (clamp or wrap colour after blending). */
 void Dma_AddColClamp(u64 clamp) {
+#ifdef PORT
+    Rnd_GsReg(GS_COLCLAMP, clamp);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -488,6 +552,12 @@ void Dma_AddColClamp(u64 clamp) {
 
 /* Queues GS ALPHA_1 (blend equation) with a ready-made register value. */
 void Dma_AddAlpha(u64 alpha) {
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_1, alpha);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, 0, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -509,6 +579,16 @@ s32 Dma_Stub101870(void) {
 /* What Dma_AddFillRect leaves set (ALPHA_1, TEST_1, FBA_1, PRIM, RGBAQ) without its sprites: for a fill drawn as a
    record (include/port/rnd.h). */
 void Dma_AddFillState(u32 rgba) {
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_TEST_1, 0x30000);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_PRIM, 0x46);
+    Rnd_GsReg(GS_RGBAQ, (u64)rgba | (0x3F800000ULL << 32));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u64 *p = Dma_BeginDirect();
 
     p[0] = GIF_TAG(5, 1, 1);
@@ -538,10 +618,19 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     u64 *p = Dma_BeginDirect();
     u64 *tag;
     s32 i;
-#ifdef PORT
-    u64 *start = p;
-#endif
 
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the sprites as one rectangle, a record under the state (Dma_AddFillState): also
+                                  where the colour does not change (rgba 0, blended normally), its alpha 0 written
+                                  clears the marks the stage's blended groups test (src/battle/stgm_a.c) */
+        Dma_AddFillState(rgba);
+        if (Rnd_Rect(0, x << 4, y << 4, (x + n * 32) << 4, (y + h) << 4, 0, rgba, 1)) {
+            return;
+        }
+        p = Dma_BeginDirect(); /* (not taken: the sprites as a packet, under that state) */
+        goto sprites;
+    }
+#endif
     p[0] = GIF_TAG(5, 0, 1);
     p[1] = GIF_REG_AD;
     p += 2;
@@ -561,16 +650,7 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     p[1] = GS_RGBAQ;
     p += 2;
 #ifdef PORT
-    if (Port_TakesRecords()) { /* the sprites as one rectangle, a record under the state just set (followed): also
-                                  where the colour does not change (rgba 0, blended normally), its alpha 0 written
-                                  clears the marks the stage's blended groups test (src/battle/stgm_a.c) */
-        start[0] = GIF_TAG(5, 1, 1);
-        Dma_EndDirect(p);
-        if (Rnd_Rect(0, x << 4, y << 4, (x + n * 32) << 4, (y + h) << 4, 0, rgba, 1)) {
-            return;
-        }
-        p = Dma_BeginDirect();
-    }
+sprites:
 #endif
     tag = p;
     p += 2;
