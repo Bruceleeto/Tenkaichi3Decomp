@@ -986,6 +986,9 @@ void EftPtcl_DrawAxisQuads(EftPtclWork *w, EftPtclWork *w2) {
                     u32 rgba;
 
                     gOtCur = (u32 *)pkt;
+                    if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                        break; /* (no room left in the packet memory: this one and the rest not drawn) */
+                    }
                     pkt = Ot_NewRec(def->layer < 2 ? 0x5C : 0x25C, 4);
                     for (i = 0; i < 4; i++) {
                         f32 q = 1.0f / scr[i].w;
