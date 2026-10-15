@@ -1273,6 +1273,12 @@ void GfxPost_DrawTex16(s32 tbp, u64 alpha) {
 /* Queues FRAME_1: a 16-bit page, 512 wide, with a write mask. */
 void GfxPost_AddFrame16(s32 fbp, s32 fbmsk) {
     s32 lo = fbp | 0x2080000;
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, ((u64)(u32)((s64)(lo | ((s64)fbmsk << 32)) >> 32) << 32 | (u32)(lo)));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,
@@ -1621,6 +1627,12 @@ void GfxPost_ClearWork(s32 fbp, s32 fbmsk) {
 
 /* Queues XYOFFSET_1. */
 void GfxPost_AddXyOffset(s32 x, s32 y) {
+#ifdef PORT
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)((s64)(x | ((s64)y << 32)) >> 32) << 32 | (u32)(x)));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         DMA_TAG_CNT | 2, 0, VIF_FLUSHE, VIF_DIRECT | 2,
         GIF_EOP | 1, 0x10000000, GIF_REG_AD, 0,

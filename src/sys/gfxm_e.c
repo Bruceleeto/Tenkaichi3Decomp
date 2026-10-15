@@ -20,6 +20,14 @@
 
 /* Queues FRAME_1 with the mask (alpha is always protected), ALPHA_1 = normal blend, TEST_1 = depth only. */
 void ObjGs_AddFrameMaskOpaque(u32 mask) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, OBJGS_FRAME(mask | 0xFF000000));
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[20] = {
         DMA_TAG_CNT | 4, 0, VIF_FLUSHE, VIF_DIRECT | 4,
         GIF_EOP | 3, 0x10000000, GIF_REG_AD, 0,
@@ -33,6 +41,14 @@ void ObjGs_AddFrameMaskOpaque(u32 mask) {
 
 /* Queues FRAME_1 with the mask, ALPHA_1 = (Cs - Cd) * 0x80 / 128 + Cd with a fixed factor, TEST_1 = depth only. */
 void ObjGs_AddFrameMaskBlend(u32 mask) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, OBJGS_FRAME(mask));
+    Rnd_GsReg(GS_ALPHA_1, ((u64)(u32)(0x80) << 32 | (u32)(0x64)));
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[20] = {
         DMA_TAG_CNT | 4, 0, VIF_FLUSHE, VIF_DIRECT | 4,
         GIF_EOP | 3, 0x10000000, GIF_REG_AD, 0,
@@ -47,6 +63,17 @@ void ObjGs_AddFrameMaskBlend(u32 mask) {
 /* Queues the state of the flat shadow pass: depth writes off, alpha test, FBA on, blend by a fixed 0x46,
    PRMODECONT = 0 with PRMODE = gouraud + blend. */
 void ObjGs_AddFlatShadowEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_ZBUF_1, ((u64)(u32)(1) << 32 | (u32)(0x310000E0)));
+    Rnd_GsReg(GS_TEST_1, 0x54000);
+    Rnd_GsReg(GS_FBA_1, 1);
+    Rnd_GsReg(GS_ALPHA_1, ((u64)(u32)(0x46) << 32 | (u32)(0x64)));
+    Rnd_GsReg(GS_PRMODECONT, 0);
+    Rnd_GsReg(GS_PRMODE, 0x48);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[32] = {
         DMA_TAG_CNT | 7, 0, VIF_FLUSHE, VIF_DIRECT | 7,
         GIF_EOP | 6, 0x10000000, GIF_REG_AD, 0,
@@ -67,6 +94,21 @@ void ObjGs_AddFlatShadowEnv(void) {
 /* Queues the state for drawing the shadow texture on the ground: the frame's colour buffer, depth test without
    depth writes, alpha test, FBA on, clamped PSMCT24 256x256 texture at `tbp`, point sampled. */
 void ObjGs_AddShadowTexEnv(s32 tbp, s32 tbw) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, (u32)(!(gGfx.frame & 1) ? 0x80070 : 0x80000));
+    Rnd_GsReg(GS_ZBUF_1, ((u64)(u32)(1) << 32 | (u32)(0x310000E0)));
+    Rnd_GsReg(GS_ALPHA_1, ((u64)(u32)(0x80) << 32 | (u32)(0x44)));
+    Rnd_GsReg(GS_TEST_1, 0x5400F);
+    Rnd_GsReg(GS_TEX1_1, 0);
+    Rnd_GsReg(GS_FBA_1, 1);
+    Rnd_GsReg(GS_CLAMP_1, 5);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_TEXA, ((u64)(u32)(0x80) << 32 | (u32)(0x8080)));
+    Rnd_GsReg(GS_TEX0_1_REG, OBJGS_SHADOW_TEX0(tbp, tbw));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[48] = {
         DMA_TAG_CNT | 11, 0, VIF_FLUSHE, VIF_DIRECT | 11,
         GIF_EOP | 10, 0x10000000, GIF_REG_AD, 0,
@@ -88,6 +130,22 @@ void ObjGs_AddShadowTexEnv(s32 tbp, s32 tbw) {
 /* Queues the renderer's normal state: the frame's colour buffer, depth test and writes, normal blend, bilinear,
    FBA off, repeat, grey RGBAQ, PRMODECONT = 1 and the screen's XYOFFSET. */
 void ObjGs_AddDefaultEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, (u32)(!(gGfx.frame & 1) ? 0x80070 : 0x80000));
+    Rnd_GsReg(GS_ZBUF_1, 0x310000E0);
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_RGBAQ, ((u64)(u32)(0x3F800000) << 32 | (u32)(0x80808080)));
+    Rnd_GsReg(GS_PRMODECONT, 1);
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)(0x7200) << 32 | (u32)(0x7000)));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[52] = {
         DMA_TAG_CNT | 12, 0, VIF_FLUSHE, VIF_DIRECT | 12,
         GIF_EOP | 11, 0x10000000, GIF_REG_AD, 0,

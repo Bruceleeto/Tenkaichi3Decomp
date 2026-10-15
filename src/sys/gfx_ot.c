@@ -253,6 +253,32 @@ s32 Ot_Send(void) {
 /* Queues the GS state of the sorted pass on both contexts: current buffer, view scissor, depth test without depth writes. */
 void Ot_AddEnv(s32 test) {
     s32 tst = test | 0x5000C;
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ZBUF_1, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_ZBUF_2, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_XYOFFSET_2, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_SCISSOR_1, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_SCISSOR_2, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    Rnd_GsReg(GS_ZBUF_1, ((u64)(u32)(1) << 32 | (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0))));
+    Rnd_GsReg(GS_ZBUF_2, ((u64)(u32)(1) << 32 | (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0))));
+    Rnd_GsReg(GS_TEST_1, ((u64)(u32)((u64)tst >> 32) << 32 | (u32)(tst)));
+    Rnd_GsReg(GS_TEST_2, ((u64)(u32)((u64)tst >> 32) << 32 | (u32)(tst)));
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(GS_TEX1_1 + 1, 0x60);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_CLAMP_2, 0);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[92] = {
         DMA_TAG_CNT | 22, 0, VIF_FLUSHE, VIF_DIRECT | 22,
         GIF_EOP | 21, 0x10000000, GIF_REG_AD, 0,
@@ -286,6 +312,18 @@ void Ot_AddEnv(s32 test) {
 
 /* Queues the state that follows the sorted pass: normal blending, depth writes off, depth test "greater", point sampling. */
 void Ot_AddRestoreEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    Rnd_GsReg(GS_ZBUF_1, ((u64)(u32)(1) << 32 | (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0))));
+    Rnd_GsReg(GS_TEST_1, 0x70000);
+    Rnd_GsReg(GS_TEX1_1, 0);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_CLAMP_1, 5);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[36] = {
         DMA_TAG_CNT | 8, 0, VIF_FLUSHE, VIF_DIRECT | 8,
         GIF_EOP | 7, 0x10000000, GIF_REG_AD, 0,
