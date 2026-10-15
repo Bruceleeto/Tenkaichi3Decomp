@@ -360,6 +360,9 @@ void EftAura_DrawFlames(EftAuraWork *aura, s32 objId, f32 alpha) {
 #ifdef PORT
         if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
             gOtCur = (u32 *)pkt;
+            if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                continue; /* (no room left in the packet memory: this one not drawn) */
+            }
             pkt = Ot_NewRec(0x5C, 4);
             if (EftAura_FlameFlagInl(f, 0x800)) {
                 Ot_RecTex0(pkt, sparkTex->entry[0].tex0);
@@ -1555,6 +1558,10 @@ void EftBolt_Draw(EftBoltWork *work, EftBolt *bolt, f32 alpha) {
                               next->alpha * 255.0f * alpha);
                 rgba0 = (u8)col0[0] | (u8)col0[1] << 8 | (u8)col0[2] << 16 | (u32)(u8)col0[3] << 24;
                 rgba1 = (u8)col1[0] | (u8)col1[1] << 8 | (u8)col1[2] << 16 | (u32)(u8)col1[3] << 24;
+                if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                    n = n1;
+                    continue; /* (no room left in the packet memory: this piece not drawn, the next still numbered on) */
+                }
                 pkt = Ot_NewRec(0x5C, 4);
                 Ot_RecTex0(pkt, work->tex0);
                 EftVram_PortRecTex(pkt, work->tex0);
