@@ -1042,6 +1042,69 @@ void GfxWater_LoadStageColor(void) {
     }
 }
 
+#ifdef PORT
+/* GfxWater_DrawView as records, the same page and order: the view's part of the frame (x0..x1, 448 high) copied at
+   half height into 0x150 (w x 224, filtered); then drawn back over the view through the wobbled grid gu, gv (texels
+   of that copy, sixteenths) as five rows of cols - 1 quads, times the layer's colour, not blended. Then the state
+   its packet leaves. */
+static void GfxWater_PortDraw(s32 gu[6][10], s32 gv[6][10], s32 view, s32 x0, s32 x1, s32 w, s32 cols) {
+    RndState st;
+    RndPoly r;
+    u64 *p;
+    u32 rgba = gGfxWater[view].rgba;
+    s32 row;
+    s32 col;
+    s32 i;
+
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = w - 1;
+    st.scissor[3] = 0xDF;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)w, 224.0f, x0 << 4,
+             0, x1 << 4, 0x1C0 << 4, (u32)GFX_RGBAQ_NEUTRAL);
+    memset(&r, 0, sizeof(r));
+    Rnd_StateInit(&r.st, GFX_FRAME_FBP());
+    r.st.blend = RND_BLEND_NONE;
+    r.st.flags = RND_SMOOTH;
+    r.st.scissor[0] = x0;
+    r.st.scissor[2] = x1 - 1;
+    r.tex = Rnd_TargetTex(0x150, 0x200, 0x200, 0) | RND_TEX_RGB;
+    r.n = 4;
+    for (row = 0; row < 5; row++) {
+        for (col = 0; col + 1 < cols; col++) {
+            for (i = 0; i < 4; i++) { /* (top, bottom of column col, then of col + 1) */
+                s32 c = col + (i >> 1);
+                s32 g = row + (i & 1);
+
+                r.v[i].x = (f32)(x0 + c * w / (cols - 1));
+                r.v[i].y = (f32)(0x1C0 * g / 5);
+                r.v[i].s = (f32)gu[g][c] / (16.0f * 512.0f);
+                r.v[i].t = (f32)gv[g][c] / (16.0f * 512.0f);
+                r.v[i].q = 1.0f;
+                r.v[i].rgba = rgba;
+            }
+            Port_Poly(&r);
+        }
+    }
+    Gfx_AddDefaultEnv();
+    p = Dma_BeginDirect();
+    p[0] = GIF_TAG(5, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = 0x30000;
+    p[3] = GS_TEST_1;
+    p[4] = 0x264022A00;
+    p[5] = GS_TEX0_1;
+    p[6] = ((s64)w << 14) | ((s64)0xE0 << 34) | 0xA;
+    p[7] = GS_CLAMP_1;
+    p[8] = 0x114;
+    p[9] = GS_PRIM;
+    p[10] = (u64)rgba;
+    p[11] = GS_RGBAQ;
+    Dma_EndDirect(p + 12);
+}
+#endif
+
 ASM_STUB_BEGIN(); /* compiled so that GfxWater_Draw sees the definition (it decides a branch-likely there); the assembler skips it */
 /* NOT MATCHING: 96 of 639 instructions differ (was about 390 aligned), and the instruction count is now the
    original's. Same operations and the same six .lit4 constants (0x2FC2A0..0x2FC2B4: pi, 2 pi, 2 pi, 0.8, 0.2,
@@ -1174,6 +1237,14 @@ void GfxWater_DrawView(s32 split, s32 view) {
             }
         }
     }
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing; the phases still advance) */
+        if (Rnd_FxOn()) {
+            GfxWater_PortDraw(gu, gv, view, x0, x1, w, cols);
+        }
+        return;
+    }
+#endif
     Gfx_AddDefaultEnv();
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(9, 0, 1);
