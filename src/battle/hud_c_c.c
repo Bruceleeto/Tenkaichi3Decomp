@@ -277,28 +277,17 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
     v[2][1] = Sprite_ConvY(v[2][1]);
     v[3][1] = Sprite_ConvY(v[3][1]);
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(5, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(5, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44);
     p += 2;
-    p[0] = 0x30000; /* alpha and depth tests always pass */
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000); /* alpha and depth tests always pass */
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = GFX_CLEAR_RGBAQ;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_CLEAR_RGBAQ);
     p += 2;
-    p[0] = 0x44; /* triangle strip, alpha blended */
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x44); /* triangle strip, alpha blended */
     p += 2;
 #ifdef PORT
     Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
@@ -313,8 +302,7 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
         p[-12] &= ~(1ull << 15);
     }
 #endif
-    p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-    p[1] = 0x5555;
+    PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5555);
     p += 2;
     p[0] = HUDC_XYZ_CONV(v[0]);
     p[1] = HUDC_XYZ_CONV(v[1]);
@@ -351,27 +339,17 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
     v[2][1] = Sprite_ConvY(v[2][1]);
     v[3][1] = Sprite_ConvY(v[3][1]);
     p = Dma_BeginDirect();
-    p[0] = GIF_TAG(5, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(5, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x3F800000FF000000;
-    p[1] = GS_RGBAQ;
+    PORT_PKT(p, 0, 0x3F800000FF000000, GS_RGBAQ);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x44);
     p += 2;
 #ifdef PORT
     Rnd_SetBlend(0, RND_BLEND_NORMAL, 0);                                /* ALPHA_1 0x44 */
@@ -386,8 +364,7 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
         p[-12] &= ~(1ull << 15);
     }
 #endif
-    p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-    p[1] = 0x5555;
+    PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5555);
     p += 2;
     p[0] = HUDC_XYZ_CONV(v[0]);
     p[1] = HUDC_XYZ_CONV(v[1]);
@@ -414,50 +391,34 @@ void HudGfx_ClearAlpha(void) {
         u32 c[4] = {0, 0, 0, 0};
         RndState keep = gRndCtx[0];
 
-        p[0] = GIF_TAG(2, 1, 1);
-        p[1] = GIF_REG_AD;
+        PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
         p += 2;
-        p[0] = GFX_CLEAR_RGBAQ;
-        p[1] = GS_RGBAQ;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_RGBAQ, GFX_CLEAR_RGBAQ);
         p += 2;
-        p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
-        p[1] = GS_ZBUF_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0));
         p += 2;
         Rnd_SetFlag(0, RND_ZWRITE, 1);
         HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p);
         gRndCtx[0] = keep;
         p = Dma_BeginDirect();
-        p[0] = GIF_TAG(2, 1, 1);
-        p[1] = GIF_REG_AD;
+        PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
         p += 2;
-        p[0] = 0x3F80000080808080;
-        p[1] = GS_RGBAQ;
+        PORT_PKT(p, 0, 0x3F80000080808080, GS_RGBAQ);
         p += 2;
-        p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-        p[1] = GS_ZBUF_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
         p += 2;
         Dma_EndDirect(p);
         return;
     }
 #endif
 
-    p[0] = GIF_TAG(3, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(3, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = GFX_CLEAR_RGBAQ;
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, GFX_CLEAR_RGBAQ);
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0));
     p += 2;
-    p[0] = 0x46; /* sprite, alpha blended */
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x46); /* sprite, alpha blended */
     p += 2;
     tag = p;
     p += 2;
@@ -468,17 +429,12 @@ void HudGfx_ClearAlpha(void) {
         p += 2;
         i++;
     }
-    tag[0] = GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 2);
-    tag[1] = GS_REG_XYZ2 | (GS_REG_XYZ2 << 4);
-    p[0] = GIF_TAG(2, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(tag, 0, GIF_TAG_EX(16, 1, GIF_FLG_REGLIST, 2), GS_REG_XYZ2 | (GS_REG_XYZ2 << 4));
+    PORT_PKT(p, 0, GIF_TAG(2, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x3F80000080808080;
-    p[1] = GS_RGBAQ;
+    PORT_PKT(p, 0, 0x3F80000080808080, GS_RGBAQ);
     p += 2;
-    p[0] = GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1);
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 1));
     p += 2;
     Dma_EndDirect(p);
 }
