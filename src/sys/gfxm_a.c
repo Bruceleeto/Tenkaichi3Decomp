@@ -2055,6 +2055,11 @@ void ObjGlow_SetAlphaTable(ObjGlowTable *table) {
 /* The object glow: the table's alpha into the frame by id byte, then the glow pass. */
 void ObjGlow_Draw(void) {
     ObjGlow_BuildClut();
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers, no depth texture: nothing; the table is kept) */
+        return;
+    }
+#endif
     Dma_AddData(gObjGlow->cur->upload, 0x10);
     Dma_AddTexFlush();
     Dma_AddFrame((gGfx.frame & 1) ? 0 : 0x70, 8, 0xFFFFFF);
