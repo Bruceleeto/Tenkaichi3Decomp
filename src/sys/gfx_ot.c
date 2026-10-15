@@ -378,6 +378,8 @@ s32 Ot_Align64(s32 size) {
 #ifdef PORT
 /* Takes a record node from the packet memory (see port/ot_rec.h): the PRIM's bits (the context, blending, gouraud,
    texture, fst, the type) and n corners, which the caller fills before it links the node as it would the packet. */
+extern char Ot_RecHeadCheck[OT_REC_HEAD == (s32)(u32) & ((OtRec *)0)->v ? 1 : -1]; /* (the corners' offset in OtRec) */
+
 void *Ot_NewRec(u64 prim, s32 n) {
     OtPrim *node = (OtPrim *)gOtCur;
     OtRec *r;
@@ -385,7 +387,7 @@ void *Ot_NewRec(u64 prim, s32 n) {
     if (node == NULL) {
         return NULL;
     }
-    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + sizeof(OtRec));
+    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + ((OT_REC_HEAD + n * sizeof(RndOtVtx) + 15) & ~15)); /* (its n corners) */
     node->qwc = 0;
     node->tagId = OT_REC_TAG;
     node->next = NULL;
@@ -418,6 +420,29 @@ void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 
 void Ot_RecTex0(void *node, u64 tex0) {
     OT_REC(node)->setTex0 = 1;
     OT_REC(node)->tex0 = tex0;
+}
+
+/* A packet node that writes one GS register (A+D): the state a producer's packet set around its draw, kept as a
+   packet beside the record (followed as such). */
+void *Ot_NewAd(u32 addr, u64 data) {
+    OtPrim *node = (OtPrim *)gOtCur;
+    u64 *d;
+
+    if (node == NULL) {
+        return NULL;
+    }
+    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + 0x20);
+    node->qwc = 2;
+    node->tagId = DMA_TAG_NEXT >> 16;
+    node->next = NULL;
+    node->vif[0] = VIF_FLUSHE;
+    node->vif[1] = VIF_DIRECT | 2;
+    d = (u64 *)(node + 1);
+    d[0] = GIF_TAG(1, 1, 1);
+    d[1] = GIF_REG_AD;
+    d[2] = data;
+    d[3] = addr;
+    return node;
 }
 
 u32 Ot_RecRgba(f32 r, f32 g, f32 b, f32 a) {
