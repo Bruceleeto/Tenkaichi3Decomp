@@ -306,6 +306,10 @@ static GsTex texture_get(const GsRegs *r) {
         }
     }
     px = replaced ? NULL : malloc((size_t)tw * th * 4);
+    if (!replaced && px == NULL) {
+        Port_Lost("a texture: no memory to convert it (gs_draw.c texture_get)", tw * th * 4, __builtin_return_address(0));
+        return gsWhite;
+    }
     for (y = 0; !replaced && y < th; y++) {
         for (x = 0; x < tw; x++) {
             uint32_t c = Gs_VramRead(tbp, tbw, psm, x, y), a;

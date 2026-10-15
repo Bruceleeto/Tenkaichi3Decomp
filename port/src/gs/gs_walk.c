@@ -278,20 +278,31 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     return 1;
 }
 
-/* The list at tadr is handed over: its records from the queue being filled to the one the walk reads, in order. */
+/* The list at tadr is handed over: the queue being filled becomes the one the walk reads, as it is (its block
+   changes hands; nothing is copied), and the walk's block, read to the end, is the next to be filled. */
 void Gs_RndTake(void) {
-    RndQueue *f = &sRndFill, *w = &sRndWalk;
+    RndQueue *f = &sRndFill, *w = &sRndWalk, t;
     Port_BindKeep();
-    w->n = w->next = 0;
-    if (w->cap < f->n) {
-        RndCmd *c = realloc(w->cmd, f->n * sizeof(RndCmd));
-        if (c == NULL) { sRndLost += f->n; f->n = 0; return; }
-        w->cmd = c;
-        w->cap = f->n;
+    t = *w;
+    *w = *f;
+    w->next = 0;
+    *f = t;
+    f->n = f->next = 0;
+}
+
+/* The walk has drawn the list, in the same call that handed it over (the Dreamcast; the PC's but for
+   gs_core.c's render thread): its block goes back to the queue to be filled, so that there is one (a frame's
+   records, a few MB on the Dreamcast) and not two. */
+static void rnd_walked(void) {
+    RndQueue *f = &sRndFill, *w = &sRndWalk;
+    if (f->n == 0 && w->cap > f->cap) {
+        free(f->cmd);
+        f->cmd = w->cmd;
+        f->cap = w->cap;
+        w->cmd = NULL;
+        w->cap = 0;
     }
-    memcpy(w->cmd, f->cmd, f->n * sizeof(RndCmd));
-    w->n = f->n;
-    f->n = 0;
+    w->n = w->next = 0;
 }
 
 static void rnd_draw(const RndCmd *c) {
@@ -718,6 +729,7 @@ static void walk_list(uint32_t tadr, int tte) {
 static void walk_chain(uint32_t tadr, int tte) {
     walk_list(tadr, tte);
     Gs_RndRest();
+    rnd_walked();
     walk_report();
     if (sGpu) {
         GsGpu_FrameEnd();
@@ -734,7 +746,7 @@ static void list_draw(uint32_t tadr, int tte) {
     while (w->next < w->n) {
         rnd_draw(&w->cmd[w->next++]);
     }
-    w->n = w->next = 0;
+    rnd_walked();
 #ifdef PORT_GS_REF
     if (getenv("BT3_GS_VERBOSE") != NULL) {
         walk_list(tadr, tte);
