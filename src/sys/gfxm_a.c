@@ -1940,6 +1940,11 @@ void StgDepthTint_Draw(void) {
         }
     }
     tint = &gStgDepthTint[medium];
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no depth texture: nothing) */
+        return;
+    }
+#endif
     if (tint->enabled != 0) {
         Gfx_AddDefaultEnv();
         Dma_AddData(tint->tex.upload, 0x10);
