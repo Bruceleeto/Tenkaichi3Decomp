@@ -13,6 +13,9 @@
  * the game uploads. Either way the movie file is the one the game opened last (the path from plat_file.c) and the
  * bytes the game feeds to sceMpegDemuxPss are ignored. Without a window a movie ends at once, except when recorded
  * input is played back (the movie has to take the same number of frames).
+ *
+ * BT3_NO_MOVIE (the Dreamcast's build unless `make -f Makefile.dc DC_MOVIE=1`): no pl_mpeg; where the renderer would
+ * have the movie, a movie ends at once (saying so once).
  */
 extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 #include <stdint.h>
@@ -23,6 +26,7 @@ extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 #define MOVIE_W 512
 #define MOVIE_H 448
 
+#ifndef BT3_NO_MOVIE
 #define PL_MPEG_IMPLEMENTATION
 #ifdef __DREAMCAST__
 #include <kos.h>
@@ -50,6 +54,8 @@ extern void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t 
 #endif
 extern int GsPvr_MovieBegin(int w, int h); /* gs/gs_pvr.c: the movie's texture */
 extern void GsPvr_MovieEnd(void);
+static plm_t *sPlm;
+#endif
 extern int Rnd_MovieOn(void);      /* gs/gs_draw.c */
 
 extern char gPortMoviePath[512];
@@ -63,18 +69,19 @@ extern int Mpeg2_Height(const Mpeg2 *m);
 extern void Mpeg2_Close(Mpeg2 *m);
 
 static Mpeg2 *sMovie;
-static plm_t *sPlm;
 static int sStarted, sEnd;
 #ifndef __DREAMCAST__
 static uint8_t sFrame[MOVIE_W * MOVIE_H * 4];
 #endif
 
 static void movie_close(void) {
+#ifndef BT3_NO_MOVIE
     if (sPlm != NULL) {
         plm_destroy(sPlm);
         sPlm = NULL;
         GsPvr_MovieEnd();
     }
+#endif
     if (sMovie != NULL) {
         Mpeg2_Close(sMovie);
         sMovie = NULL;
@@ -91,6 +98,14 @@ static void movie_start(void) {
         return;
     }
     if (Rnd_MovieOn()) { /* NAME.mpg in MOVIE_DIR for the disc's NAME.PSS */
+#ifdef BT3_NO_MOVIE
+        static int said;
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "bt3: movies are off in this build (make -f Makefile.dc DC_MOVIE=1 plays them)\n");
+        }
+        return;
+#else
         char path[600];
         const char *name = strrchr(gPortMoviePath, '/') != NULL ? strrchr(gPortMoviePath, '/') + 1 : gPortMoviePath;
         size_t n = strcspn(name, ".");
@@ -111,6 +126,7 @@ static void movie_start(void) {
         fprintf(stderr, "bt3: movie %s: %d x %d\n", path, plm_get_width(sPlm), plm_get_height(sPlm));
         sEnd = 0;
         return;
+#endif
     }
 #ifndef __DREAMCAST__
     sMovie = Mpeg2_Open(gPortMoviePath);
@@ -146,6 +162,7 @@ int sceMpegGetPicture(void *mp, void *rgb, int blocks) {
     if (!sStarted) {
         movie_start();
     }
+#ifndef BT3_NO_MOVIE
     if (sPlm != NULL) { /* into the renderer's texture */
         plm_frame_t *f = sEnd ? NULL : plm_decode_video(sPlm);
         if (f == NULL) {
@@ -159,6 +176,7 @@ int sceMpegGetPicture(void *mp, void *rgb, int blocks) {
 #endif
         return 0;
     }
+#endif
 #ifdef __DREAMCAST__
     (void)out;
     (void)blocks;

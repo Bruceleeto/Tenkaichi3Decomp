@@ -90,6 +90,14 @@ $(OBJ)/gs_%.o: port/src/gs/%.c | $(OBJ)
 	$(CC) $(GS_CFLAGS) $< -o $@
 $(OBJ)/gs_gs_pvr.o: GS_CFLAGS += -DBT3_PVR
 $(OBJ)/gs_gs_draw.o: GS_CFLAGS += -DBT3_PVR
+# DC_MOVIE=1: the movies played (pl_mpeg, port/src/plat_movie.c; dc-assets converts them); off, they end at once
+DC_MOVIE ?= 0
+MOVIE_STAMP := $(BUILD)/movie_$(DC_MOVIE).stamp
+$(MOVIE_STAMP): | $(OBJ)
+	rm -f $(BUILD)/movie_*.stamp
+	touch $@
+$(OBJ)/pc_plat_movie.o: $(MOVIE_STAMP)
+$(OBJ)/pc_plat_movie.o: PC_CFLAGS += $(if $(filter 1,$(DC_MOVIE)),,-DBT3_NO_MOVIE)
 
 $(OBJ)/pc_vu0_%.o: src/port/vu0_%.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
@@ -109,7 +117,7 @@ $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 # again to convert them again
 HOSTCC ?= cc
 ASSETS := $(BUILD)/assets
-dc-assets: $(ASSETS)/tex.pak $(ASSETS)/ZS3USOP.mpg $(ASSETS)/ZS3USED.mpg
+dc-assets: $(ASSETS)/tex.pak $(if $(filter 1,$(DC_MOVIE)),$(ASSETS)/ZS3USOP.mpg $(ASSETS)/ZS3USED.mpg)
 # the movies as pl_mpeg plays them (port/tools/dc_movie.sh: MPEG-1, with ffmpeg)
 $(ASSETS)/%.mpg: gamedata/disc/DATA/%.PSS port/tools/dc_movie.sh
 	mkdir -p $(ASSETS)
