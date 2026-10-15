@@ -539,6 +539,7 @@ void EftSteam_DrawQuad(EftEVec *color, EftEVec *pos, f32 w, f32 h, f32 u0, f32 v
         u32 rgba = (u8)(u32)(color->x * tint) | (u8)(u32)(color->y * tint) << 8 | (u8)(u32)(color->z * tint) << 16 | (u32)(u8)(u32)color->w << 24;
         p = Ot_NewRec(prim, 4);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, u0, v0, 1.0f, rgba);
         Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, u1, v0, 1.0f, rgba);
         Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, u0, v1, 1.0f, rgba);
@@ -2654,6 +2655,7 @@ void EftWater_DrawBillboard(EftWaterVec *pos, EftWaterMtx *world2screen, f32 siz
         gOtCur = (u32 *)p;
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, *tex);
+        EftVram_PortRecTex(p, *tex);
         Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, 0.0f, 0.0f, 1.0f, rgba);
         Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, 1.0f, 0.0f, 1.0f, rgba);
         Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, 0.0f, 1.0f, 1.0f, rgba);
@@ -2852,6 +2854,7 @@ void EftWater_DrawSprayQuad(EftWaterVec *pos, EftWaterMtx *orient, EftWaterMtx *
         gOtCur = (u32 *)p;
         p = Ot_NewRec(0x5C, 4);
         Ot_RecTex0(p, *tex);
+        EftVram_PortRecTex(p, *tex);
         for (i = 0; i < 4; i++) {
             Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
         }
@@ -2978,6 +2981,7 @@ static inline void EftWater_QueueTri(EftWaterScr4 *p0, EftWaterScr4 *p1, EftWate
     if (Port_TakesRecords()) { /* the triangle as a record */
         p = Ot_NewRec(0x5B, 3);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, p0->x, p0->y, p0->z, t0->x, t0->y, t0->z,
                   (u8)(u32)c0->x | (u8)(u32)c0->y << 8 | (u8)(u32)c0->z << 16 | (u32)(u8)(u32)c0->w << 24);
         Ot_RecVtx(p, 1, p1->x, p1->y, p1->z, t1->x, t1->y, t1->z,
