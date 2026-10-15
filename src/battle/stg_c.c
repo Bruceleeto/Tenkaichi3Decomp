@@ -218,56 +218,32 @@ void StgHaze_BeginDraw(StgHazeDraw *d, StgHaze *haze, s32 x0, s32 x1, s32 width,
     Dma_AddZbuf(0xE0, 0);
     d->p = (GsQword *)Dma_BeginDirect();
     Gfx_PutDefaultEnv(&d->p);
-    d->p->d[0] = GIF_TAG(6, 0, 1);
-    d->p->d[1] = GIF_REG_AD;
+    PORT_PKT(d->p->d, 0, GIF_TAG(6, 0, 1), GIF_REG_AD);
     d->p++;
-    d->p->d[0] = 0x30000;
-    d->p->d[1] = GS_TEST_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_TEST_1, 0x30000);
     d->p++;
-    d->p->d[0] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
-    d->p->d[1] = GS_ZBUF_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_ZBUF_1, GS_SET_ZBUF(0xE0, GS_PSMZ24, 1));
     d->p++;
-    d->p->d[0] = !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000;
-    d->p->d[1] = GS_TEX0_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_TEX0_1, !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000);
     d->p++;
-    d->p->d[0] = 0x80150;
-    d->p->d[1] = GS_FRAME_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_FRAME_1, 0x80150);
     d->p++;
-    d->p->d[0] = GS_SET_SCISSOR(0, tmpW - 1, 0, tmpH - 1);
-    d->p->d[1] = GS_SCISSOR_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, tmpW - 1, 0, tmpH - 1));
     d->p++;
-    d->p->d[0] = GS_SET_CLAMP(2, 2, x0, x1 - 1, 0, h - 1);
-    d->p->d[1] = GS_CLAMP_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_CLAMP_1, GS_SET_CLAMP(2, 2, x0, x1 - 1, 0, h - 1));
     d->p++;
     Dma_PutTexStrips(&d->p, 0, 0, tmpW, tmpH, 0, 0, x0, 0, width + x0, h, 0, 0, 0x80808080, 0);
-    d->p->d[0] = GIF_TAG(5, 0, 1);
-    d->p->d[1] = GIF_REG_AD;
+    PORT_PKT(d->p->d, 0, GIF_TAG(5, 0, 1), GIF_REG_AD);
     d->p++;
-    d->p->d[0] = 0x264022A00;
-    d->p->d[1] = GS_TEX0_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_TEX0_1, 0x264022A00);
     d->p++;
-    d->p->d[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    d->p->d[1] = GS_FRAME_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
     d->p++;
-    d->p->d[0] = GS_SET_SCISSOR(x0, x1 - 1, 0, h - 1);
-    d->p->d[1] = GS_SCISSOR_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_SCISSOR_1, GS_SET_SCISSOR(x0, x1 - 1, 0, h - 1));
     d->p++;
-    d->p->d[0] = GS_SET_CLAMP(2, 2, 0, tmpW - 1, 0, tmpH - 1);
-    d->p->d[1] = GS_CLAMP_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_CLAMP_1, GS_SET_CLAMP(2, 2, 0, tmpW - 1, 0, tmpH - 1));
     d->p++;
-    d->p->d[0] = 0x54;
-    d->p->d[1] = GS_ALPHA_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_ALPHA_1, 0x54);
     d->p++;
 }
 
@@ -490,35 +466,16 @@ static void StgHaze_PortDraw(StgHaze *haze, s32 x0, s32 x1, s32 width, s32 width
     q = (GsQword *)Dma_BeginDirect();
     Gfx_PutDefaultEnv(&q);
     p = (u64 *)q;
-    p[0] = GIF_TAG(9, 1, 1);
-    p[1] = GIF_REG_AD;
-    p[2] = 0x30000;
-    p[3] = GS_TEST_1;
-    PORT_AD(p, 2);
-    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
-    p[5] = GS_ZBUF_1;
-    PORT_AD(p, 4);
-    p[6] = 0x264022A00;
-    p[7] = GS_TEX0_1;
-    PORT_AD(p, 6);
-    p[8] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[9] = GS_FRAME_1;
-    PORT_AD(p, 8);
-    p[10] = GS_SET_SCISSOR(x0, x1 - 1, 0, 0x1C0 - 1);
-    p[11] = GS_SCISSOR_1;
-    PORT_AD(p, 10);
-    p[12] = GS_SET_CLAMP(2, 2, 0, widthPx - 1, 0, 0xE0 - 1);
-    p[13] = GS_CLAMP_1;
-    PORT_AD(p, 12);
-    p[14] = 0x54;
-    p[15] = GS_ALPHA_1;
-    PORT_AD(p, 14);
-    p[16] = 0x154;
-    p[17] = GS_PRIM;
-    PORT_AD(p, 16);
-    p[18] = (u64)haze->color | ((u64)0x3F800000 << 32);
-    p[19] = GS_RGBAQ;
-    PORT_AD(p, 18);
+    PORT_PKT(p, 0, GIF_TAG(9, 1, 1), GIF_REG_AD);
+    PORT_REG(p, 2, GS_TEST_1, 0x30000);
+    PORT_REG(p, 4, GS_ZBUF_1, GS_SET_ZBUF(0xE0, GS_PSMZ24, 1));
+    PORT_REG(p, 6, GS_TEX0_1, 0x264022A00);
+    PORT_REG(p, 8, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
+    PORT_REG(p, 10, GS_SCISSOR_1, GS_SET_SCISSOR(x0, x1 - 1, 0, 0x1C0 - 1));
+    PORT_REG(p, 12, GS_CLAMP_1, GS_SET_CLAMP(2, 2, 0, widthPx - 1, 0, 0xE0 - 1));
+    PORT_REG(p, 14, GS_ALPHA_1, 0x54);
+    PORT_REG(p, 16, GS_PRIM, 0x154);
+    PORT_REG(p, 18, GS_RGBAQ, (u64)haze->color | ((u64)0x3F800000 << 32));
     Dma_EndDirect(p + 20);
 }
 #endif
@@ -1016,32 +973,19 @@ s32 StgTint_IsOn(u32 slot) {
 void StgBlur_BeginDraw(StgBlurDraw *d, s32 x0, s32 srcW, s32 width, s32 srcH, s32 dstW, s32 dstH) {
     d->p = (GsQword *)Dma_BeginDirect();
     Gfx_PutDefaultEnv(&d->p);
-    d->p->d[0] = GIF_TAG(6, 0, 1);
-    d->p->d[1] = GIF_REG_AD;
+    PORT_PKT(d->p->d, 0, GIF_TAG(6, 0, 1), GIF_REG_AD);
     d->p++;
-    d->p->d[0] = 0x30000;
-    d->p->d[1] = GS_TEST_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_TEST_1, 0x30000);
     d->p++;
-    d->p->d[0] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
-    d->p->d[1] = GS_ZBUF_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_ZBUF_1, GS_SET_ZBUF(0xE0, GS_PSMZ24, 1));
     d->p++;
-    d->p->d[0] = !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000;
-    d->p->d[1] = GS_TEX0_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_TEX0_1, !(gGfx.frame & 1) ? 0x264020E00 : 0x264020000);
     d->p++;
-    d->p->d[0] = 0x40150;
-    d->p->d[1] = GS_FRAME_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_FRAME_1, 0x40150);
     d->p++;
-    d->p->d[0] = GS_SET_SCISSOR(0, dstW - 1, 0, dstH - 1);
-    d->p->d[1] = GS_SCISSOR_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_SCISSOR_1, GS_SET_SCISSOR(0, dstW - 1, 0, dstH - 1));
     d->p++;
-    d->p->d[0] = GS_SET_CLAMP(2, 2, 0, srcW - 1, 0, srcH - 1);
-    d->p->d[1] = GS_CLAMP_1;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, GS_CLAMP_1, GS_SET_CLAMP(2, 2, 0, srcW - 1, 0, srcH - 1));
     d->p++;
 }
 
@@ -1053,12 +997,9 @@ void StgBlur_EndDraw(StgBlurDraw *d) {
 /* Starts one textured Gouraud triangle strip of nVerts vertices (colour, texel, position per vertex).
    Both callers pass 1 as a third argument, which is not used. */
 void StgBlur_PutStripTag(StgBlurDraw *d, s32 nVerts, s32 unused) {
-    d->p->d[0] = 0x1000000000000001;
-    d->p->d[1] = 0xE;
+    PORT_PKT(d->p->d, 0, 0x1000000000000001, 0xE);
     d->p++;
-    d->p->d[0] = 0x15C;
-    d->p->d[1] = 0;
-    PORT_AD(d->p->d, 0);
+    PORT_REG(d->p->d, 0, 0, 0x15C);
     d->p++;
     d->p->d[0] = (u64)(nVerts | 0x8000) | ((u64)0x8800 << 47);
     d->p->d[1] = 0x531F;
@@ -1243,26 +1184,13 @@ static void StgBlur_PortDraw(StgBlur *blur, Vec4 *c, s32 width, s32 half, s32 xO
     q = (GsQword *)Dma_BeginDirect();
     Gfx_PutDefaultEnv(&q);
     p = (u64 *)q;
-    p[0] = GIF_TAG(6, 1, 1);
-    p[1] = GIF_REG_AD;
-    p[2] = 0x30000;
-    p[3] = GS_TEST_1;
-    PORT_AD(p, 2);
-    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
-    p[5] = GS_ZBUF_1;
-    PORT_AD(p, 4);
-    p[6] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-    p[7] = GS_FRAME_1;
-    PORT_AD(p, 6);
-    p[8] = GS_SET_SCISSOR(xOffset, x1 - 1, 0, srcH - 1);
-    p[9] = GS_SCISSOR_1;
-    PORT_AD(p, 8);
-    p[10] = (u64)((last == 0x150 ? 0x2A00 : 0x2D80) | 0x20010000) | ((u64)8 << 30);
-    p[11] = GS_TEX0_1;
-    PORT_AD(p, 10);
-    p[12] = GS_SET_CLAMP(2, 2, 0, half - 1, 0, h - 1);
-    p[13] = GS_CLAMP_1;
-    PORT_AD(p, 12);
+    PORT_PKT(p, 0, GIF_TAG(6, 1, 1), GIF_REG_AD);
+    PORT_REG(p, 2, GS_TEST_1, 0x30000);
+    PORT_REG(p, 4, GS_ZBUF_1, GS_SET_ZBUF(0xE0, GS_PSMZ24, 1));
+    PORT_REG(p, 6, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
+    PORT_REG(p, 8, GS_SCISSOR_1, GS_SET_SCISSOR(xOffset, x1 - 1, 0, srcH - 1));
+    PORT_REG(p, 10, GS_TEX0_1, (u64)((last == 0x150 ? 0x2A00 : 0x2D80) | 0x20010000) | ((u64)8 << 30));
+    PORT_REG(p, 12, GS_CLAMP_1, GS_SET_CLAMP(2, 2, 0, half - 1, 0, h - 1));
     Dma_EndDirect(p + 14);
 }
 #endif
@@ -1381,31 +1309,22 @@ void StgBlur_Draw(s32 split, s32 view, Mtx44 *viewMtx) {
             ub = grow + nx;
             va = grow + dy;
             vb = grow + ny;
-            d.p->d[0] = GIF_TAG(2, 0, 1);
-            d.p->d[1] = GIF_REG_AD;
+            PORT_PKT(d.p->d, 0, GIF_TAG(2, 0, 1), GIF_REG_AD);
             d.p++;
-            d.p->d[0] = (u64)(tbp[i & 1] | 0x20010000) | ((u64)8 << 30); /* 256 x 256, 4 pages wide */
-            d.p->d[1] = GS_TEX0_1;
-            PORT_AD(d.p->d, 0);
+            PORT_REG(d.p->d, 0, GS_TEX0_1, (u64)(tbp[i & 1] | 0x20010000) | ((u64)8 << 30)); /* 256 x 256, 4 pages wide */
             d.p++;
-            d.p->d[0] = (u64)(fbp[(i & 1) ? 0 : 1] | 0x40000);
-            d.p->d[1] = GS_FRAME_1;
-            PORT_AD(d.p->d, 0);
+            PORT_REG(d.p->d, 0, GS_FRAME_1, (u64)(fbp[(i & 1) ? 0 : 1] | 0x40000));
             d.p++;
             lastTbp = tbp[(i & 1) ? 0 : 1];
             Dma_PutTexStrips(&d.p, 0, 0, half, h, 0, 0, 0, 0, half, h, 8, 8, 0x80808080, 0);
-            d.p->d[0] = GIF_TAG(2, 0, 1);
-            d.p->d[1] = GIF_REG_AD;
+            PORT_PKT(d.p->d, 0, GIF_TAG(2, 0, 1), GIF_REG_AD);
             d.p++;
-            d.p->d[0] = 0x156; /* sprite, textured, blended, UV */
-            d.p->d[1] = GS_PRIM;
-            PORT_AD(d.p->d, 0);
+            PORT_REG(d.p->d, 0, GS_PRIM, 0x156); /* sprite, textured, blended, UV */
             d.p++;
             d.p->d[0] = (u64)blur->color3 | ((u64)0xFE00 << 46);
             d.p->d[1] = GS_RGBAQ;
             d.p++;
-            d.p->d[0] = 0x4400000000008001; /* REGLIST, one loop of UV, XYZ2, UV, XYZ2 */
-            d.p->d[1] = 0x5353;
+            PORT_PKT(d.p->d, 0, 0x4400000000008001, 0x5353); /* REGLIST, one loop of UV, XYZ2, UV, XYZ2 */
             d.p++;
             d.p->d[0] = (u64)((ua << 4) + 8) | ((u64)((va << 4) + 8) << 16);
             d.p->d[1] = 0x72007000;
@@ -1414,24 +1333,15 @@ void StgBlur_Draw(s32 split, s32 view, Mtx44 *viewMtx) {
             d.p->d[1] = (u64)((half + 0x700) << 4) | ((u64)0x8000 << 16);
             d.p++;
         }
-        d.p->d[0] = GIF_TAG(4, 0, 1);
-        d.p->d[1] = GIF_REG_AD;
+        PORT_PKT(d.p->d, 0, GIF_TAG(4, 0, 1), GIF_REG_AD);
         d.p++;
-        d.p->d[0] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
-        d.p->d[1] = GS_FRAME_1;
-        PORT_AD(d.p->d, 0);
+        PORT_REG(d.p->d, 0, GS_FRAME_1, !(gGfx.frame & 1) ? 0x80070 : 0x80000);
         d.p++;
-        d.p->d[0] = GS_SET_SCISSOR(xOffset, x1 - 1, 0, srcH - 1);
-        d.p->d[1] = GS_SCISSOR_1;
-        PORT_AD(d.p->d, 0);
+        PORT_REG(d.p->d, 0, GS_SCISSOR_1, GS_SET_SCISSOR(xOffset, x1 - 1, 0, srcH - 1));
         d.p++;
-        d.p->d[0] = (u64)(lastTbp | 0x20010000) | ((u64)8 << 30);
-        d.p->d[1] = GS_TEX0_1;
-        PORT_AD(d.p->d, 0);
+        PORT_REG(d.p->d, 0, GS_TEX0_1, (u64)(lastTbp | 0x20010000) | ((u64)8 << 30));
         d.p++;
-        d.p->d[0] = GS_SET_CLAMP(2, 2, 0, half - 1, 0, h - 1);
-        d.p->d[1] = GS_CLAMP_1;
-        PORT_AD(d.p->d, 0);
+        PORT_REG(d.p->d, 0, GS_CLAMP_1, GS_SET_CLAMP(2, 2, 0, half - 1, 0, h - 1));
         d.p++;
         {
             s32 in[4][4];  /* x, y, u, v of the points half way between the centre and each corner */
