@@ -28,6 +28,7 @@ void *Ot_NewAd(u32 addr, u64 data); /* a packet node that writes one GS register
 /* Corner i: x, y in sixteenths of a pixel (XYOFFSET in), the 24-bit depth, s t q (with fst: U, V in sixteenths of
    a texel), r g b a (r in the low byte), as the packet holds them. */
 void Ot_RecTexHandles(void *node, u32 tex, u32 pal); /* with Ot_RecTex0: the handles of the texture that TEX0 names */
+void EftVram_PortRecTex(void *node, u64 tex0); /* src/battle/eft_ae.c: the same for an effect texture, by the TEX0 */
 void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 rgba);
 void Ot_RecTex0(void *node, u64 tex0); /* the TEX0 the packet writes to its context before its corners */
 void Ot_RecClamp(void *node); /* its packet writes CLAMP 5 before its corners and CLAMP 0 after (RND_OTREC_CLAMP) */

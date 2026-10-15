@@ -1743,6 +1743,14 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
         }
     }
 }
+
+/* The same given to an ordering table record (Ot_RecTexHandles) for the TEX0 it writes. */
+void EftVram_PortRecTex(void *node, u64 tex0) {
+    u32 tex, pal;
+
+    EftVram_PortHandles(tex0, &tex, &pal);
+    Ot_RecTexHandles(node, tex, pal);
+}
 #endif
 
 /* Uploads every texture queued this frame (from BtlScene_Draw, once per frame). */

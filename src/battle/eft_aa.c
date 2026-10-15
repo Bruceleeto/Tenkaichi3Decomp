@@ -505,6 +505,7 @@ void EftGndDust_DrawQuad(Vec4 *pos, Vec4 *color, Mtx44 *mtx, u64 tex0, f32 scale
         p = Ot_NewRec(0x5C, 4);
         rgba = Ot_RecRgba(color->x, color->y, color->z, color->w);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         for (i = 0; i < 4; i++) {
             Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
         }
