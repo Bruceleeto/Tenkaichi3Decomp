@@ -1480,19 +1480,18 @@ static NatTex *nat_get(uint8_t *e) {
    which record the blocks hold from there on (the chain runs after the game has built all of it). */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block);
 int Port_TexNative(void *e, int tbp) {
-    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
-    uint32_t pkt[12] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7E, 0}; /* (as TexBltPacket) */
+    extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
+    uint32_t blocks;
     NatTex *n;
     if (!sNatOn) { return 0; }
     if ((n = nat_get(e)) == NULL || n->none) { sNatMiss[3]++; return 0; }
-    pkt[8] = (uint32_t)tbp & 0x3FFF;
-    pkt[9] = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
+    blocks = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
     sPalAsk = 1;
     if (n->direct && Port_PalNative(Port_Ptr(rd32((uint8_t *)e + 0x38)), (int)rd32((uint8_t *)e + 8), rd32((uint8_t *)e + 0x18), tbp)) {
-        pkt[9] &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
+        blocks &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
     }
     sPalAsk = 0;
-    Port_MarkAdd(pkt, sizeof(pkt));
+    Port_MarkReg(0x7E, ((uint32_t)tbp & 0x3FFF) | (uint64_t)blocks << 32);
     return (int)((uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
 }
 
@@ -1579,8 +1578,7 @@ static const NatPal *pal_at(uint32_t cbp, uint32_t n) {
    eft_det_a.c): not 0 (its handle) = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
    layer which it is. */
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
-    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
-    uint32_t m[24] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
+    extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
     uint32_t addr = Port_Addr(pkt), i, w, h, bits, k4;
     uint64_t key;
     const uint8_t *img = NULL;
@@ -1613,19 +1611,13 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         }
         return 0;
     }
-    m[8] = (uint32_t)block & 0x3FFF;
-    m[9] = (uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16; /* (the blocks it covers) */
+    Port_MarkReg(0x7D, ((uint32_t)block & 0x3FFF) |
+                       (uint64_t)((uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16) << 32); /* (the blocks it covers) */
     if (p->sub[0] != 0 && (block & 3) == 0) {
         /* (and blocks 1 to 3 their palettes of 16, for a 4-bit texture that names them; block 0's is p->sub[0]) */
-        m[0] = 0x10000005; m[3] = 0x50000005; m[4] = 0x00008004;
         for (k4 = 1; k4 < 4; k4++) {
-            m[8 + k4 * 4] = (uint32_t)(block + (int)k4) & 0x3FFF;
-            m[9 + k4 * 4] = p->sub[k4];
-            m[10 + k4 * 4] = 0x7D;
+            Port_MarkReg(0x7D, ((uint32_t)(block + (int)k4) & 0x3FFF) | (uint64_t)p->sub[k4] << 32);
         }
-        Port_MarkAdd(m, sizeof(m));
-    } else {
-        Port_MarkAdd(m, 12 * 4);
     }
     return (int)((uint32_t)(p - sPal + 1) | (p->gen & 0xFFFF) << 16);
 }
@@ -1641,8 +1633,7 @@ const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) {
    per channel, colour * k + o in 0..255; alpha >= 0: their alpha replaced by it, 0x80 = opaque). 0 = not done so
    (the game draws its passes over them in GS memory as before). cbp < 0: no pass this frame (1: none drawn). */
 int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
-    extern void Port_MarkAdd(const uint32_t *pkt, int size); /* gs_marker.c */
-    uint32_t m[16] = {0x10000003, 0, 0, 0x50000003, 0x00008002, 0x10000000, 0xE, 0, 0, 0, 0x7B, 0, 0, 0, 0x7C, 0};
+    extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
     uint64_t v = 1ull << 63;
     int i;
     if (!sNatOn) { return 0; }
@@ -1652,10 +1643,8 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
         v |= (uint64_t)(uint32_t)(kk * 255.0f + 0.5f) << (i * 8) | (uint64_t)(uint32_t)(oo + 0.5f) << (24 + i * 8);
     }
     if (alpha >= 0) { v |= (uint64_t)gs_unit((uint32_t)alpha & 0xFF) << 48 | 1ull << 56; }
-    m[8] = (uint32_t)v;
-    m[9] = (uint32_t)(v >> 32);
-    m[12] = ((uint32_t)cbp >> 5) & 511;
-    Port_MarkAdd(m, sizeof(m));
+    Port_MarkReg(0x7B, v);
+    Port_MarkReg(0x7C, ((uint32_t)cbp >> 5) & 511);
     return 1;
 }
 

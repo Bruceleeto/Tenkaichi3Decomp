@@ -8,16 +8,10 @@
 #include <stdint.h>
 
 extern void Dma_AddData(void *src, int size);
-void Port_MarkAdd(const uint32_t *pkt, int size);
+void Port_MarkReg(uint32_t reg, uint64_t v);
 
 void Port_GsMarker(int effect) {
-    uint32_t pkt[12] = {
-        0x10000000u | 2, 0, 0x10000000u, 0x50000000u | 2, /* DMA CNT, 2 quadwords; VIF FLUSHE, DIRECT 2 */
-        0x8000u | 1, 0x10000000u, 0xE, 0,                  /* GIF tag: 1 loop, EOP, one register: A+D */
-        (uint32_t)effect, 0, 0x7F, 0,                      /* value, register number */
-    };
-
-    Port_MarkAdd(pkt, sizeof(pkt));
+    Port_MarkReg(0x7F, (uint32_t)effect);
 }
 
 /* include/port/rnd.h: the quad to the renderer's queue (gs/gs_walk.c Gs_RecordPush), with the place in the display
@@ -60,20 +54,21 @@ int Port_Mark(uint32_t addr, uint64_t d) {
     return Gs_RecordPush(m, 2, gDmaBuf[gDmaBufIdx], Port_Addr(gDmaCur));
 }
 
-/* A marker packet (a DMA CNT tag, VIF DIRECT, a GIF tag of N A+D writes of the port's registers, as Port_GsMarker,
-   gs_pvr.c Port_TexNative / Port_PalNative / Port_ClutTint build them): its writes to the renderer's queue, in
-   their place among the records; the packet itself into the display list only where the list is read for them
-   (the PS2 reference: gs_core.c; BT3_WALK=1, 2 on PC). */
+/* A marker: one of the port's registers (0x7B..0x7F: Port_GsMarker, gs_pvr.c Port_TexNative / Port_PalNative /
+   Port_ClutTint) and its value, to the renderer's queue in its place among the records; as a packet (a one-register
+   A+D write) into the display list only where the list is read for it (the PS2 reference: gs_core.c; BT3_WALK=1, 2
+   on PC). */
 extern int Port_ListRead(void); /* gs/gs_walk.c */
-void Port_MarkAdd(const uint32_t *pkt, int size) {
-    uint32_t i, n = pkt[4] & 0x7FFF;
-    for (i = 0; i < n && 8 + i * 4 + 4 <= (uint32_t)size / 4; i++) {
-        const uint32_t *q = pkt + 8 + i * 4;
-        Port_Mark(q[2], q[0] | (uint64_t)q[1] << 32);
-    }
+void Port_MarkReg(uint32_t reg, uint64_t v) {
+    Port_Mark(reg, v);
 #ifdef PORT_GS_REF
     if (Port_ListRead()) {
-        Dma_AddData((void *)pkt, size);
+        uint32_t pkt[12] = {
+            0x10000000u | 2, 0, 0x10000000u, 0x50000000u | 2, /* DMA CNT, 2 quadwords; VIF FLUSHE, DIRECT 2 */
+            0x8000u | 1, 0x10000000u, 0xE, 0,                  /* GIF tag: 1 loop, EOP, one register: A+D */
+            (uint32_t)v, (uint32_t)(v >> 32), reg, 0,          /* value, register number */
+        };
+        Dma_AddData(pkt, sizeof(pkt));
     }
 #endif
 }
