@@ -86,6 +86,7 @@ static unsigned sTintDraws; /* per 30 frames: draws with a tinted palette (Port_
 static unsigned sPalMade[2]; /* per 30 frames: palettes made for a native one from tex.pak, out of GS memory */
 static unsigned sNatLive, sNatSteal, sNatMiss[4]; /* per frame, draws of a 4/8-bit texture not native: no record at
                                                      its block, record not native, another size or format; uploads not native */
+static unsigned sPalStale; /* per 30 frames: records whose palette handle no longer named what is at their CBP */
 static unsigned sPalMiss; /* per 30 frames: palette uploads not native (not a palette of the pack, or no record free): sent
                              to GS memory as before */
 static int sPalAsk;       /* Port_TexNative asking whether a direct entry's pixels are also a palette (not counted) */
@@ -1232,14 +1233,15 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing; ordering table: %u packets, %u decoded, %u records\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing (%u a palette no longer at its CBP); ordering table: %u packets, %u decoded, %u records\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, sPalStale, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
         sTintDraws = 0;
         gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = 0;
         gsRndFallback = gsRndByTex0 = gsRndHandleMiss = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
         sPalMiss = 0;
+        sPalStale = 0;
         memset(sPalMade, 0, sizeof(sPalMade));
     }
     memset(gGsTint, 0, sizeof(gGsTint)); /* (the tints are the frame's: the game sets them again for the next) */
@@ -1864,6 +1866,20 @@ uint32_t Port_PalSub(uint32_t pal, int k) {
    as a draw of TEX0 alone would read the record at its block (GsPvr_Native): its format and size (a direct one as
    8-bit indices: the light), whose palette is then the one pal names. 0 = not (or no longer) one, or not drawable
    so: the record's TEX0 is looked for at its block, else its GS fallback is drawn. */
+/* Palette record pi (+ 1) is still what GS memory holds at block cbp, as the record's TEX0 names it: the record at
+   cbp, or palette k of 16 of the 256 at cbp - k (the font's; their marker named only the first block). Not when
+   something was uploaded over it or the game drew into its page since (gs_core.c src_begin, src_own clear gGsPal): the
+   draw then reads what is there now, by its CBP. */
+static int pal_still_at(uint32_t pi, uint32_t cbp) {
+    uint32_t k, j;
+    if (gGsPal[cbp & 16383] == pi) { return 1; }
+    for (k = 1; k < 4 && k <= cbp; k++) {
+        j = gGsPal[(cbp - k) & 16383];
+        if (j != 0 && j <= MAX_PAL && sPal[j - 1].addr != 0 && sPal[j - 1].sub[k] == pi) { return 1; }
+    }
+    return 0;
+}
+
 static GsTex tex_handle(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
     uint32_t ti = tex & 0xFFFF, pi = pal & 0xFFFF, psm, w, h;
     NatTex *n;
@@ -1878,6 +1894,7 @@ static GsTex tex_handle(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, u
         if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 ||
             sPal[pi - 1].n != (psm == 0x14 ? 16u : 256u)) { return 0; }
         p = &sPal[pi - 1];
+        if (t0 != 0 && !pal_still_at(pi, (uint32_t)(t0 >> 37) & 0x3FFF)) { sPalStale++; return 0; }
     }
     *tw = w;
     *th = h;
