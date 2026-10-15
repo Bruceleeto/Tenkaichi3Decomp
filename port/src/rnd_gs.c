@@ -28,6 +28,7 @@ unsigned gRndOtStat[3];
 uint32_t gRndCtxBad[2];       /* RND_BAD_: what of a context's state a record cannot say */
 
 static uint64_t sTex0[2];     /* TEX0 of each context */
+static uint32_t sTexH[2], sPalH[2]; /* the handles of the texture it names, as a record of the table gave them (0: none) */
 static uint64_t sXyOff[2] = {0x7200ull << 32 | 0x7000, 0x7200ull << 32 | 0x7000}; /* XYOFFSET */
 static uint64_t sPrim;        /* PRIM */
 static uint64_t sPrmodeCont = 1, sPrmode; /* PRMODECONT, PRMODE: with AC 0 a primitive's attributes are PRMODE's */
@@ -67,10 +68,12 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
     switch (addr) {
     case 0x06: /* TEX0 */
         sTex0[c] = v;
+        sTexH[c] = sPalH[c] = 0; /* (Rnd_OtRec gives its own) */
         dirty(D_TEX0, c, v, taken);
         return 1;
     case 0x16: /* TEX2: TEX0's format and palette */
         sTex0[c] = (sTex0[c] & ~0xFFFFFFE003F00000ull) | (v & 0xFFFFFFE003F00000ull);
+        sTexH[c] = sPalH[c] = 0;
         return 1;
     case 0x08: /* CLAMP: repeated, clamped, or a region (not said) */
         v &= 15;
@@ -239,6 +242,8 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
         sVn = 0;
     }
     p.gsTex0 = tme ? t0 : 0;
+    p.tex = tme ? sTexH[c] : 0;
+    p.pal = tme ? sPalH[c] : 0;
     p.gsCtx = (uint32_t)c;
     if (mode == DRAW) {
         Port_Poly(&p);
@@ -438,6 +443,10 @@ void Rnd_OtRec(const RndOtRec *r) {
         gs_write(0x08 + (r->ctx & 1), 5, 1);
     }
     sVn = 0;
+    if (r->tex != 0) { /* (given with its TEX0, which has just cleared the context's) */
+        sTexH[r->ctx & 1] = r->tex;
+        sPalH[r->ctx & 1] = r->pal;
+    }
     for (i = 0; i < r->n; i++) {
         const RndOtVtx *v = &r->v[i];
         sRgba = v->rgba;

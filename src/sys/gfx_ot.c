@@ -410,7 +410,13 @@ void *Ot_NewRec(u64 prim, s32 n) {
     r->n = n;
     r->setTex0 = 0;
     r->tex0 = 0;
+    r->tex = r->pal = 0;
     return node;
+}
+
+void Ot_RecTexHandles(void *node, u32 tex, u32 pal) {
+    OT_REC(node)->tex = tex;
+    OT_REC(node)->pal = pal;
 }
 
 void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 rgba) {

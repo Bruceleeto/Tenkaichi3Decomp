@@ -11,7 +11,7 @@
  * as it would have drawn the packet it stands for.
  *
  * A producer, where Port_TakesRecords(): node = Ot_NewRec(the packet's PRIM, corners), NULL when there is no
- * packet memory; Ot_RecTex0 if the packet writes TEX0; Ot_RecVtx for each corner in the packet's order; then the
+ * packet memory; Ot_RecTex0 if the packet writes TEX0 (and Ot_RecTexHandles: the texture's handles); Ot_RecVtx for each corner in the packet's order; then the
  * node linked where the packet would have been. State the packet set by A+D around its draw (CLAMP, TEST) stays
  * a packet: Ot_NewAd nodes linked in the same order around the record.
  */
@@ -20,13 +20,14 @@
 #include "port/rnd.h"
 
 #define OT_REC_TAG 0x03FF
-#define OT_REC_HEAD 16 /* the bytes of an OtRec in front of its corners: a node holds only the corners it has */
+#define OT_REC_HEAD 24 /* the bytes of an OtRec in front of its corners: a node holds only the corners it has */
 typedef RndOtRec OtRec;
 
 void *Ot_NewRec(u64 prim, s32 n);
 void *Ot_NewAd(u32 addr, u64 data); /* a packet node that writes one GS register (A+D) */
 /* Corner i: x, y in sixteenths of a pixel (XYOFFSET in), the 24-bit depth, s t q (with fst: U, V in sixteenths of
    a texel), r g b a (r in the low byte), as the packet holds them. */
+void Ot_RecTexHandles(void *node, u32 tex, u32 pal); /* with Ot_RecTex0: the handles of the texture that TEX0 names */
 void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 rgba);
 void Ot_RecTex0(void *node, u64 tex0); /* the TEX0 the packet writes to its context before its corners */
 void Ot_RecClamp(void *node); /* its packet writes CLAMP 5 before its corners and CLAMP 0 after (RND_OTREC_CLAMP) */

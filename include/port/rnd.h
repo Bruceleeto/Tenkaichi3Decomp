@@ -149,7 +149,9 @@ uint64_t *Rnd_OtState(uint64_t *dst);
    what the packet's PRIM says (ctx, abe, gouraud, tme, fst, the type: 1 line, 2 line strip, 3 triangle, 4 strip,
    5 fan, 6 sprite) and its n corners as the packet holds them: x, y in sixteenths of a pixel with XYOFFSET in,
    the 24-bit depth, s t q (with fst: U and V in sixteenths of a texel, as whole numbers in s and t), r g b a (r in
-   the low byte). With setTex0, the packet's TEX0 of context ctx is written before it, as the packet wrote it. */
+   the low byte). With setTex0, the packet's TEX0 of context ctx is written before it, as the packet wrote it, and
+   tex, pal are the handles of the texture it names (0: none; as RndPoly's), which the draws of that context name
+   until another TEX0 is written there. */
 typedef struct RndOtVtx {
     uint16_t x, y;
     uint32_t z;
@@ -159,6 +161,7 @@ typedef struct RndOtVtx {
 typedef struct RndOtRec {
     uint8_t ctx, abe, gouraud, tme, fst, type, n, setTex0;
     uint64_t tex0;
+    uint32_t tex, pal; /* (with them 120 bytes) */
     RndOtVtx v[4];
 } RndOtRec; /* 112 bytes */
 #define RND_OTREC_CLAMP 2 /* setTex0 bit: CLAMP 5 (both clamped) for its corners, then CLAMP 0 (repeat), as the packet */
