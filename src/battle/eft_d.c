@@ -4,6 +4,7 @@
 #include "sys/gfx_ot.h"
 #ifdef PORT
 #include "port/rnd.h"
+extern void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal); /* battle/eft_ae.h */
 #endif
 
 /*
@@ -218,6 +219,7 @@ static inline void EftSurf_QueueTri(EftScrPos *scr0, EftScrPos *scr1, EftScrPos 
             ((EftPrim *)&prim)->abe = abe;
             pkt = Ot_NewRec(prim, 3);
             Ot_RecTex0(pkt, tex[i]);
+            EftVram_PortRecTex(pkt, tex[i]);
             for (k = 0; k < 3; k++) {
                 Ot_RecVtx(pkt, k, sc[k][0], sc[k][1], sc[k][2], t[k][0], t[k][1], t[k][2], Ot_RecRgba(c[k].x, c[k].y, c[k].z, c[k].w));
             }
@@ -405,6 +407,12 @@ void EftSurf_DrawTriDirect(EftScrPos *scr0, EftScrPos *scr1, EftScrPos *scr2, Ve
             Rnd_Vtx(&r.v[2], i, scr2->x, scr2->y, (u32)scr2->z & 0xFFFFFF, st2->x, st2->y, st2->z,
                     (u8)c[8] | (u32)(u8)c[9] << 8 | (u32)(u8)c[10] << 16 | (u32)(u8)c[11] << 24);
             r.n = 3;
+            {
+                u32 tex, pal;
+                EftVram_PortHandles(tex0[i], &tex, &pal); /* (by handles: what the TEX0 names among this frame's uploads) */
+                r.tex = tex;
+                r.pal = pal;
+            }
             r.gsTex0 = tex0[i];
             if (Rnd_Draw(&r, i, abe, 1)) {
                 continue;
