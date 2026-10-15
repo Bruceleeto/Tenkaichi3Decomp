@@ -534,45 +534,58 @@ void EftSteam_DrawQuad(EftEVec *color, EftEVec *pos, f32 w, f32 h, f32 u0, f32 v
         return;
     }
     prim = 0x54;
-    p = (EftSteamPkt *)gOtCur;
-    gOtCur = (u32 *)(p + 1);
-    p->tag = 0x20000007;
-    p->vif1 = 0x50000007;
-    p->tex0 = tex0;
-    p->prim = prim;
-    p->vif0 = 0x10000000;
-    p->gif0 = 0xC400000000008001;
-    p->gif1 = 0xF42424242160;
-    p->next = 0;
-    p->rgba[0] = (u32)(color->x * tint);
-    p->rgba[1] = (u32)(color->y * tint);
-    p->rgba[2] = (u32)(color->z * tint);
-    p->rgba[3] = (u32)color->w;
-    p->q = 1.0f;
-    p->v[0].s = u0;
-    p->v[0].t = v0;
-    p->v[1].s = u1;
-    p->v[1].t = v0;
-    p->v[2].s = u0;
-    p->v[2].t = v1;
-    p->v[3].s = u1;
-    p->v[3].t = v1;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the flat strip as a record */
+        u32 rgba = (u8)(u32)(color->x * tint) | (u8)(u32)(color->y * tint) << 8 | (u8)(u32)(color->z * tint) << 16 | (u32)(u8)(u32)color->w << 24;
+        p = Ot_NewRec(prim, 4);
+        Ot_RecTex0(p, tex0);
+        Ot_RecVtx(p, 0, scr[0].x, scr[0].y, scr[0].z, u0, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 1, scr[1].x, scr[1].y, scr[1].z, u1, v0, 1.0f, rgba);
+        Ot_RecVtx(p, 2, scr[2].x, scr[2].y, scr[2].z, u0, v1, 1.0f, rgba);
+        Ot_RecVtx(p, 3, scr[3].x, scr[3].y, scr[3].z, u1, v1, 1.0f, rgba);
+    } else
+#endif
+    {
+        p = (EftSteamPkt *)gOtCur;
+        gOtCur = (u32 *)(p + 1);
+        p->tag = 0x20000007;
+        p->vif1 = 0x50000007;
+        p->tex0 = tex0;
+        p->prim = prim;
+        p->vif0 = 0x10000000;
+        p->gif0 = 0xC400000000008001;
+        p->gif1 = 0xF42424242160;
+        p->next = 0;
+        p->rgba[0] = (u32)(color->x * tint);
+        p->rgba[1] = (u32)(color->y * tint);
+        p->rgba[2] = (u32)(color->z * tint);
+        p->rgba[3] = (u32)color->w;
+        p->q = 1.0f;
+        p->v[0].s = u0;
+        p->v[0].t = v0;
+        p->v[1].s = u1;
+        p->v[1].t = v0;
+        p->v[2].s = u0;
+        p->v[2].t = v1;
+        p->v[3].s = u1;
+        p->v[3].t = v1;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+    }
     EftSteam_OtAdd((OtPrim *)p, scr[0].z >> 8, prio);
 }
 
