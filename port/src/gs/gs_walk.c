@@ -233,25 +233,33 @@ int Gs_TakesRecords(void) {
    between the packets the game put in front of them and after them. A transfer is a call (sys/dma.c), so what is
    queued is always the list being made: all of it goes to the walk when the list is handed over (Gs_RndTake), and
    it is dropped when the game starts the list again without sending it (Dma_ResetBuffers: Port_ListRestart). Two
-   queues: the one the game fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
+   queues: the one the game fills, the one a walk (on the render thread, BT3_GS_THREAD) reads.
+   A draw made later (Gs_DeferPush: a model's mesh, port/src/vu1_native.c) is queued as what it needs to be made
+   (a block of the queue's own arena) and the function that makes it, called in its place when the queue is drawn:
+   its records drawn as they come (sReplay), none kept. */
+typedef void (*RndDeferFn)(const void *);
 typedef struct RndCmd {
     uint32_t at;       /* the address in the display list */
-    uint32_t kind;     /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value) */
-    union { RndQuad q; RndPoly p; uint64_t m[2]; } r;
+    uint32_t kind;     /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value), 3 a draw made later */
+    union { RndQuad q; RndPoly p; uint64_t m[2]; struct { RndDeferFn fn; uint32_t ofs; } d; } r;
 } RndCmd;
 typedef struct RndQueue {
     RndCmd *cmd;
     uint32_t n, cap, next; /* (next: the walk's) */
+    uint8_t *arena;        /* the blocks of the draws made later */
+    uint32_t used, size;
 } RndQueue;
 static RndQueue sRndFill, sRndWalk;
 static unsigned sMarksIn; /* markers queued (Port_Mark) since the last report */
 static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
+static int sReplay; /* a draw made later is being made: its records go straight to the renderer */
 
 /* src/sys/dma.c Dma_ResetBuffers: the list is started again without being handed over: its records go. */
 void Port_BindUndo(void); /* port/src/gs_marker.c */
 void Port_BindKeep(void);
 void Port_ListRestart(void) {
     sRndFill.n = 0;
+    sRndFill.used = 0;
     Port_BindUndo();
 }
 
@@ -259,6 +267,11 @@ void Port_ListRestart(void) {
    being made. 0 = not taken. */
 int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     RndQueue *f = &sRndFill;
+    if (sReplay) {
+        if (kind == 0) { GsGpu_Quad((const RndQuad *)rec); } else if (kind == 1) { GsGpu_Poly((const RndPoly *)rec); }
+        else { Gs_Marker((uint32_t)((const uint64_t *)rec)[0], ((const uint64_t *)rec)[1]); }
+        return 1;
+    }
     if (f->n == f->cap) {
         uint32_t cap = f->cap ? f->cap * 2 : 1024;
         RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
@@ -273,9 +286,43 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     f->cmd[f->n].at = at;
     f->cmd[f->n].kind = (uint32_t)kind;
     if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else if (kind == 1) { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
+    else if (kind == 3) { /* (Gs_DeferPush fills it) */ }
     else { memcpy(f->cmd[f->n].r.m, rec, 16); sMarksIn++; }
     f->n++;
     return 1;
+}
+
+/* Whether a draw can be made later (Gs_DeferPush): where the queue is drawn in the call that hands the list over
+   (BT3_WALK=3, the Dreamcast), so the state a draw is made with is set again (by its caller) on the same thread. */
+int Gs_Defers(void) {
+    return sWalk == 3 && Gs_TakesRecords() && !sReplay;
+}
+
+/* A draw made later, at the address `at` of the list being made: `bytes` of the queue's arena for what it needs
+   (filled by the caller), fn called with them in its place when the queue is drawn. NULL: no memory (said). */
+void *Gs_DeferPush(uint32_t bytes, RndDeferFn fn, uint32_t at) {
+    RndQueue *f = &sRndFill;
+    uint32_t ofs = (f->used + 7) & ~7u;
+    if (ofs + bytes > f->size) {
+        uint32_t size = f->size ? f->size : 64 * 1024;
+        uint8_t *a;
+        while (ofs + bytes > size) { size *= 2; }
+        a = size <= 16 * 1024 * 1024 ? realloc(f->arena, size) : NULL;
+        if (a == NULL) {
+            sRndLost++;
+            Port_Lost("a draw made later: the frame's arena is full (its bytes)", f->used, __builtin_return_address(0));
+            return NULL;
+        }
+        f->arena = a;
+        f->size = size;
+    }
+    if (!Gs_RecordPush(NULL, 3, at)) {
+        return NULL;
+    }
+    f->cmd[f->n - 1].r.d.fn = fn;
+    f->cmd[f->n - 1].r.d.ofs = ofs;
+    f->used = ofs + bytes;
+    return f->arena + ofs;
 }
 
 /* The list at tadr is handed over: the queue being filled becomes the one the walk reads, as it is (its block
@@ -287,7 +334,7 @@ void Gs_RndTake(void) {
     *w = *f;
     w->next = 0;
     *f = t;
-    f->n = f->next = 0;
+    f->n = f->next = f->used = 0;
 }
 
 /* The walk has drawn the list, in the same call that handed it over (the Dreamcast; the PC's but for
@@ -302,11 +349,23 @@ static void rnd_walked(void) {
         w->cmd = NULL;
         w->cap = 0;
     }
-    w->n = w->next = 0;
+    if (f->used == 0 && w->size > f->size) {
+        free(f->arena);
+        f->arena = w->arena;
+        f->size = w->size;
+        w->arena = NULL;
+        w->size = 0;
+    }
+    w->n = w->next = w->used = 0;
 }
 
 static void rnd_draw(const RndCmd *c) {
-    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else if (c->kind == 1) { GsGpu_Poly(&c->r.p); } else { Gs_Marker((uint32_t)c->r.m[0], c->r.m[1]); }
+    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else if (c->kind == 1) { GsGpu_Poly(&c->r.p); }
+    else if (c->kind == 3) {
+        sReplay = 1;
+        c->r.d.fn(sRndWalk.arena + c->r.d.ofs);
+        sReplay = 0;
+    } else { Gs_Marker((uint32_t)c->r.m[0], c->r.m[1]); }
 }
 
 /* The walk is at the DMA tag at tadr: the records queued in front of it. */
@@ -324,7 +383,7 @@ void Gs_RndRest(void) {
         rnd_draw(&w->cmd[w->next++]);
         sRndLate++;
     }
-    w->n = w->next = 0;
+    w->n = w->next = w->used = 0;
     if ((sRndLate != 0 || sRndLost != 0) && getenv("BT3_GS_VERBOSE") != NULL) {
         fprintf(stderr, "rnd: frame %u: %u records not met by the walk (drawn last), %u not queued (no memory)\n", sFrame, sRndLate, sRndLost);
     }

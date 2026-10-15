@@ -612,6 +612,24 @@ void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, floa
     o->rgba = rgba;
 }
 
+void Rnd_SnapTake(RndSnap *s) {
+    memcpy(s->ctx, gRndCtx, sizeof(s->ctx));
+    memcpy(s->bad, gRndCtxBad, sizeof(s->bad));
+    memcpy(s->tex0, sTex0, sizeof(s->tex0));
+    memcpy(s->xyOff, sXyOff, sizeof(s->xyOff));
+    s->prmode = sPrmode;
+    s->prmodeCont = sPrmodeCont;
+}
+
+void Rnd_SnapPut(const RndSnap *s) {
+    memcpy(gRndCtx, s->ctx, sizeof(s->ctx));
+    memcpy(gRndCtxBad, s->bad, sizeof(s->bad));
+    memcpy(sTex0, s->tex0, sizeof(s->tex0));
+    memcpy(sXyOff, s->xyOff, sizeof(s->xyOff));
+    sPrmode = s->prmode;
+    sPrmodeCont = s->prmodeCont;
+}
+
 uint64_t Rnd_Tex0(int ctx) {
     return sTex0[ctx & 1];
 }

@@ -12,9 +12,15 @@
  * section 2): one "ret" tag, UNPACK V4-32 of a header at TOPS + 0 and of the vertices behind it, MSCNT.
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "../../include/port/rnd.h"
 #include "vu1_native.h"
+#include "port_addr.h"
+
+extern uint32_t *gDmaCur;                                                /* src/sys/dma.c: the display list's cursor */
+extern int Gs_Defers(void);                                              /* gs/gs_walk.c */
+extern void *Gs_DeferPush(uint32_t bytes, void (*fn)(const void *), uint32_t at);
 
 /* ---------------------------------------------------------------------------------------------- arithmetic */
 
@@ -181,6 +187,32 @@ static void split(const uint32_t *hdr, uint32_t *nh, const uint32_t **vtx, uint3
     }
 }
 
+/* The textures a draw made later names (W_NOTE): each TEX0 once, with the handles it has now (Port_TexNote). */
+#define NOTE_MAX 16
+static RndTexNote sNote[NOTE_MAX];
+static unsigned sNoteN, sNoteFull;
+
+/* A draw: made now, or queued to be made when the list is (Vu1Defer, at the end of this file). stat: VU1N_; the
+   constants k (nk floats) and k2 (nk2) behind them. */
+static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2);
+
+static void note(uint32_t prim, uint64_t tex0) {
+    unsigned i;
+    if (!((prim >> 4) & 1) || tex0 == 0) {
+        return; /* (not textured: Port_Poly does not look) */
+    }
+    for (i = 0; i < sNoteN; i++) {
+        if (sNote[i].tex0 == tex0) {
+            return;
+        }
+    }
+    if (sNoteN == NOTE_MAX) {
+        sNoteFull = 1;
+        return;
+    }
+    Port_TexNote(&sNote[sNoteN++], tex0);
+}
+
 /* The triangles of a strip of n corners, those whose last corner is marked (ADC) left out; two that follow each
    other as one record of four corners (the GS's strip order: 0 1 2, 1 2 3). The texture: TEX0 tex0, or by the
    handle tex where there is one (0: none). */
@@ -231,10 +263,15 @@ typedef struct P4Vtx {
     float p[4], c[4], t[4]; /* clip position, colour, texture coordinate */
 } P4Vtx;
 
+/* What a walk does with each batch: whether it can be drawn (W_CHECK), its textures' handles noted (W_NOTE: a draw
+   made later, Vu1Defer), or drawn (W_DRAW). */
+enum { W_CHECK, W_DRAW, W_NOTE };
+
 typedef struct P4Walk {
-    int draw;         /* 0: only whether every batch can be drawn */
+    int draw;         /* W_ */
     int header;       /* the object header has been seen */
     uint32_t fanPrim; /* its PRIM */
+    const float *c;   /* the constants (program 4's sP4, 6's sP6, as they were when the draw was queued) */
 } P4Walk;
 
 /* Where edge a -> b crosses the plane comp = sign * w (in clip space, before the divide: so with the colour and
@@ -356,7 +393,10 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         }
         wk->fanPrim = tag_prim(hdr);
         wk->header = 1;
-        return wk->draw || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
+        if (wk->draw == W_NOTE) {
+            note(wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1));
+        }
+        return wk->draw != W_CHECK || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
     }
     split(hdr, &nh, &vtx, &nv, 3);
     memcpy(&lo, hdr, 8);
@@ -371,16 +411,20 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     if (n > P4_MAXV || n * 3 > nv) {
         return 0;
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         return gRndCtxBad[ctx] == 0;
     }
     tex0 = Rnd_Tex0(ctx);
+    if (wk->draw == W_NOTE) {
+        note(prim, tex0);
+        return 1;
+    }
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position, colour, s t q */
         float s[4], q;
 
-        mtx_apply(s, sP4, v[0], v[1], v[2], v[3]);
-        mtx_apply(clip[i], sP4 + 16, v[0], v[1], v[2], v[3]);
+        mtx_apply(s, wk->c, v[0], v[1], v[2], v[3]);
+        mtx_apply(clip[i], wk->c + 16, v[0], v[1], v[2], v[3]);
         q = vu_div(1.0f, s[3]);
         for (k = 0; k < 4; k++) {
             s[k] = vu_clamp(s[k] * q);
@@ -399,7 +443,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
                 tc[0] = (const float *)(vtx + (i - 2) * 12) + 8;
                 tc[1] = (const float *)(vtx + (i - 1) * 12) + 8;
                 tc[2] = v + 8;
-                p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), 0, sP4 + 32);
+                p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), 0, wk->c + 32);
             }
             adc[i] = 1;
         }
@@ -423,9 +467,7 @@ int Vu1Native_Prog4(const void *chain) {
         return 0;
     }
     gVu1NativeStat[VU1N_P4][1]++;
-    memset(&wk, 0, sizeof(wk));
-    wk.draw = 1;
-    walk(chain, p4_batch, &wk);
+    submit(VU1N_P4, chain, sP4, 48, NULL, 0);
     return 1;
 }
 
@@ -443,8 +485,10 @@ int Vu1Native_Prog4(const void *chain) {
 #define FIG_MAXV 38 /* the corners the program has room for (its output, 6 + 6n quadwords, in 238) */
 
 typedef struct FigWalk {
-    int prog, draw;
-    const float *k; /* the constants, when drawing */
+    int prog, draw;  /* (draw: W_) */
+    const float *k;  /* the constants, when drawing */
+    const float *sc; /* program 2: its block's screen and clip (VU 11..18, sP2 + 44) */
+    int alt;         /* program 2: 2b */
 } FigWalk;
 
 /* The A+D tag of one register the batch starts with (no EOP: the strip's tag follows in the same kick). */
@@ -492,11 +536,16 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         (wk->prog == 0 && !ad_tex0(hdr + 8, ctx[1], &tex0[1]))) {
         return refuse(__LINE__);
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         return gRndCtxBad[ctx[0]] == 0 && gRndCtxBad[ctx[1]] == 0 ? 1 : refuse(__LINE__ | (gRndCtxBad[ctx[0]] | gRndCtxBad[ctx[1]]) << 16);
     }
     if (wk->prog == 1) {
         memcpy(&tex0[1], k + 104, 8); /* constant 26: TEX0_2 of the fade texture, as ObjDraw_DrawParts writes it */
+    }
+    if (wk->draw == W_NOTE) {
+        note(prim[0], tex0[0]);
+        note(prim[1], tex0[1]);
+        return 1;
     }
     for (c = 0; c < 4; c++) {
         col[0][c] = vu_ftoi(k[88 + c], 1.0f);
@@ -576,22 +625,14 @@ int Vu1Native_Takes(int prog, const void *chain) {
     return 1;
 }
 
-static void fig_draw(int prog, const void *chain, const void *consts) {
-    FigWalk wk;
-
-    memset(&wk, 0, sizeof(wk));
-    wk.prog = prog;
-    wk.draw = 1;
-    wk.k = (const float *)consts;
-    walk(chain, fig_batch, &wk);
-}
+#define FIG_K 108 /* the constants programs 0 and 1 read (0..26) */
 
 void Vu1Native_Prog0(const void *chain, const void *consts) {
-    fig_draw(0, chain, consts);
+    submit(VU1N_P0, chain, (const float *)consts, FIG_K, NULL, 0);
 }
 
 void Vu1Native_Prog1(const void *chain, const void *consts) {
-    fig_draw(1, chain, consts);
+    submit(VU1N_P1, chain, (const float *)consts, FIG_K, NULL, 0);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 2 */
@@ -613,7 +654,7 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     static RndVtx out[FIG_MAXV];
     static uint8_t adc[FIG_MAXV];
     FigWalk *wk = (FigWalk *)arg;
-    const float *k = wk->k, *sc = sP2 + 44, *cm = sP2 + 60;
+    const float *k = wk->k, *sc = wk->sc, *cm = wk->sc != NULL ? wk->sc + 16 : NULL;
     uint32_t prim, n, i, c, flags[3] = {0, 0, 0};
     uint64_t tex0;
     int ctx;
@@ -629,11 +670,15 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     if (n > FIG_MAXV || n * 3 > nv) {
         return 0;
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         return gRndCtxBad[ctx] == 0;
     }
     if (!ad_tex0(hdr + 4, ctx, &tex0)) { /* (the A+D writes the other context's TEX0: this one's is the one bound) */
         tex0 = Rnd_Tex0(ctx);
+    }
+    if (wk->draw == W_NOTE) {
+        note(prim, tex0);
+        return 1;
     }
     for (c = 0; c < 4; c++) {
         col[c] = vu_ftoi(k[40 + c], 1.0f);
@@ -657,20 +702,15 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         flags[0] = flags[1];
         flags[1] = flags[2];
         flags[2] = clip_flags(cl);
-        adc[i] = !sP2Alt && (flags[0] | flags[1] | flags[2]) != 0; /* (2b: none) */
+        adc[i] = !wk->alt && (flags[0] | flags[1] | flags[2]) != 0; /* (2b: none) */
     }
     put_strip(out, adc, n, prim, tex0, 0);
     return 1;
 }
 
 void Vu1Native_Prog2(const void *chain, const void *consts) {
-    FigWalk wk;
-
-    memset(&wk, 0, sizeof(wk));
-    wk.prog = 2;
-    wk.draw = 1;
-    wk.k = (const float *)consts;
-    walk(chain, p2_batch, &wk);
+    /* (its own 0..10, then the block's screen and clip, 11..18) */
+    submit(sP2Alt ? VU1N_P2B : VU1N_P2A, chain, (const float *)consts, 44, sP2 + 44, 32);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 6 */
@@ -724,7 +764,10 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         }
         wk->fanPrim = tag_prim(hdr);
         wk->header = 1;
-        return wk->draw || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
+        if (wk->draw == W_NOTE) {
+            note(wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1));
+        }
+        return wk->draw != W_CHECK || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
     }
     memcpy(&lo, hdr, 8);
     /* +0 a tag of one register (+1 its quadword: neither is sent), +2 the strip's tag; the vertices behind */
@@ -737,22 +780,25 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     if (n > P6_MAXV || n * 4 > nv) {
         return 0;
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         return gRndCtxBad[ctx] == 0 && (!((prim >> 4) & 1) || p6_target(Rnd_Tex0(ctx)) != 0) &&
                (!((wk->fanPrim >> 4) & 1) || p6_target(Rnd_Tex0((int)(wk->fanPrim >> 9) & 1)) != 0);
     }
     tex0 = Rnd_Tex0(ctx);
     tex = p6_target(tex0);
+    if (wk->draw == W_NOTE) { /* (the shadow page's frame buffer is named by its handle: nothing to note) */
+        return 1;
+    }
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 16); /* position (w: the flag), normal, colour, s t slot */
         float s[4], c[4], q;
         int16_t sum, flag = (int16_t)(vtx[i * 16 + 3] & 0xFFFF);
 
-        mtx_apply(s, sP6, v[0], v[1], v[2], 1.0f);
-        mtx_apply(clip[i], sP6 + 16, v[0], v[1], v[2], 1.0f);
-        mtx_apply(c, sP6 + 48, v[0], v[1], v[2], 1.0f);
-        st[i][0] = vu_clamp(vu_clamp(vu_clamp(c[0] * sP6[64]) + 1.0f) * 0.5f);
-        st[i][1] = vu_clamp(vu_clamp(vu_clamp(c[1] * sP6[64]) + 1.0f) * 0.5f);
+        mtx_apply(s, wk->c, v[0], v[1], v[2], 1.0f);
+        mtx_apply(clip[i], wk->c + 16, v[0], v[1], v[2], 1.0f);
+        mtx_apply(c, wk->c + 48, v[0], v[1], v[2], 1.0f);
+        st[i][0] = vu_clamp(vu_clamp(vu_clamp(c[0] * wk->c[64]) + 1.0f) * 0.5f);
+        st[i][1] = vu_clamp(vu_clamp(vu_clamp(c[1] * wk->c[64]) + 1.0f) * 0.5f);
         st[i][2] = 1.0f;
         st[i][3] = 0.0f;
         q = vu_div(1.0f, s[3]);
@@ -776,7 +822,7 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
                 tc[1] = st[i - 1];
                 tc[2] = st[i];
                 p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])&col[i - 2], tc, wk->fanPrim,
-                        Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), p6_target(Rnd_Tex0((int)(wk->fanPrim >> 9) & 1)), sP6 + 32);
+                        Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), p6_target(Rnd_Tex0((int)(wk->fanPrim >> 9) & 1)), wk->c + 32);
             }
             adc[i] = 1;
         } else {
@@ -800,9 +846,7 @@ int Vu1Native_Prog6(const void *chain) {
         return 0;
     }
     gVu1NativeStat[VU1N_P6][1]++;
-    memset(&wk, 0, sizeof(wk));
-    wk.draw = 1;
-    walk(chain, p6_batch, &wk);
+    submit(VU1N_P6, chain, sP6, 68, NULL, 0);
     return 1;
 }
 
@@ -842,8 +886,12 @@ static int p7_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     if (n > P7_MAXV || n * 3 > nv) {
         return 0;
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         return gRndCtxBad[ctx] == 0;
+    }
+    if (wk->draw == W_NOTE) {
+        note(prim, Rnd_Tex0(ctx));
+        return 1;
     }
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position (w: the flag), colour, s t q */
@@ -887,8 +935,7 @@ int Vu1Native_Prog7(const void *chain, const void *consts) {
         mtx_apply(wk.cl + j * 4, k + 32, k[j * 4], k[j * 4 + 1], k[j * 4 + 2], k[j * 4 + 3]);
     }
     wk.alpha = k[51];
-    wk.draw = 1;
-    walk(chain, p7_batch, &wk);
+    submit(VU1N_P7, chain, wk.sl, 33, NULL, 0); /* (sl, cl, alpha: one after the other) */
     return 1;
 }
 
@@ -921,15 +968,16 @@ static int hdr_tex0(const uint32_t *hdr, int ctx, uint64_t *tex0) {
 }
 
 typedef struct P8Walk {
-    int draw;
-    const float *k;
+    int draw;        /* W_ */
+    const float *k;  /* the node's constants (VU 0..9) */
+    const float *sc; /* screen and clip (VU 10..17, sP8 + 40) */
 } P8Walk;
 
 static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[P8_MAXV];
     static uint8_t adc[P8_MAXV];
     P8Walk *wk = (P8Walk *)arg;
-    const float *k = wk->k, *sc = sP8 + 40, *cm = sP8 + 56;
+    const float *k = wk->k, *sc = wk->sc, *cm = wk->sc + 16;
     uint32_t prim, n, i, c, flags[3] = {0, 0, 0};
     uint64_t tex0, lo;
     int ctx;
@@ -947,12 +995,16 @@ static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     if (n > P8_MAXV || n * 3 > nv) {
         return 0;
     }
-    if (!wk->draw) {
+    if (wk->draw == W_CHECK) {
         /* the register written: a TEX0 (of either context), or one that changes nothing drawn (NOP) */
         return gRndCtxBad[ctx] == 0 && (hdr_tex0(hdr, 0, &tex0) || hdr_tex0(hdr, 1, &tex0) || (hdr[2] & 15) == 15);
     }
     if (!hdr_tex0(hdr, ctx, &tex0)) { /* (the other context's TEX0: this one's is the one bound) */
         tex0 = Rnd_Tex0(ctx);
+    }
+    if (wk->draw == W_NOTE) {
+        note(prim, tex0);
+        return 1;
     }
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position (w: A's weight), colour, s t q */
@@ -999,7 +1051,130 @@ int Vu1Native_Prog8(const void *chain, const void *consts) {
         return 0;
     }
     gVu1NativeStat[VU1N_P8][1]++;
-    wk.draw = 1;
-    walk(chain, p8_batch, &wk);
+    submit(VU1N_P8, chain, wk.k, 40, sP8 + 40, 32);
     return 1;
+}
+
+/* ---------------------------------------------------------------------------------------------- made later */
+
+/* A draw queued with the list (gs/gs_walk.c Gs_DeferPush) and made when the list is, as the PS2's VU1 runs a chain
+   when the list reaches it: the chain read then (the model's own data, there until the list is drawn, as the PS2's
+   DMA reads it then too), the constants and the followed GS state as they were when it was queued, the textures by
+   the handles they had then (Port_TexNotes). No triangles are kept: a frame's would be some MB. */
+typedef struct Vu1Defer {
+    const void *chain;
+    RndSnap st;
+    uint8_t stat;   /* VU1N_ */
+    uint8_t notes;  /* RndTexNote behind the constants */
+    uint16_t nk;    /* floats of constants */
+    float k[];
+} Vu1Defer;
+
+#define DEFER_MAX_K 108
+static union {
+    Vu1Defer d;
+    uint64_t align[(sizeof(Vu1Defer) + DEFER_MAX_K * 4 + NOTE_MAX * sizeof(RndTexNote)) / 8 + 2];
+} sStage;
+
+static RndTexNote *notes_of(const Vu1Defer *m) {
+    return (RndTexNote *)((uintptr_t)((const uint8_t *)m->k + m->nk * 4 + 7) & ~(uintptr_t)7);
+}
+
+/* The walk of the draw m in mode (W_DRAW, W_NOTE). */
+static void run(const Vu1Defer *m, int mode) {
+    const float *k = m->k;
+
+    switch (m->stat) {
+    case VU1N_P0:
+    case VU1N_P1:
+    case VU1N_P2A:
+    case VU1N_P2B: {
+        FigWalk wk;
+        memset(&wk, 0, sizeof(wk));
+        wk.prog = m->stat == VU1N_P0 ? 0 : m->stat == VU1N_P1 ? 1 : 2;
+        wk.draw = mode;
+        wk.k = k;
+        wk.sc = k + 44;
+        wk.alt = m->stat == VU1N_P2B;
+        walk(m->chain, wk.prog == 2 ? p2_batch : fig_batch, &wk);
+        break;
+    }
+    case VU1N_P4:
+    case VU1N_P6: {
+        P4Walk wk;
+        memset(&wk, 0, sizeof(wk));
+        wk.draw = mode;
+        wk.c = k;
+        walk(m->chain, m->stat == VU1N_P4 ? p4_batch : p6_batch, &wk);
+        break;
+    }
+    case VU1N_P7: {
+        P7Walk wk;
+        memset(&wk, 0, sizeof(wk));
+        memcpy(wk.sl, k, sizeof(wk.sl));
+        memcpy(wk.cl, k + 16, sizeof(wk.cl));
+        wk.alpha = k[32];
+        wk.draw = mode;
+        walk(m->chain, p7_batch, &wk);
+        break;
+    }
+    case VU1N_P8: {
+        P8Walk wk;
+        memset(&wk, 0, sizeof(wk));
+        wk.draw = mode;
+        wk.k = k;
+        wk.sc = k + 40;
+        walk(m->chain, p8_batch, &wk);
+        break;
+    }
+    }
+}
+
+/* gs/gs_walk.c, where the list is drawn: the draw made, in the state it was queued in. */
+static void replay(const void *blob) {
+    const Vu1Defer *m = (const Vu1Defer *)blob;
+    RndSnap now;
+
+    Rnd_SnapTake(&now);
+    Rnd_SnapPut(&m->st);
+    Port_TexNotes(notes_of(m), m->notes);
+    run(m, W_DRAW);
+    Port_TexNotes(NULL, 0);
+    Rnd_SnapPut(&now);
+}
+
+static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2) {
+    Vu1Defer *m = &sStage.d, *q;
+    uint32_t bytes;
+
+    m->chain = chain;
+    m->stat = (uint8_t)stat;
+    m->nk = (uint16_t)(nk + nk2);
+    memcpy(m->k, k, nk * 4);
+    if (nk2 != 0) {
+        memcpy(m->k + nk, k2, nk2 * 4);
+    }
+    m->notes = 0;
+    if (Gs_Defers()) {
+        sNoteN = sNoteFull = 0;
+        run(m, W_NOTE);
+        if (!sNoteFull) {
+            Rnd_SnapTake(&m->st);
+            m->notes = (uint8_t)sNoteN;
+            memcpy(notes_of(m), sNote, sNoteN * sizeof(RndTexNote));
+            bytes = (uint32_t)((const uint8_t *)(notes_of(m) + sNoteN) - (const uint8_t *)m);
+            q = (Vu1Defer *)Gs_DeferPush(bytes, replay, Port_Addr(gDmaCur));
+            if (q != NULL) { /* (NULL: no memory, said: made now) */
+                memcpy(q, m, bytes);
+                return;
+            }
+        } else {
+            static int said;
+            if (!said) { /* (drawn right, as records: only the memory the deferral saves is not saved) */
+                said = 1;
+                fprintf(stderr, "vu1_native: a draw that names more than %d textures, made now (as records), not later: NOTE_MAX\n", NOTE_MAX);
+            }
+        }
+    }
+    run(m, W_DRAW);
 }

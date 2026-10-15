@@ -285,6 +285,20 @@ int Port_Quad(const RndQuad *q) {
     return Gs_RecordPush(&r, 0, Port_Addr(gDmaCur));
 }
 
+static const RndTexNote *sNotes; /* a draw made later is being made: the handles its textures had (Port_TexNotes) */
+static unsigned sNoteN;
+
+void Port_TexNote(RndTexNote *n, uint64_t tex0) {
+    n->tex0 = tex0;
+    n->tex = n->pal = 0;
+    bind_resolve(&n->tex, &n->pal, tex0);
+}
+
+void Port_TexNotes(const RndTexNote *n, unsigned count) {
+    sNotes = n;
+    sNoteN = count;
+}
+
 int Port_Poly(const RndPoly *p) {
     RndPoly r;
     if (!Gs_TakesRecords()) {
@@ -294,6 +308,17 @@ int Port_Poly(const RndPoly *p) {
         return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
     }
     r = *p;
+    if (sNotes != NULL && r.tex == 0) {
+        unsigned i;
+        for (i = 0; i < sNoteN && sNotes[i].tex0 != r.gsTex0; i++) {
+        }
+        if (i < sNoteN) {
+            r.tex = sNotes[i].tex;
+            r.pal = sNotes[i].pal;
+            return Gs_RecordPush(&r, 1, 0);
+        }
+        Port_Lost("a draw made later: a TEX0 its notes do not have (its low word; resolved as things are now)", (uint32_t)r.gsTex0, __builtin_return_address(0));
+    }
     bind_resolve(&r.tex, &r.pal, r.gsTex0);
     return Gs_RecordPush(&r, 1, Port_Addr(gDmaCur));
 }

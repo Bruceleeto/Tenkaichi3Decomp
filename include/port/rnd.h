@@ -152,6 +152,24 @@ uint64_t Rnd_Tex0(int ctx);
 /* The PRIM the GS draws by when a packet sets prim: prim itself, or with PRMODECONT.AC 0 (the shadow passes) its type
    with the attributes of PRMODE (texturing, shading, blending, the context). */
 uint32_t Rnd_Prim(uint32_t prim);
+/* What of the followed GS state a polygon is made by (Rnd_Draw, Rnd_Vtx, Rnd_Tex0, Rnd_Prim): taken when a draw is
+   queued to be made later (port/src/vu1_native.c), put back while it is made, and the state of then put back after. */
+typedef struct RndSnap {
+    RndState ctx[2];
+    uint32_t bad[2];
+    uint64_t tex0[2], xyOff[2], prmode, prmodeCont;
+} RndSnap;
+void Rnd_SnapTake(RndSnap *s);
+void Rnd_SnapPut(const RndSnap *s);
+/* The handles a texture named by TEX0 has where the list is now (as Port_Poly gives a record without them), for a
+   draw made later: while one is made (Port_TexNotes), Port_Poly gives a record the handles of its TEX0 from the
+   notes (none there: said, and resolved as things are then). */
+typedef struct RndTexNote {
+    uint64_t tex0;
+    uint32_t tex, pal;
+} RndTexNote;
+void Port_TexNote(RndTexNote *n, uint64_t tex0);
+void Port_TexNotes(const RndTexNote *n, unsigned count); /* (NULL: none: Port_Poly as it was) */
 /* An untextured flat rectangle (a sprite's two corners, as Rnd_Vtx takes them) as Rnd_Draw. */
 int Rnd_Rect(int ctx, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t z, uint32_t rgba, int abe);
 /* The ordering table's packets as polygons (from src/sys/gfx_ot.c Ot_Send, between Rnd_OtBegin and Rnd_OtEnd):
