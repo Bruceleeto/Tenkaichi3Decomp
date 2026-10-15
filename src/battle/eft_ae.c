@@ -710,6 +710,13 @@ void EftSprAnim_DrawLayerAt(EftAeMtx *m, EftAeMtx *oriented, Vec4 *objPos, EftSp
     } else {
         e = &gOtZ[z].layer[lay];
     }
+#ifdef PORT
+    p = Ot_NewAd2(8, 0, 9, 0); /* CLAMP_1, CLAMP_2 = 0: register writes in the packet's place */
+    if (p != NULL) {
+        e->tail->next = (OtPrim *)p;
+        e->tail = (OtPrim *)p;
+    }
+#else
     p = (EftAeRegPkt *)gOtCur;
     gOtCur = (u32 *)(p + 1);
     p->h.tag = 0x20000003;
@@ -724,6 +731,7 @@ void EftSprAnim_DrawLayerAt(EftAeMtx *m, EftAeMtx *oriented, Vec4 *objPos, EftSp
     p->data1 = 0;
     e->tail->next = (OtPrim *)p;
     e->tail = (OtPrim *)p;
+#endif
     if (def->flags & EFT_SPR_LAYER_SUBDIV) {
         EftSprAnim_DrawQuadSubdiv(tex->tex[def->tex].tex0, corner, uv, colors, otLayer, z, mode);
     } else {
