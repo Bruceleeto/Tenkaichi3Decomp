@@ -30,27 +30,18 @@ void Fade_DrawRect(Fade *fade) {
     rgba = ((u32)fade->color[0] & 0xFF) | (((u32)fade->color[1] & 0xFF) << 8) | (((u32)fade->color[2] & 0xFF) << 16) |
            ((u32)fade->color[3] << 24);
 #ifdef PORT
-    p[0] = GIF_TAG(4, Port_TakesRecords(), 1); /* (the end of the packet when the sprites are a record) */
+    PORT_PKT(p, 0, GIF_TAG(4, Port_TakesRecords(), 1), GIF_REG_AD); /* (the end of the packet when the sprites are a record) */
 #else
-    p[0] = GIF_TAG(4, 0, 1);
+    PORT_PKT(p, 0, GIF_TAG(4, 0, 1), GIF_REG_AD);
 #endif
-    p[1] = GIF_REG_AD;
     p += 2;
-    p[0] = 0x30000; /* alpha and depth tests always pass */
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000); /* alpha and depth tests always pass */
     p += 2;
-    p[0] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1); /* no depth writes */
-    p[1] = GS_ZBUF_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(0xE0, GS_PSMZ24, 1)); /* no depth writes */
     p += 2;
-    p[0] = 0x46; /* sprite, alpha blended */
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x46); /* sprite, alpha blended */
     p += 2;
-    p[0] = (u64)rgba | (0x3F800000ULL << 32);
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, (u64)rgba | (0x3F800000ULL << 32));
     p += 2;
 #ifdef PORT
     /* The sprites as a record (include/port/rnd.h): the default state with no test and depth not written. */
@@ -60,8 +51,7 @@ void Fade_DrawRect(Fade *fade) {
         return;
     }
 #endif
-    p[0] = GIF_TAG_EX(FADE_STRIPS, 1, GIF_FLG_REGLIST, 2);
-    p[1] = GS_REG_XYZ2 | (GS_REG_XYZ2 << 4);
+    PORT_PKT(p, 0, GIF_TAG_EX(FADE_STRIPS, 1, GIF_FLG_REGLIST, 2), GS_REG_XYZ2 | (GS_REG_XYZ2 << 4));
     p += 2;
     for (i = 0; i < FADE_STRIPS; i++) {
         p[0] = ((i * 32 + FADE_X) << 4) | ((FADE_Y << 4) << 16);
