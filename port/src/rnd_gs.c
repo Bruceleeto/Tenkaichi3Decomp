@@ -379,3 +379,27 @@ uint64_t *Rnd_OtState(uint64_t *dst) {
     sDirty = 0;
     return dst;
 }
+
+void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
+    o->x = (float)((x & 0xFFFF) - (int32_t)(sXyOff[ctx & 1] & 0xFFFF)) / 16.0f;
+    o->y = (float)((y & 0xFFFF) - (int32_t)((sXyOff[ctx & 1] >> 32) & 0xFFFF)) / 16.0f;
+    o->z = z;
+    o->s = s;
+    o->t = t;
+    o->q = q;
+    o->rgba = rgba;
+}
+
+int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
+    ctx &= 1;
+    if (!Port_TakesRecords() || gRndCtxBad[ctx] != 0) {
+        return 0;
+    }
+    p->st = gRndCtx[ctx];
+    p->st.flags = (uint16_t)((p->st.flags & ~RND_GOURAUD) | (gouraud ? RND_GOURAUD : 0));
+    if (!abe) {
+        p->st.blend = RND_BLEND_NONE;
+    }
+    p->gsCtx = (uint32_t)ctx;
+    return Port_Poly(p);
+}

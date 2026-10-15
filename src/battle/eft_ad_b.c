@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/eft_ad.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * 0x1A7608..0x1A9D90: the effect mesh (EftMesh_*), the effect model objects (EftObj_*) and the mesh's two
@@ -994,6 +997,28 @@ void EftMesh_SendTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Eft
     if (c0->w < 0.1f && c1->w < 0.1f && c2->w < 0.1f) {
         return;
     }
+#ifdef PORT
+    {   /* the triangle as a record (include/port/rnd.h), under the state the display list has here */
+        EftAdScr *pp[3];
+        EftAdVec *cc[3], *tt[3];
+        RndPoly r;
+        s32 k;
+        pp[0] = p0; pp[1] = p1; pp[2] = p2;
+        cc[0] = c0; cc[1] = c1; cc[2] = c2;
+        tt[0] = t0; tt[1] = t1; tt[2] = t2;
+        memset(&r, 0, sizeof(r));
+        for (k = 0; k < 3; k++) {
+            u8 cr = cc[k]->x, cg = cc[k]->y, cb = cc[k]->z, ca = cc[k]->w; /* (as the packet's bytes take them) */
+            Rnd_Vtx(&r.v[k], 0, pp[k]->x, pp[k]->y, (u32)pp[k]->z & 0xFFFFFF, tt[k]->x, tt[k]->y, tt[k]->z,
+                    cr | (u32)cg << 8 | (u32)cb << 16 | (u32)ca << 24);
+        }
+        r.n = 3;
+        r.gsTex0 = tex0;
+        if (Rnd_Draw(&r, 0, abe, 1)) {
+            return;
+        }
+    }
+#endif
     dst = Dma_BeginDirect();
     a = abe;
     pkt.prim = ((s64)(s8)a << 6) | 0x1B;

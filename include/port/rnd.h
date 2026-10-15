@@ -120,6 +120,13 @@ void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes);
 #define RND_BAD_TEST 4
 #define RND_BAD_CLAMP 8
 extern uint32_t gRndCtxBad[2];
+/* A polygon drawn where the display list is, under what the GS's context ctx holds there (gRndCtx), blended (abe)
+   or not, its colours blended between the corners (gouraud) or not; its texture by p->tex / p->gsTex0. 0 = not
+   taken (the software renderer, or a state gRndCtxBad says): the caller sends its packet. */
+int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud);
+/* A corner from what a GS packet gives: x, y in sixteenths of a pixel (XYOFFSET of context ctx at 0, 0), the
+   24-bit depth, s t q, r g b a. */
+void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
 /* The ordering table's packets as polygons (from src/sys/gfx_ot.c Ot_Send, between Rnd_OtBegin and Rnd_OtEnd):
    whether a packet is a draw taken (1) or one kept (0: its register writes are followed); its polygons to the
    queue; the registers the GS would hold after those taken, written as A+D at dst (the new end) before a packet
