@@ -16,12 +16,23 @@ extern int gsScale;
 #define GS_W 1024
 #define GS_H 1024
 
+#ifdef __DREAMCAST__
+/* The Dreamcast: a frame's lists sized by what one holds (BT3_GS_PEAKS: the attract demo's 1 v 1 fight peaks at
+   102,717 vertices and 2,818 draws), 3.5 MB and 1.2 MB; a frame that needs more says so (lists_full). The vertex
+   programs' lists are not filled there (gs_vu1.c, the PS2 reference that fills them, is the PC's): none. */
+#define MAX_VERTS (1 << 17)
+#define MAX_DRAWS (1 << 13)
+#define MAX_VU_VERTS 16
+#define MAX_VU_IDX 16
+#define MAX_VU_UNIFORMS 16
+#else
 #define MAX_VERTS (1 << 20)
 #define MAX_DRAWS (1 << 16)
-#define MAX_TARGETS 24
 #define MAX_VU_VERTS (1 << 19)
 #define MAX_VU_IDX (1 << 20)
 #define MAX_VU_UNIFORMS 8192
+#endif
+#define MAX_TARGETS 24
 #define MAX_TEX 8192
 #define TEX_BUCKETS 32768 /* a power of two, four times MAX_TEX */
 #define MAX_CLUTS 64

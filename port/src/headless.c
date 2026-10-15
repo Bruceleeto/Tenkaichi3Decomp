@@ -185,10 +185,12 @@ int __wrap_Progress_Main(int arg) {
         exit(0);
     }
     if (path != NULL) {
-        static uint8_t buf[REPLAY_FILE_SIZE] __attribute__((aligned(16)));
+        /* (the file only while it is read: BattleReplay_Load copies the replay; 16-byte aligned, as it reads 8 bytes
+           at once) */
+        uint8_t *mem = malloc(REPLAY_FILE_SIZE + 15), *buf = (uint8_t *)(((uintptr_t)mem + 15) & ~(uintptr_t)15);
         FILE *fp = fopen(path, "rb");
 
-        if (fp == NULL || fread(buf, 1, sizeof(buf), fp) != sizeof(buf)) {
+        if (mem == NULL || fp == NULL || fread(buf, 1, REPLAY_FILE_SIZE, fp) != REPLAY_FILE_SIZE) {
             fprintf(stderr, "bt3: cannot read replay %s (0x%X bytes expected)\n", path, REPLAY_FILE_SIZE);
             exit(2);
         }
@@ -198,6 +200,7 @@ int __wrap_Progress_Main(int arg) {
             fprintf(stderr, "bt3: %s is not a replay this version accepts\n", path);
             exit(2);
         }
+        free(mem);
         printf("bt3: replay %s\n", path);
     } else {
         Demo_SetupBattle();

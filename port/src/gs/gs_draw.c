@@ -25,6 +25,7 @@
 #include "gs_texpack.h" /* texture packs (replacement textures) */
 #include "menu_text.h"  /* editable labels in the original menu texture slots */
 #include "../../../include/port/rnd.h" /* quads the game hands over (GsGpu_Quad) */
+static void lists_full(const void *from);
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -630,6 +631,7 @@ static void depth_clut(const GsRegs *r) {
     GsDraw d, *last = gsDrawCount ? &gsDraws[gsDrawCount - 1] : NULL;
 
     if (gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
         return;
     }
     memset(&d, 0, sizeof(d));
@@ -846,6 +848,12 @@ static int depth_frac(void) {
 
 float gsZMax = 16777215.0f; /* the depth buffer's largest value, as the frame's draws had it (the fragment shader rounds with it) */
 
+/* A frame's lists are full (MAX_VERTS, MAX_DRAWS): what does not fit is left out, said once per caller where the
+   records are all there is (Port_Lost: the Dreamcast, BT3_WALK=3). */
+static void lists_full(const void *from) {
+    Port_Lost("the frame's lists are full (MAX_VERTS / MAX_DRAWS, gs_draw.h)", (gsVertCount + 6 > MAX_VERTS ? 1u : 0u) | (gsDrawCount >= MAX_DRAWS - 1 ? 2u : 0u), from);
+}
+
 static void put(const GsVertex *v, float x, float y, float s, float t, float q, uint8_t r, uint8_t g, uint8_t b, uint8_t a, float zmax) {
     Vtx *o = &gsVerts[gsVertCount++];
     o->x = x;
@@ -876,7 +884,7 @@ typedef struct WallMesh {
    over while it builds its list, a vertical blank before that list is shown, so a tick's patches come in before
    the previous tick's real picture is out. Which are a picture's is told by the view's matrix (interp_wall). */
 #define WALL_RING 32
-static WallMesh sWallRing[WALL_RING];
+static WallMesh *sWallRing; /* WALL_RING of them (interp_alloc) */
 static uint32_t sWallSeq; /* patches handed over so far */
 static uint64_t sWallTex0; /* TEX0 of the wall's texture: the triangles drawn with it are the wall's */
 static float sWallUs = 1.0f, sWallVs = 1.0f;
@@ -889,7 +897,7 @@ void Port_WallMesh(const void *key, int second, int culled, const float *screen,
     WallMesh *m;
     int i;
 
-    if (GS_NO_PICTURE || gsInterp <= 0 || quadCount <= 0 || quadCount > 15) {
+    if (GS_NO_PICTURE || gsInterp <= 0 || sWallRing == NULL || quadCount <= 0 || quadCount > 15) {
         return;
     }
     if (getenv("BT3_INTERP_WALLLOG") != NULL && atoi(getenv("BT3_INTERP_WALLLOG")) > 2) {
@@ -937,6 +945,8 @@ static void date_snapshot(const GsDraw *d) {
     c.target = d->target;
     if (gsDrawCount + 1 < MAX_DRAWS) {
         gsDraws[gsDrawCount++] = c;
+    } else {
+        lists_full(__builtin_return_address(0));
     }
 }
 
@@ -1075,6 +1085,7 @@ static void draw_prim(int type, const GsRegs *r, const GsVertex *v) {
     int i, packed2d = 0;
 
     if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
         return;
     }
     if (!draw_state(r, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
@@ -1540,6 +1551,7 @@ void GsGpu_Quad(const RndQuad *q) {
         return;
     }
     if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
         return;
     }
     rnd_check(&q->st, q->gsCtx, q->tex != 0 || q->gsTex0 != 0);
@@ -1603,6 +1615,7 @@ void GsGpu_Poly(const RndPoly *p) {
         return;
     }
     if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
         return;
     }
     rnd_check(&p->st, p->gsCtx, p->tex != 0 || p->gsTex0 != 0);
@@ -1869,6 +1882,7 @@ void GsGpu_FbUpload(int second) {
     GsDraw d;
 
     if (gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
         return;
     }
     memset(&d, 0, sizeof(d));
@@ -1896,6 +1910,9 @@ void GsGpu_Native(int effect) {
     if (effect >= 0x10 && effect <= 0x14) {
         gsAnchor = effect == 0x13 ? 0 : effect == 0x14 ? 4 : effect - 0x0F; /* 1 left, 2 right, 3 centre, 4 by position */
         return;
+    }
+    if (effect == 1 && gsDrawCount == MAX_DRAWS) {
+        lists_full(__builtin_return_address(0));
     }
     if (effect != 1 || gsDrawCount == MAX_DRAWS || (gsFxOff & 1)) {
         return;
@@ -2146,16 +2163,17 @@ int GsGpu_Init(void) {
  * would jump far on screen (a camera cut, a teleport) is not blended, and when most are like that no in-between
  * picture is shown at all. */
 int gsInterp = -1;
-static uint32_t sInterpBlkView[MAX_VU_UNIFORMS], sInterpPrevBlkView[MAX_VU_UNIFORMS]; /* the view each block is drawn in (a number made of its draws' scissor rectangle) */
-static float sInterpPrevRep[MAX_VU_UNIFORMS][3];
-static uint8_t sInterpFollow[MAX_VU_UNIFORMS]; /* the block is scenery that goes with the camera (the far backdrop) */
+/* (the per-block arrays: MAX_VU_UNIFORMS each, taken when the in-between pictures are first switched on, interp_alloc) */
+static uint32_t *sInterpBlkView, *sInterpPrevBlkView; /* the view each block is drawn in (a number made of its draws' scissor rectangle) */
+static float (*sInterpPrevRep)[3];
+static uint8_t *sInterpFollow; /* the block is scenery that goes with the camera (the far backdrop) */
 static double sInterpCamNow[3], sInterpCamWas[3]; /* where the camera stands, this picture and the previous one */
 static double sInterpSceneWas[16];                /* the scenery's screen matrix of the previous picture */
 static int sInterpHaveCam;
-static uint16_t sInterpKind[MAX_VU_UNIFORMS], sInterpPrevKind[MAX_VU_UNIFORMS]; /* which vertex program and layer each block is drawn with */
-static uint16_t sInterpBucket2[4096], sInterpChain2[MAX_VU_UNIFORMS];
+static uint16_t *sInterpKind, *sInterpPrevKind; /* which vertex program and layer each block is drawn with */
+static uint16_t sInterpBucket2[4096], *sInterpChain2;
 static float sInterpCamMove; /* GS pixels the camera alone moved the scenery in view this tick (the middle value) */
-static float sInterpRep[MAX_VU_UNIFORMS][3]; /* the first vertex of each block's mesh (model space) */
+static float (*sInterpRep)[3]; /* the first vertex of each block's mesh (model space) */
 /* The camera's change of this picture (interp_build): previous clip position = sInterpD * this clip position, for
    anything that stands still in the world; and the numbers that turn GS pixels into that clip space. */
 static float sInterpD[16], sInterpOffX, sInterpOffY, sInterpZMax;
@@ -2163,6 +2181,8 @@ static int sInterpHaveD;
 static Vu0Uniform *sInterpPrev, *sInterpBlend;
 static uint32_t *sInterpPrevSig, *sInterpSig;
 static uint32_t sInterpPrevCount;
+static void *interp_take(size_t bytes);
+static int interp_alloc(void);
 static int sInterpNext;  /* the tick's next picture still to be shown (2..sInterpSteps), 0 = none */
 static int sInterpSteps = 2;
 static unsigned sInterpLastBlank;
@@ -3333,6 +3353,43 @@ static Vtx *sInterpPrevVerts, *sInterpBlendVerts;
 static InterpPrim *sInterpPrevPrims, *sInterpPrims;
 static uint32_t sInterpPrevPrimCount, sInterpPrimCount, sInterpPrevVertCount;
 static uint8_t *sInterpPrimUsed;
+
+static int sInterpNoRoom; /* interp_take found none: the in-between pictures stay off */
+
+static void *interp_take(size_t bytes) {
+    void *p = sInterpNoRoom ? NULL : calloc(1, bytes);
+    if (p == NULL && !sInterpNoRoom) {
+        sInterpNoRoom = 1;
+        fprintf(stderr, "bt3: ERROR: no memory for the in-between pictures (%u KB more): smooth motion is off\n", (unsigned)(bytes >> 10));
+    }
+    return p;
+}
+
+/* The in-between pictures' memory, taken the first tick they are on (none while they are off: they never are on the
+   Dreamcast). 0 = not to be had (said once): they stay off. */
+static int interp_alloc(void) {
+    if (sInterpPrimUsed != NULL) { return 1; }
+    if (sInterpNoRoom) { return 0; }
+    sWallRing = interp_take(WALL_RING * sizeof(WallMesh));
+    sInterpBlkView = interp_take(MAX_VU_UNIFORMS * sizeof(uint32_t));
+    sInterpPrevBlkView = interp_take(MAX_VU_UNIFORMS * sizeof(uint32_t));
+    sInterpPrevRep = interp_take(MAX_VU_UNIFORMS * sizeof(*sInterpPrevRep));
+    sInterpRep = interp_take(MAX_VU_UNIFORMS * sizeof(*sInterpRep));
+    sInterpFollow = interp_take(MAX_VU_UNIFORMS);
+    sInterpKind = interp_take(MAX_VU_UNIFORMS * sizeof(uint16_t));
+    sInterpPrevKind = interp_take(MAX_VU_UNIFORMS * sizeof(uint16_t));
+    sInterpChain2 = interp_take(MAX_VU_UNIFORMS * sizeof(uint16_t));
+    sInterpPrev = interp_take(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
+    sInterpBlend = interp_take(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
+    sInterpPrevSig = interp_take(MAX_VU_UNIFORMS * sizeof(uint32_t));
+    sInterpSig = interp_take(MAX_VU_UNIFORMS * sizeof(uint32_t));
+    sInterpPrevVerts = interp_take(MAX_VERTS * sizeof(Vtx));
+    sInterpBlendVerts = interp_take(MAX_VERTS * sizeof(Vtx));
+    sInterpPrevPrims = interp_take(INTERP_MAX_PRIMS * sizeof(InterpPrim));
+    sInterpPrims = interp_take(INTERP_MAX_PRIMS * sizeof(InterpPrim));
+    sInterpPrimUsed = interp_take(INTERP_MAX_PRIMS); /* (last: the one that says all are there) */
+    return !sInterpNoRoom;
+}
 static unsigned gInterpTris, gInterpTrisBlended, gInterpTrisCamera;
 
 /* Where a vertex the game transformed itself was one picture earlier if the thing it belongs to stood still: back to
@@ -4528,10 +4585,36 @@ static void skip_decide(void) {
     }
 }
 
+/* BT3_GS_PEAKS=1: a line each time a frame holds more of something than any before (what the lists' sizes,
+   MAX_VERTS and the rest, have to hold; the Dreamcast's are sized by it) */
+static void peaks_note(void) {
+    static int on = -1;
+    static uint32_t peak[5];
+    uint32_t now[5];
+    int i, grew = 0;
+    if (on < 0) { on = getenv("BT3_GS_PEAKS") != NULL; }
+    if (!on) { return; }
+    now[0] = gsVertCount;
+    now[1] = gsVuVertCount;
+    now[2] = gsVuIdxCount;
+    now[3] = gsVuUniCount;
+    now[4] = gsDrawCount;
+    for (i = 0; i < 5; i++) {
+        if (now[i] > peak[i]) {
+            peak[i] = now[i];
+            grew = 1;
+        }
+    }
+    if (grew) {
+        fprintf(stderr, "gs: peaks at frame %u: %u vertices, %u vu vertices, %u vu indices, %u blocks, %u draws\n", gGsFrame, peak[0], peak[1], peak[2], peak[3], peak[4]);
+    }
+}
+
 void GsGpu_FrameEnd(void) {
     if (gPortResim) { /* a frame that is only being re-run: nothing was recorded, nothing is shown */
         return;
     }
+    peaks_note();
     if (gsSkipFrame) {
         /* A skipped tick: nothing was recorded. The tick before's last pictures, if any are still waiting, are
            shown now (its real one); nothing can be blended over the gap, so the next tick has no in-between
@@ -4560,15 +4643,9 @@ void GsGpu_FrameEnd(void) {
         if (gsInterp < 0) {
             gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 0);
             gsInterp = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
-            sInterpPrev = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
-            sInterpBlend = malloc(MAX_VU_UNIFORMS * sizeof(Vu0Uniform));
-            sInterpPrevSig = malloc(MAX_VU_UNIFORMS * sizeof(uint32_t));
-            sInterpSig = malloc(MAX_VU_UNIFORMS * sizeof(uint32_t));
-            sInterpPrevVerts = malloc(MAX_VERTS * sizeof(Vtx));
-            sInterpBlendVerts = malloc(MAX_VERTS * sizeof(Vtx));
-            sInterpPrevPrims = malloc(INTERP_MAX_PRIMS * sizeof(InterpPrim));
-            sInterpPrims = malloc(INTERP_MAX_PRIMS * sizeof(InterpPrim));
-            sInterpPrimUsed = malloc(INTERP_MAX_PRIMS);
+        }
+        if (gsInterp > 0 && !interp_alloc()) { /* (the first tick with them on: their memory) */
+            gsInterp = 0;
         }
         {
             /* A scene the game shows at 60 a second (one vertical blank per picture: menus, the character select) has
