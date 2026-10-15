@@ -16,6 +16,9 @@
 #include "sys/gfx.h"
 #include "sys/vu1_packet.h"
 #include "battle/stgm_a.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /* Offset table of the stage file (StgOfsTable in battle/stg_a.h). */
 typedef struct StgMOfsTable StgMOfsTable;
@@ -504,6 +507,19 @@ void StgModel_Draw(void *view) {
 
 /* Queues the stage's GS state: frame buffer of this frame, depth buffer, blend, test, filter, clamps. */
 void StgModel_SetDrawEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(0x4C, (u32)(!(gGfx.frame & 1) ? 0x80070 : 0x80000));
+    Rnd_GsReg(0x4E, 0x310000E0);
+    Rnd_GsReg(0x42, 0x44);
+    Rnd_GsReg(0x47, 0x5001B);
+    Rnd_GsReg(0x14, 0x60);
+    Rnd_GsReg(0x4A, 0);
+    Rnd_GsReg(8, 0);
+    Rnd_GsReg(0x46, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[40] = {
         0x10000009, 0, 0x10000000, 0x50000009,                /* DMA cnt 9 / VIF direct 9 */
         0x8008, 0x10000000, 0xE, 0,                           /* GIF tag: 8 x A+D, EOP */
@@ -522,6 +538,14 @@ void StgModel_SetDrawEnv(void) {
 
 /* Queues the state of the blended groups: depth buffer with writes off, test, FBA. */
 void StgModel_SetBlendEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(0x4E, ((u64)(u32)(1) << 32 | (u32)(0x310000E0)));
+    Rnd_GsReg(0x47, 0x54000);
+    Rnd_GsReg(0x4A, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[20] = {
         0x10000004, 0, 0x10000000, 0x50000004,
         0x8003, 0x10000000, 0xE, 0,
@@ -535,6 +559,12 @@ void StgModel_SetBlendEnv(void) {
 
 /* Queues TEST_1 = 0x507FB (alpha >= 0x7F, depth >=): the stage proper. */
 void StgModel_SetTestOpaque(void) {
+#ifdef PORT
+    Rnd_GsReg(0x47, 0x507FB);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         0x10000002, 0, 0x10000000, 0x50000002,
         0x8001, 0x10000000, 0xE, 0,
@@ -546,6 +576,12 @@ void StgModel_SetTestOpaque(void) {
 
 /* Queues TEST_1 = 0x51809 (alpha == 0x80, otherwise colour only; depth >=): the debris. */
 void StgModel_SetTestDebris(void) {
+#ifdef PORT
+    Rnd_GsReg(0x47, 0x51809);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         0x10000002, 0, 0x10000000, 0x50000002,
         0x8001, 0x10000000, 0xE, 0,
@@ -557,6 +593,12 @@ void StgModel_SetTestDebris(void) {
 
 /* Queues TEST_1 = 0x5001B (alpha >= 1, depth >=): the default. */
 void StgModel_SetTestDefault(void) {
+#ifdef PORT
+    Rnd_GsReg(0x47, 0x5001B);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[12] = {
         0x10000002, 0, 0x10000000, 0x50000002,
         0x8001, 0x10000000, 0xE, 0,
@@ -568,6 +610,19 @@ void StgModel_SetTestDefault(void) {
 
 /* The same state as StgModel_SetDrawEnv with TEST_1 = 0x507FB, for the animated objects. */
 void StgModel_SetAnimDrawEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(0x4C, (u32)(!(gGfx.frame & 1) ? 0x80070 : 0x80000));
+    Rnd_GsReg(0x4E, 0x310000E0);
+    Rnd_GsReg(0x42, 0x44);
+    Rnd_GsReg(0x47, 0x507FB);
+    Rnd_GsReg(0x14, 0x60);
+    Rnd_GsReg(0x4A, 0);
+    Rnd_GsReg(8, 0);
+    Rnd_GsReg(0x46, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[40] = {
         0x10000009, 0, 0x10000000, 0x50000009,
         0x8008, 0x10000000, 0xE, 0,
