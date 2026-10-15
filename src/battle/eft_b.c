@@ -1347,20 +1347,13 @@ void EftStageScroll_Draw(void) {
     }
     EftStageScroll_PlaceTextures(1, 0);
     p = Dma_BeginDirect();
-    p[0] = 0x1000000000008003;
-    p[1] = 0xE;
+    PORT_PKT(p, 0, 0x1000000000008003, 0xE);
     p += 2;
-    p[0] = 0x44;
-    p[1] = 0x42;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x42, 0x44);
     p += 2;
-    p[0] = 0x50000;
-    p[1] = 0x47;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x47, 0x50000);
     p += 2;
-    p[0] = 0;
-    p[1] = 8;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 8, 0);
     p += 2;
     Dma_EndDirect(p);
     Mtx_StoreIdentity(&m);
