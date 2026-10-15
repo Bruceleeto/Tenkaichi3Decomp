@@ -1682,6 +1682,7 @@ void EftTrail_DrawSprite(u8 r, u8 g, u8 b, u8 a, f32 x, f32 y, f32 z, f32 w, f32
         u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, (u16)scr[0].x, (u16)scr[0].y, scr[0].z, u0, v0, 1.0f, rgba);
         Ot_RecVtx(p, 1, (u16)scr[1].x, (u16)scr[1].y, scr[1].z, u1, v0, 1.0f, rgba);
         Ot_RecVtx(p, 2, (u16)scr[2].x, (u16)scr[2].y, scr[2].z, u0, v1, 1.0f, rgba);
