@@ -803,6 +803,16 @@ void Port_GsGifChannel(uint32_t addr, uint32_t qwc, int chain) {
         return;
     }
 #endif
+    if (!Port_ListRead()) { /* nothing in it is read (no markers are sent where the list is not read): only counted,
+                               for BT3_GS_VERBOSE */
+        static int verbose = -1;
+        if (verbose < 0) {
+            verbose = getenv("BT3_GS_VERBOSE") != NULL;
+        }
+        if (!verbose) {
+            return;
+        }
+    }
     sWSrc = 1;
     sWTag = addr;
     if (!chain) {
