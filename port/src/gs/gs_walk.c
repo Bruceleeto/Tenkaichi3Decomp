@@ -248,8 +248,11 @@ static unsigned sMarksIn; /* markers queued (Port_Mark) since the last report */
 static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
 
 /* src/sys/dma.c Dma_ResetBuffers: the list is started again without being handed over: its records go. */
+void Port_BindUndo(void); /* port/src/gs_marker.c */
+void Port_BindKeep(void);
 void Port_ListRestart(void) {
     sRndFill.n = 0;
+    Port_BindUndo();
 }
 
 /* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
@@ -278,6 +281,7 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
 /* The list at tadr is handed over: its records from the queue being filled to the one the walk reads, in order. */
 void Gs_RndTake(void) {
     RndQueue *f = &sRndFill, *w = &sRndWalk;
+    Port_BindKeep();
     w->n = w->next = 0;
     if (w->cap < f->n) {
         RndCmd *c = realloc(w->cmd, f->n * sizeof(RndCmd));

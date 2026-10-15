@@ -32,6 +32,7 @@ int gRndCtxValid;
    once per place it came from (`from`: the code that asked), and counted (gPortLost). `what` says what was lost,
    `why` the decliner's reason (its bits). Where the list is read the packet is drawn instead: nothing to say. */
 #include <stdio.h>
+#include <stdlib.h>
 #if defined(__linux__)
 typedef struct { const char *dli_fname; void *dli_fbase; const char *dli_sname; void *dli_saddr; } PortDlInfo;
 extern int dladdr(const void *addr, PortDlInfo *info);
@@ -85,6 +86,16 @@ static uint16_t sBindHash[512], sBindFree; /* (records + 1) */
 static uint32_t sBindAt[16384 / 32];       /* a bit per block: a binding starts there */
 static int sBindInit;
 unsigned gRndBindLive, gRndBindPeak, gRndRebound; /* (gs/gs_pvr.c's report) */
+/* What the binds of the list being made changed, to be taken back if it is started again without being sent
+   (Port_BindUndo): what each binding was before (had 0: none). */
+#define JOURNAL_MAX 1024
+typedef struct BindWas {
+    uint16_t block, had;
+    uint32_t h[2];
+} BindWas;
+static BindWas sJournal[JOURNAL_MAX];
+static uint32_t sJournalN;
+static int sJournalLost; /* more changes than it holds: they cannot be taken back */
 
 static uint16_t *bind_slot(uint32_t b) {
     uint16_t *p = &sBindHash[(b * 2654435761u) >> 23];
@@ -94,9 +105,22 @@ static uint16_t *bind_slot(uint32_t b) {
     return p;
 }
 
+static void bind_was(uint32_t b, const Bind *e) {
+    if (sJournalN == JOURNAL_MAX) {
+        sJournalLost = 1;
+        return;
+    }
+    sJournal[sJournalN].block = (uint16_t)b;
+    sJournal[sJournalN].had = e != NULL;
+    sJournal[sJournalN].h[0] = e != NULL ? e->h[0] : 0;
+    sJournal[sJournalN].h[1] = e != NULL ? e->h[1] : 0;
+    sJournalN++;
+}
+
 static void bind_drop(uint32_t b) {
     uint16_t *p = bind_slot(b), i = *p;
     sBindAt[b >> 5] &= ~(1u << (b & 31));
+    bind_was(b, i != 0 ? &sBind[i - 1] : NULL);
     if (i == 0) {
         return;
     }
@@ -106,11 +130,33 @@ static void bind_drop(uint32_t b) {
     gRndBindLive--;
 }
 
+/* The binding at block b, made (empty) if there is none; NULL = no room. */
+static Bind *bind_make(uint32_t b) {
+    uint16_t *p = bind_slot(b), i;
+    if (*p != 0) {
+        return &sBind[*p - 1];
+    }
+    if ((i = sBindFree) == 0) {
+        Port_Lost("a texture's binding: no room for another (BIND_MAX)", b, __builtin_return_address(0));
+        return NULL;
+    }
+    sBindFree = sBind[i - 1].next;
+    memset(&sBind[i - 1], 0, sizeof(Bind));
+    sBind[i - 1].block = (uint16_t)b;
+    *p = i;
+    sBindAt[b >> 5] |= 1u << (b & 31);
+    if (++gRndBindLive > gRndBindPeak) {
+        gRndBindPeak = gRndBindLive;
+    }
+    return &sBind[i - 1];
+}
+
 /* gs/gs_pvr.c: handle h (kind 0 a texture, 1 a palette) uploaded to `block`, over `blocks` blocks: those lose what
    was bound at them (0: none do), and `block` holds h. */
 void Port_Bind(int kind, uint32_t block, uint32_t blocks, uint32_t h) {
     uint32_t b = block & 0x3FFF, e = b + blocks, w;
     uint16_t *p, i;
+    Bind *n;
 
     if (!sBindInit) {
         for (i = 0; i < BIND_MAX; i++) {
@@ -130,24 +176,47 @@ void Port_Bind(int kind, uint32_t block, uint32_t blocks, uint32_t h) {
         }
     }
     b = block & 0x3FFF;
-    if (*(p = bind_slot(b)) == 0) {
-        if (h == 0) {
-            return;
-        }
-        if ((i = sBindFree) == 0) {
-            Port_Lost("a texture's binding: no room for another (BIND_MAX)", b, __builtin_return_address(0));
-            return;
-        }
-        sBindFree = sBind[i - 1].next;
-        memset(&sBind[i - 1], 0, sizeof(Bind));
-        sBind[i - 1].block = (uint16_t)b;
-        *p = i;
-        sBindAt[b >> 5] |= 1u << (b & 31);
-        if (++gRndBindLive > gRndBindPeak) {
-            gRndBindPeak = gRndBindLive;
+    p = bind_slot(b);
+    if (*p == 0 && h == 0) {
+        return;
+    }
+    bind_was(b, *p != 0 ? &sBind[*p - 1] : NULL);
+    if ((n = bind_make(b)) != NULL) {
+        n->h[kind] = h;
+    }
+}
+
+/* gs/gs_walk.c Gs_RndTake: the list is handed over, its binds stay. */
+void Port_BindKeep(void) {
+    sJournalN = 0;
+    sJournalLost = 0;
+}
+
+/* gs/gs_walk.c Port_ListRestart: the list is started again without being sent: its binds are taken back, as the
+   GS never got its uploads. */
+void Port_BindUndo(void) {
+    Bind *n;
+    if (getenv("BT3_BIND_LOG") != NULL) { fprintf(stderr, "bind: a list started again: %u changes taken back\n", (unsigned)sJournalN); }
+    if (sJournalLost) {
+        Port_Lost("a list started again: its texture bindings cannot all be taken back (JOURNAL_MAX)", sJournalN, __builtin_return_address(0));
+    }
+    while (sJournalN > 0) {
+        const BindWas *w = &sJournal[--sJournalN];
+        if (!w->had) {
+            uint16_t *p = bind_slot(w->block), i = *p;
+            if (i != 0) {
+                *p = sBind[i - 1].next;
+                sBind[i - 1].next = sBindFree;
+                sBindFree = i;
+                gRndBindLive--;
+            }
+            sBindAt[w->block >> 5] &= ~(1u << (w->block & 31));
+        } else if ((n = bind_make(w->block)) != NULL) {
+            n->h[0] = w->h[0];
+            n->h[1] = w->h[1];
         }
     }
-    sBind[*p - 1].h[kind] = h;
+    sJournalLost = 0;
 }
 
 static uint32_t bind_at(int kind, uint32_t b) {
