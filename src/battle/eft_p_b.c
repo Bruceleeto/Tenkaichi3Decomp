@@ -1065,6 +1065,9 @@ void EftGlow_DrawParts(EftPGlow *e, s32 objId, f32 alpha) {
         if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
             u32 rgba = (u8)col[0] | (u8)col[1] << 8 | (u8)col[2] << 16 | (u32)(u8)a << 24;
             gOtCur = (u32 *)pkt;
+            if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                goto next; /* (no room left in the packet memory: this one not drawn) */
+            }
             pkt = Ot_NewRec(0x5C, 4);
             if (p->flags & 0x20) {
                 Ot_RecTex0(pkt, *pairTex);
