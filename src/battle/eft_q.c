@@ -1167,6 +1167,9 @@ void EftFlash_Draw(EftQTask *task) {
 #ifdef PORT
     if (Port_TakesRecords()) { /* the sprite as a record, in the packet's place */
         u32 rgba = (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)col.w << 24;
+        if (!Ot_RecRoom(Ot_RecBytes(2))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x46, 2);
         Ot_RecVtx(p, 0, 0x7000, 0x7200, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
         Ot_RecVtx(p, 1, (u16)-0x7000, (u16)-0x7200, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
@@ -1680,6 +1683,9 @@ void EftTrail_DrawSprite(u8 r, u8 g, u8 b, u8 a, f32 x, f32 y, f32 z, f32 w, f32
 #ifdef PORT
     if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
         u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x54, 4);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
