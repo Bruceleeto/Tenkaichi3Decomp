@@ -42,13 +42,13 @@ extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 #define MPEG_FILE_TELL(fh) fs_tell((fh))
 #include "../third_party/pl_mpeg/pl_mpeg_dc.h"
 #define MOVIE_DIR "/cd/"
-extern void GsPvr_MovieMacroblocks(const uint32_t *mb, int w, int h);
+extern void GsPvr_MovieMacroblocks(const uint32_t *mb);
 #else
 #include "../third_party/pl_mpeg/pl_mpeg.h"
 #define MOVIE_DIR "port/build/dc/assets/"
-extern void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t *pcr, int w, int h, int ys, int cs);
+extern void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t *pcr, int ys, int cs);
 #endif
-extern int GsPvr_MovieBegin(void); /* gs/gs_pvr.c: the movie's texture */
+extern int GsPvr_MovieBegin(int w, int h); /* gs/gs_pvr.c: the movie's texture */
 extern void GsPvr_MovieEnd(void);
 extern int Rnd_MovieOn(void);      /* gs/gs_draw.c */
 
@@ -96,11 +96,11 @@ static void movie_start(void) {
         size_t n = strcspn(name, ".");
         snprintf(path, sizeof(path), "%s%.*s.mpg", MOVIE_DIR, (int)n, name);
         sPlm = plm_create_with_filename(path);
-        if (sPlm == NULL || !plm_has_headers(sPlm) || plm_get_width(sPlm) > 512 || plm_get_height(sPlm) > 512 || !GsPvr_MovieBegin()) {
+        if (sPlm == NULL || !plm_has_headers(sPlm) || !GsPvr_MovieBegin(plm_get_width(sPlm), plm_get_height(sPlm))) {
             fprintf(stderr, "bt3: ERROR: the movie %s is not played: %s\n", path,
                     sPlm == NULL ? "not there (make -f Makefile.dc dc-assets converts the disc's)" :
-                    !plm_has_headers(sPlm) ? "not an MPEG-1 program stream" : plm_get_width(sPlm) > 512 || plm_get_height(sPlm) > 512 ?
-                    "larger than 512 x 512" : "no PVR memory for its texture");
+                    !plm_has_headers(sPlm) ? "not an MPEG-1 program stream" : plm_get_width(sPlm) > 512 || plm_get_height(sPlm) > 512 ||
+                    (plm_get_width(sPlm) | plm_get_height(sPlm)) & 15 ? "not multiples of 16 up to 512 x 512" : "no PVR memory for its texture");
             if (sPlm != NULL) {
                 plm_destroy(sPlm);
                 sPlm = NULL;
@@ -153,9 +153,9 @@ int sceMpegGetPicture(void *mp, void *rgb, int blocks) {
             return -1;
         }
 #ifdef __DREAMCAST__
-        GsPvr_MovieMacroblocks(f->display, (int)f->width, (int)f->height);
+        GsPvr_MovieMacroblocks(f->display);
 #else
-        GsPvr_MovieYuv(f->y.data, f->cb.data, f->cr.data, (int)f->width, (int)f->height, (int)f->y.width, (int)f->cb.width);
+        GsPvr_MovieYuv(f->y.data, f->cb.data, f->cr.data, (int)f->y.width, (int)f->cb.width);
 #endif
         return 0;
     }

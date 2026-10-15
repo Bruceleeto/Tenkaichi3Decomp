@@ -2039,6 +2039,18 @@ int Rnd_MovieOn(void) {
 #endif
 }
 
+/* include/port/rnd.h: the movie's picture in RND_TEX_MOVIE, 0 x 0 when there is none. */
+void Rnd_MovieSize(int *w, int *h) {
+#ifdef BT3_PVR
+    extern void GsPvr_MovieSize(int *w, int *h);
+    if (sBackend == &sPvrBackend) {
+        GsPvr_MovieSize(w, h);
+        return;
+    }
+#endif
+    *w = *h = 0;
+}
+
 /* 1: the renderer tests the pixels' marks (RND_IF_UNMARKED / RND_IF_MARKED: the GS's destination alpha test). The
    PVR cannot: what is drawn by them is cut by the caller (src/battle/hud_c_c.c). */
 int Rnd_TestsMarks(void) {

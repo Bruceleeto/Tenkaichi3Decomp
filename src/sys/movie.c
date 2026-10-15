@@ -262,8 +262,13 @@ void Movie_PlayEnding(void) {
    sceMpegGetPicture), instead of its upload into the frame buffer: the whole picture, first in the frame's list. */
 static void Movie_PortDraw(void) {
     RndQuad r;
+    int w, h;
     s32 i;
 
+    Rnd_MovieSize(&w, &h);
+    if (w == 0) {
+        return; /* (no picture: plat_movie.c said why) */
+    }
     memset(&r, 0, sizeof(r));
     /* into the buffer the picture's upload goes to (tags[0] at y 0, tags[1] at y 448, by the field): the one shown
        next, not the one the list is drawing (the list is sent before the swap) */
@@ -274,8 +279,8 @@ static void Movie_PortDraw(void) {
     for (i = 0; i < 4; i++) {
         r.xy[i][0] = (i & 1) ? 512.0f : 0.0f;
         r.xy[i][1] = (i & 2) ? 448.0f : 0.0f;
-        r.uv[i][0] = (int16_t)((i & 1) ? 512 << 4 : 0);
-        r.uv[i][1] = (int16_t)((i & 2) ? 448 << 4 : 0);
+        r.uv[i][0] = (int16_t)((i & 1) ? w << 4 : 0); /* (the picture stretched over the screen) */
+        r.uv[i][1] = (int16_t)((i & 2) ? h << 4 : 0);
         r.rgba[i] = 0x80808080;
     }
     r.tex = RND_TEX_MOVIE;

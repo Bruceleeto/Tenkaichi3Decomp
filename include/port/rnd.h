@@ -236,10 +236,11 @@ int Rnd_FxOn(void); /* 0: no frame buffer but the picture is drawn or read (the 
                                      TEX0.TCC 0; with RND_BLEND_ADD / NORMAL the GS's constant ALPHA.FIX as the
                                      corners' alpha) */
 uint32_t Rnd_TargetTex(uint32_t fbp, int w, int h, int psm);
-/* The movie's picture as a record's texture (pal 0): MOVIE 512 x 512, the picture at its top left (plat_movie.c
-   fills it). Only where Rnd_MovieOn says the renderer has it. */
+/* The movie's picture as a record's texture (pal 0): the picture at its top left (plat_movie.c fills it), its size
+   from Rnd_MovieSize (0 x 0: none open). Only where Rnd_MovieOn says the renderer has it. */
 #define RND_TEX_MOVIE 0x7FFFu       /* (no texture record's handle: those count to MAX_NAT; not RND_TEX_TARGET's bit) */
 int Rnd_MovieOn(void);
+void Rnd_MovieSize(int *w, int *h);
 /* A rectangle of pixels x0..x1, y0..y1 in one colour, under st (a clear of part of a buffer), as Port_Quad. */
 int Rnd_FillRect(const RndState *st, float x0, float y0, float x1, float y1, uint32_t rgba);
 /* A sprite under st: pixels x0..x1, y0..y1, texture tex from texel u0, v0 to u1, v1 (sixteenths), its colour
