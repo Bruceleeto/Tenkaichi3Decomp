@@ -1496,6 +1496,11 @@ void GfxDepthFog_Init(u16 cbp) {
 /* Draws the depth fog: uploads the ramp, moves the depth's high word into the frame's alpha bits, clears the
    colour of the depth page's alias and draws the depth through the ramp with the destination-alpha test on. */
 void GfxDepthFog_Draw(void) {
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no depth texture: nothing) */
+        return;
+    }
+#endif
     Dma_AddData(gGfxDepthFog.ref, 0x10);
     Dma_AddTexFlush();
     Dma_AddZbuf(GFX_ZBP, 1);
