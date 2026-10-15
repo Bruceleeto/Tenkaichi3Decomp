@@ -25,13 +25,9 @@ void ColorFade_Draw(void) {
 #endif
         p[1] = GIF_REG_AD;
         p += 2;
-        p[0] = 0x44;
-        p[1] = GS_ALPHA_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_ALPHA_1, 0x44);
         p += 2;
-        p[0] = 0x30000;
-        p[1] = GS_TEST_1;
-        PORT_AD(p, 0);
+        PORT_REG(p, 0, GS_TEST_1, 0x30000);
         p += 2;
 #ifdef PORT
         /* The sprite as a record (include/port/rnd.h): the default state, blended, no test, depth 0 written. */
@@ -44,8 +40,7 @@ void ColorFade_Draw(void) {
             return;
         }
 #endif
-        p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
-        p[1] = 0x5510;
+        PORT_PKT(p, 0, GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4), 0x5510);
         p += 2;
         p[0] = 0x46;
         p[1] = (u64)gColorFade.r | ((u64)gColorFade.g << 8) | ((u64)gColorFade.b << 16) | ((u64)gColorFade.a << 24);
