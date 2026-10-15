@@ -19,14 +19,14 @@ void Port_GsMarker(int effect) {
     Dma_AddData(pkt, sizeof(pkt));
 }
 
-/* include/port/rnd.h: the quad to the renderer's queue (gs/gs_core.c Gs_RecordPush), with the place in the display
+/* include/port/rnd.h: the quad to the renderer's queue (gs/gs_walk.c Gs_RecordPush), with the place in the display
    list it belongs at: the list being built (its first address) and the list's cursor (where the next packet goes). */
 #include <string.h>
 #include "../../include/port/rnd.h"
 #include "port_addr.h"
 
-extern int Gs_TakesRecords(void);                                       /* gs/gs_core.c */
-extern int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at); /* gs/gs_core.c */
+extern int Gs_TakesRecords(void);                                       /* gs/gs_walk.c */
+extern int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at); /* gs/gs_walk.c */
 extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
 extern uint32_t gDmaBuf[2];   /* its two buffers (game addresses) */
 extern int gDmaBufIdx;        /* the one being built */

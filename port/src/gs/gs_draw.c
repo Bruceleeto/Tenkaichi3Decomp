@@ -1504,7 +1504,7 @@ static void rnd_target_quad(const RndQuad *q) {
     draw_end(&d, 0, 0, (rgba[0] >> 24) != 0);
 }
 
-/* A quad the game handed over (include/port/rnd.h), from the queue (gs_core.c): recorded as a draw of the shared
+/* A quad the game handed over (include/port/rnd.h), from the queue (gs_walk.c): recorded as a draw of the shared
    list straight from the state the record names, as two triangles of its strip. Nothing of the GS's registers is
    read or made, but for a texture only in GS memory (rnd_gs). */
 void GsGpu_Quad(const RndQuad *q) {

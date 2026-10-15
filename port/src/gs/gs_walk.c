@@ -5,14 +5,18 @@
  *   - which renderer draws, and starting it;
  *   - the count of pictures (gGsFrame);
  *   - the settings read from the environment (Port_GetEnv);
- *   - reading the shown picture back for the game (Gs_StoreImage).
+ *   - reading the shown picture back for the game (Gs_StoreImage);
+ *   - the queue of the records the game hands over (include/port/rnd.h), drawn at their places in the list;
+ *   - the frame's time.
  */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 #include "gs_internal.h"
+#include "../../../include/port/rnd.h" /* the records of the queue */
 
 unsigned gGsFrame; /* pictures so far (a frame that is only being re-run is not one) */
 #define sFrame gGsFrame
@@ -161,4 +165,180 @@ void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
         GsRef_StoreImage(fbp, y0, w, h, rgb);
     }
 #endif
+}
+
+/* 1: what the game hands over as records instead of GS packets is drawn (port/src/gs_marker.c Port_Quad); 0: the
+   software renderer, which draws only packets (BT3_RND=0: the packets on the GPU too, to compare). */
+int Gs_TakesRecords(void) {
+    static int off = -1;
+    if (off < 0) { off = getenv("BT3_RND") != NULL && atoi(getenv("BT3_RND")) == 0; }
+    return sGpu && !off;
+}
+
+/* ---- the renderer's command queue (include/port/rnd.h) ----
+   What the game hands over as records does not travel in its display list: it is queued here with the place in the
+   list it belongs at (the list's first address, and the address the list's cursor had: the DMA tag written there
+   next). The list is walked (gs_core.c run_chain); before the tag at an address the records queued at it are drawn,
+   so they come between the packets the game put in front of them and after them. A list's records go to the walk
+   when the list is handed over (Gs_RndTake); records of a list not handed over yet stay. Two queues: the one the game
+   fills, the one a walk (on the render thread, BT3_GS_THREAD) reads. */
+typedef struct RndCmd {
+    uint32_t list, at; /* the display list's first address; the address in it */
+    uint32_t kind;     /* 0 RndQuad, 1 RndPoly */
+    union { RndQuad q; RndPoly p; } r;
+} RndCmd;
+typedef struct RndQueue {
+    RndCmd *cmd;
+    uint32_t n, cap, next; /* (next: the walk's) */
+} RndQueue;
+static RndQueue sRndFill, sRndWalk;
+static unsigned sRndLost, sRndLate; /* records the queue had no memory for; records whose address the walk did not meet */
+
+/* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
+   that starts at `list`. 0 = not taken. */
+int Gs_RecordPush(const void *rec, int kind, uint32_t list, uint32_t at) {
+    RndQueue *f = &sRndFill;
+    if (f->n != 0 && f->cmd[f->n - 1].list == list && at < f->cmd[f->n - 1].at) {
+        /* the list was started again without being handed over (src/sys/dma.c Dma_ResetBuffers): its records go */
+        uint32_t i, keep = 0;
+        for (i = 0; i < f->n; i++) {
+            if (f->cmd[i].list != list) { f->cmd[keep++] = f->cmd[i]; }
+        }
+        f->n = keep;
+    }
+    if (f->n == f->cap) {
+        uint32_t cap = f->cap ? f->cap * 2 : 1024;
+        RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
+        if (c == NULL) { sRndLost++; return 0; }
+        f->cmd = c;
+        f->cap = cap;
+    }
+    f->cmd[f->n].list = list;
+    f->cmd[f->n].at = at;
+    f->cmd[f->n].kind = (uint32_t)kind;
+    if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
+    f->n++;
+    return 1;
+}
+
+/* The list at tadr is handed over: its records from the queue being filled to the one the walk reads, in order. */
+void Gs_RndTake(uint32_t tadr) {
+    RndQueue *f = &sRndFill, *w = &sRndWalk;
+    uint32_t i, keep = 0;
+    w->n = w->next = 0;
+    if (w->cap < f->n) {
+        RndCmd *c = realloc(w->cmd, f->n * sizeof(RndCmd));
+        if (c == NULL) { sRndLost += f->n; f->n = 0; return; }
+        w->cmd = c;
+        w->cap = f->n;
+    }
+    for (i = 0; i < f->n; i++) {
+        if (f->cmd[i].list == tadr) {
+            w->cmd[w->n++] = f->cmd[i];
+        } else {
+            f->cmd[keep++] = f->cmd[i];
+        }
+    }
+    f->n = keep;
+}
+
+static void rnd_draw(const RndCmd *c) {
+    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else { GsGpu_Poly(&c->r.p); }
+}
+
+/* The walk is at the DMA tag at tadr: the records queued in front of it. */
+void Gs_RndDrain(uint32_t tadr) {
+    RndQueue *w = &sRndWalk;
+    while (w->next < w->n && w->cmd[w->next].at == tadr) {
+        rnd_draw(&w->cmd[w->next++]);
+    }
+}
+
+/* The walk is done: what it did not meet (the game moved its cursor back over them) is drawn last, and counted. */
+void Gs_RndRest(void) {
+    RndQueue *w = &sRndWalk;
+    while (w->next < w->n) {
+        rnd_draw(&w->cmd[w->next++]);
+        sRndLate++;
+    }
+    w->n = w->next = 0;
+    if ((sRndLate != 0 || sRndLost != 0) && getenv("BT3_GS_VERBOSE") != NULL) {
+        fprintf(stderr, "rnd: frame %u: %u records not met by the walk (drawn last), %u not queued (no memory)\n", sFrame, sRndLate, sRndLost);
+    }
+    sRndLate = sRndLost = 0;
+}
+
+/* ---- the frame's time ---- */
+
+uint64_t Gs_NowNs(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+/* The frame's work ends here (its list handed over at tChain): timed (BT3_GS_VERBOSE: per frame over the budget, per
+   60 frames where the time went), and BT3_BURN_MS (testing) makes the machine slower. */
+void Gs_FramePace(uint64_t tChain) {
+    static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, perMin = ~0ull, perMax;
+    static unsigned n, over;
+    uint64_t t;
+
+    t = Gs_NowNs();
+    if (start != 0) {
+        extern unsigned long long gPortSleptNs;
+        uint64_t waited = (uint64_t)gPortSleptNs;
+        uint64_t work = t - start > waited ? t - start - waited : 0; /* without the waiting for the vertical blank */
+        gPortSleptNs = 0;
+        {   /* a frame over budget: where the time went and what was created in it */
+            extern unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes;
+            extern uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs;
+            if (work > 33366700ull && getenv("BT3_GS_VERBOSE") != NULL) {
+                fprintf(stderr, "slow: frame %u: %.1f ms = game %.1f ms + display list %.1f ms; %u new textures (%u pixels), %u new pipelines\n",
+                        sFrame, (double)work / 1e6, (double)(tChain - start) / 1e6, (double)(t - tChain) / 1e6, gGpuNewTex, gGpuNewTexPixels,
+                        gGpuNewPipes);
+                fprintf(stderr, "slow:   of the display list time: texture decoding %.1f ms, pipeline creation %.1f ms, submitting the frame %.1f ms\n",
+                        (double)gGpuTexNs / 1e6, (double)gGpuPipeNs / 1e6, (double)gGpuEndNs / 1e6);
+            }
+            /* per second: where the work goes (the game's own code, walking the list, and of that the GPU side) */
+            sumGame += tChain - start > waited ? tChain - start - waited : 0;
+            sumList += t - tChain;
+            sumTex += gGpuTexNs;
+            sumPipe += gGpuPipeNs;
+            sumEnd += gGpuEndNs;
+            gGpuNewTex = gGpuNewTexPixels = gGpuNewPipes = 0;
+            gGpuTexNs = gGpuPipeNs = gGpuEndNs = 0;
+        }
+        if (getenv("BT3_BURN_MS") != NULL) { /* testing: a slower machine, by burning time in every frame */
+            uint64_t until = Gs_NowNs() + (uint64_t)atoi(getenv("BT3_BURN_MS")) * 1000000ull;
+            while (Gs_NowNs() < until) {
+            }
+        }
+        sum += work;
+        if (work > worst) { worst = work; }
+        if (work > 33366700ull) { over++; }
+        if (++n == 60) {
+            if (getenv("BT3_GS_VERBOSE") != NULL) {
+                fprintf(stderr, "time: frame %u: work per frame: average %.1f ms, worst %.1f ms, %u of 60 over the 33.4 ms budget\n",
+                        sFrame, (double)sum / 60e6, (double)worst / 1e6, over);
+                fprintf(stderr, "time:   of the average: game code %.1f ms, display list %.1f ms (of which: texture decoding %.1f, "
+                                "pipeline creation %.1f, ending and submitting the frame %.1f)\n",
+                        (double)sumGame / 60e6, (double)sumList / 60e6, (double)sumTex / 60e6, (double)sumPipe / 60e6, (double)sumEnd / 60e6);
+            }
+            if (getenv("BT3_GS_VERBOSE") != NULL) {
+                fprintf(stderr, "time:   frames lasted %.1f to %.1f ms (33.4 in a fight, 16.7 in the menus)\n", (double)perMin / 1e6, (double)perMax / 1e6);
+            }
+            n = 0; sum = 0; worst = 0; over = 0;
+            sumGame = sumList = sumTex = sumPipe = sumEnd = 0;
+            perMin = ~0ull;
+            perMax = 0;
+        }
+    }
+    /* pacing is done at the vertical blank (Port_VBlank in plat_stub.c): 60 per second, the game waits for one
+       per menu frame and two per battle frame */
+    t = Gs_NowNs();
+    if (start != 0) { /* the frame from start to start, waiting included */
+        if (t - start < perMin) { perMin = t - start; }
+        if (t - start > perMax) { perMax = t - start; }
+    }
+    start = t;
 }

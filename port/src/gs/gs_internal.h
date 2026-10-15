@@ -37,6 +37,11 @@ extern unsigned gGsFrame; /* pictures so far (gs_walk.c) */
 const char *Gs_Mode(void); /* BT3_GS: "gpu", "1" (the software reference); NULL = nothing is drawn */
 int Gs_On(void);           /* the renderer started (the first transfer to the GS does it); 0 = nothing is drawn */
 void Gs_FrameCount(void);  /* a picture is finished */
+void Gs_RndTake(uint32_t tadr);  /* the list at tadr is handed over: its records to the walk */
+void Gs_RndDrain(uint32_t tadr); /* the walk is at the DMA tag at tadr: the records queued in front of it are drawn */
+void Gs_RndRest(void);           /* the walk is done: the records it did not meet are drawn */
+uint64_t Gs_NowNs(void);
+void Gs_FramePace(uint64_t tChain); /* the frame's work is done (its list was handed over at tChain): timed */
 
 uint32_t Gs_PageHash(uint32_t page); /* content hash of an 8 KB page of GS memory */
 uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y);
@@ -82,7 +87,7 @@ void Gs_RegWrite(uint32_t addr, uint64_t d);
 void GsGpu_Native(int effect); /* marker register 0x7F: a native effect goes here */
 struct RndQuad;
 struct RndPoly;
-void GsGpu_Quad(const struct RndQuad *q); /* a quad the game handed over (include/port/rnd.h), from the queue (gs_core.c) */
+void GsGpu_Quad(const struct RndQuad *q); /* a quad the game handed over (include/port/rnd.h), from the queue (gs_walk.c) */
 void GsGpu_Poly(const struct RndPoly *p); /* a polygon, the same */
 void GsGpu_FrameEnd(void);
 /* The game is re-running frames it has already shown (online play after a late input; the save / restore test):

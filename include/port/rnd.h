@@ -3,7 +3,7 @@
 
 /*
  * Drawing without GS packets: what the game hands the renderer itself instead of a GIF packet that sends vertices
- * under the GS's registers. The record goes to the renderer's queue (port/src/gs/gs_core.c), not into the display
+ * under the GS's registers. The record goes to the renderer's queue (port/src/gs/gs_walk.c), not into the display
  * list: it is queued with the place in the list where the packet would have been, and drawn when the walk of the
  * list reaches that place, so it is drawn in the game's order among the draws that are still packets. It becomes a
  * draw of the shared list straight from its state (port/src/gs/gs_draw.c GsGpu_Quad); nothing of the GS's state is
