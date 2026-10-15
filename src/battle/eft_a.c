@@ -1862,6 +1862,7 @@ void EftGfx_DrawSprite(EftVec *pos, EftVec *color, f32 w, f32 h, f32 u0, f32 v0,
         p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
         rgba = Ot_RecRgba(color->x, color->y, color->z, color->w);
         Ot_RecTex0(p, tex0);
+        EftVram_PortRecTex(p, tex0);
         Ot_RecVtx(p, 0, x0, y0, zz, u0, v0, 1.0f, rgba);
         Ot_RecVtx(p, 1, x1, y1, zz, u0, v1, 1.0f, rgba);
         Ot_RecVtx(p, 2, x2, y2, zz, u1, v0, 1.0f, rgba);
