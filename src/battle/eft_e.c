@@ -2846,58 +2846,71 @@ void EftWater_DrawSprayQuad(EftWaterVec *pos, EftWaterMtx *orient, EftWaterMtx *
     if (p == NULL) {
         return;
     }
-    p->prim = 0x5C;
-    p->h.tag = 0x20000008;
-    p->h.vif0 = 0x10000000;
-    p->h.gif0 = 0xE400000000008001;
-    p->h.gif1 = 0x42142142142160;
-    p->h.next = 0;
-    p->h.vif1 = 0x50000008;
-    p->v[0].rgba[0] = r;
-    p->v[0].rgba[1] = g;
-    p->v[0].rgba[2] = b;
-    p->v[0].rgba[3] = a;
-    p->v[0].q = stq[0].z;
-    p->v[1].rgba[0] = r;
-    p->v[1].rgba[1] = g;
-    p->v[1].rgba[2] = b;
-    p->v[1].rgba[3] = a;
-    p->v[1].q = stq[1].z;
-    p->v[2].rgba[0] = r;
-    p->v[2].rgba[1] = g;
-    p->v[2].rgba[2] = b;
-    p->v[2].rgba[3] = a;
-    p->v[2].q = stq[2].z;
-    p->v[3].rgba[0] = r;
-    p->v[3].rgba[1] = g;
-    p->v[3].rgba[2] = b;
-    p->v[3].rgba[3] = a;
-    p->v[3].q = stq[3].z;
-    p->v[0].s = stq[0].x;
-    p->v[0].t = stq[0].y;
-    p->v[1].s = stq[1].x;
-    p->v[1].t = stq[1].y;
-    p->v[2].s = stq[2].x;
-    p->v[2].t = stq[2].y;
-    p->v[3].s = stq[3].x;
-    p->v[3].t = stq[3].y;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
-    p->tex0 = *tex;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place (the TEST packets around it stay) */
+        u32 rgba = r | g << 8 | b << 16 | (u32)a << 24;
+        gOtCur = (u32 *)p;
+        p = Ot_NewRec(0x5C, 4);
+        Ot_RecTex0(p, *tex);
+        for (i = 0; i < 4; i++) {
+            Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
+        }
+    } else
+#endif
+    {
+        p->prim = 0x5C;
+        p->h.tag = 0x20000008;
+        p->h.vif0 = 0x10000000;
+        p->h.gif0 = 0xE400000000008001;
+        p->h.gif1 = 0x42142142142160;
+        p->h.next = 0;
+        p->h.vif1 = 0x50000008;
+        p->v[0].rgba[0] = r;
+        p->v[0].rgba[1] = g;
+        p->v[0].rgba[2] = b;
+        p->v[0].rgba[3] = a;
+        p->v[0].q = stq[0].z;
+        p->v[1].rgba[0] = r;
+        p->v[1].rgba[1] = g;
+        p->v[1].rgba[2] = b;
+        p->v[1].rgba[3] = a;
+        p->v[1].q = stq[1].z;
+        p->v[2].rgba[0] = r;
+        p->v[2].rgba[1] = g;
+        p->v[2].rgba[2] = b;
+        p->v[2].rgba[3] = a;
+        p->v[2].q = stq[2].z;
+        p->v[3].rgba[0] = r;
+        p->v[3].rgba[1] = g;
+        p->v[3].rgba[2] = b;
+        p->v[3].rgba[3] = a;
+        p->v[3].q = stq[3].z;
+        p->v[0].s = stq[0].x;
+        p->v[0].t = stq[0].y;
+        p->v[1].s = stq[1].x;
+        p->v[1].t = stq[1].y;
+        p->v[2].s = stq[2].x;
+        p->v[2].t = stq[2].y;
+        p->v[3].s = stq[3].x;
+        p->v[3].t = stq[3].y;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+        p->tex0 = *tex;
+    }
     EftWaterOt_Add((OtPrim *)p, z, layer);
     EFT_WATER_QUEUE_TEST(0x50000, z, layer);
 }
