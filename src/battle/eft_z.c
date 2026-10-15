@@ -254,6 +254,7 @@ void EftLine_DrawSprite(EftYTask *task) {
                 Vec4_ToInt(&col, &w->color);
                 rgba = (u8)col.r | (u8)col.g << 8 | (u8)col.b << 16 | (u32)(u8)col.a << 24;
                 Ot_RecTex0(pk, w->gsTex0);
+                EftVram_PortRecTex(pk, w->gsTex0);
                 for (i = 0; i < 4; i++) {
                     Ot_RecVtx(pk, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
                 }
