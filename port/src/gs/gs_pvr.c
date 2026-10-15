@@ -725,6 +725,13 @@ static void draw_one(uint32_t n, const PvrTex *t) {
         int c = (int)((bkey >> 7) & 3), ks = (int)((bkey >> 1) & 7), kd = (int)((bkey >> 4) & 7);
         cxt.blend.src = (pvr_blend_mode_t)blend_factor(ks, c, 0);
         cxt.blend.dst = (pvr_blend_mode_t)blend_factor(kd, c, 1);
+        if (c == 2 && ks == 3 && (kd == 1 || kd == 5) && d->blendc >= 0.99f) {
+            /* The destination less the source, by 1 (the fighters' shading ramp darkens what is drawn): the PVR
+               cannot subtract, so the destination times one minus the source, its nearest. The same where the
+               destination is white, less dark where it is dark already; left out, the fighters had no shading. */
+            cxt.blend.src = PVR_BLEND_ZERO;
+            cxt.blend.dst = PVR_BLEND_INVDESTCOLOR; /* (as the destination's factor: one minus the source colour) */
+        }
         if (c == 2 && (ks == 2 || ks == 4 || kd == 2 || kd == 4)) {
             /* The constant factor (the blur steps between the work buffers mix two by it, half and half) as the
                source alpha: the vertices' alpha is the constant, the texture's alpha is not used (DECAL instead of
