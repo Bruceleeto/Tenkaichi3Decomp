@@ -363,10 +363,13 @@ void EftAura_DrawFlames(EftAuraWork *aura, s32 objId, f32 alpha) {
             pkt = Ot_NewRec(0x5C, 4);
             if (EftAura_FlameFlagInl(f, 0x800)) {
                 Ot_RecTex0(pkt, sparkTex->entry[0].tex0);
+                EftVram_PortRecTex(pkt, sparkTex->entry[0].tex0);
             } else if (EftAura_WorkFlagInl(aura, 0x80)) {
                 Ot_RecTex0(pkt, aura->tex[f->tex + 1]);
+                EftVram_PortRecTex(pkt, aura->tex[f->tex + 1]);
             } else {
                 Ot_RecTex0(pkt, aura->tex[0]);
+                EftVram_PortRecTex(pkt, aura->tex[0]);
             }
             for (i = 0; i < 4; i++) {
                 Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, st[i].x, st[i].y, st[i].z, rgb[0] | rgb[1] << 8 | rgb[2] << 16 | (u32)al[i] << 24);
@@ -1554,6 +1557,7 @@ void EftBolt_Draw(EftBoltWork *work, EftBolt *bolt, f32 alpha) {
                 rgba1 = (u8)col1[0] | (u8)col1[1] << 8 | (u8)col1[2] << 16 | (u32)(u8)col1[3] << 24;
                 pkt = Ot_NewRec(0x5C, 4);
                 Ot_RecTex0(pkt, work->tex0);
+                EftVram_PortRecTex(pkt, work->tex0);
                 for (i = 0; i < 4; i++) {
                     Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, st[i].x, st[i].y, st[i].z, i < 2 ? rgba0 : rgba1);
                 }
