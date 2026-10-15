@@ -235,6 +235,9 @@ void EftLine_DrawSprite(EftYTask *task) {
                 u32 rgba;
 
                 gOtCur = (u32 *)pk;
+                if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                    return; /* (no room left in the packet memory: not drawn) */
+                }
                 pk = Ot_NewRec(def->layer < 2 ? 0x5C : 0x25C, 4);
                 for (i = 0; i < 4; i++) {
                     f32 rhw = 1.0f / scr[i].w;
