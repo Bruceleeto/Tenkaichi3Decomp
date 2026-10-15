@@ -1597,8 +1597,15 @@ BtlTask *BtlTask_GetParent(BtlTask *task) {
     return task->list->parent;
 }
 
+#ifdef PORT
+static void EftVram_PortForget(void);
+#endif
+
 /* Allocates the effect VRAM list (from BtlScene_Init). */
 void EftVram_Init(void) {
+#ifdef PORT
+    EftVram_PortForget();
+#endif
     gEftVram = Heap_Alloc(sizeof(EftAeVram), 0x20, 0, 2);
     memset(gEftVram, 0, sizeof(EftAeVram));
     gEftVram->imageNext = 0x2B00;
@@ -1607,6 +1614,9 @@ void EftVram_Init(void) {
 
 /* Frees it. */
 void EftVram_Term(void) {
+#ifdef PORT
+    EftVram_PortForget();
+#endif
     if (gEftVram != NULL) {
         Heap_Free(gEftVram);
         gEftVram = NULL;
@@ -1731,6 +1741,13 @@ static EftAeVramEntry sEftVramSent[128];
 static u32 sEftVramSentCount;
 static s32 sEftVramSentNow;
 
+/* The list forgotten when the effects' list is made or freed (a battle's start and end): its textures are the last
+   battle's, freed with it. */
+static void EftVram_PortForget(void) {
+    sEftVramSentCount = 0;
+    sEftVramSentNow = 0;
+}
+
 /* The handles (include/port/rnd.h) of the textures a draw's TEX0 names: the image uploaded this frame at its TBP0
    and the CLUT at its CBP (the last of each there, as the GS has them), 0 for what was not (or not as a texture of
    tex.pak); the draw is then looked up by its TEX0. The image's CLUT packet is at 0x3C of it (its size at 0x0C), as
@@ -1744,7 +1761,11 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
     *pal = 0;
     for (i = 0; i < sEftVramSentCount; i++) {
         EftAeVramEntry *e = &sEftVramSent[i];
-        u8 *image = (u8 *)e->tex->image;
+        u8 *image = e->tex != NULL ? (u8 *)e->tex->image : NULL;
+
+        if (image == NULL) {
+            continue;
+        }
 
         if ((e->flags & 1) && (u32)e->imageBlock == tbp) {
             *tex = Port_TexHandle(image);
