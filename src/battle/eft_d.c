@@ -2,6 +2,9 @@
 #include "battle/eft_d.h"
 #include "sys/dma.h"
 #include "sys/gfx_ot.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * End of the stage surface module, 0x13A9D0..0x13C300: the triangle output routines and six parameter
@@ -365,6 +368,23 @@ void EftSurf_DrawTriDirect(EftScrPos *scr0, EftScrPos *scr1, EftScrPos *scr2, Ve
         s32 *c = col[i * 3];
         s8 ctxt;
 
+#ifdef PORT
+        {   /* the triangle as a record (include/port/rnd.h), under the state context i has in the display list */
+            RndPoly r;
+            __builtin_memset(&r, 0, sizeof(r));
+            Rnd_Vtx(&r.v[0], i, scr0->x, scr0->y, (u32)scr0->z & 0xFFFFFF, st0->x, st0->y, st0->z,
+                    (u8)c[0] | (u32)(u8)c[1] << 8 | (u32)(u8)c[2] << 16 | (u32)(u8)c[3] << 24);
+            Rnd_Vtx(&r.v[1], i, scr1->x, scr1->y, (u32)scr1->z & 0xFFFFFF, st1->x, st1->y, st1->z,
+                    (u8)c[4] | (u32)(u8)c[5] << 8 | (u32)(u8)c[6] << 16 | (u32)(u8)c[7] << 24);
+            Rnd_Vtx(&r.v[2], i, scr2->x, scr2->y, (u32)scr2->z & 0xFFFFFF, st2->x, st2->y, st2->z,
+                    (u8)c[8] | (u32)(u8)c[9] << 8 | (u32)(u8)c[10] << 16 | (u32)(u8)c[11] << 24);
+            r.n = 3;
+            r.gsTex0 = tex0[i];
+            if (Rnd_Draw(&r, i, abe, 1)) {
+                continue;
+            }
+        }
+#endif
         p = (EftTriGs *)Dma_BeginDirect();
         ctxt = i;
         p->prim = 0x1B | ((u64)abe << 6) | ((u64)ctxt << 9);
