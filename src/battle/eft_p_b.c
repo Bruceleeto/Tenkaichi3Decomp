@@ -1061,63 +1061,82 @@ void EftGlow_DrawParts(EftPGlow *e, s32 objId, f32 alpha) {
         if (pkt == NULL) {
             return;
         }
-        pkt->prim = 0x5C;
-        pkt->tag = 0x20000008;
-        pkt->vif0 = 0x10000000;
-        pkt->vif1 = 0x50000008;
-        pkt->gif0 = 0xE400000000008001;
-        pkt->gif1 = 0x42142142142160;
-        pkt->next = 0;
-        pkt->v[0].rgba[0] = col[0];
-        pkt->v[0].rgba[1] = col[1];
-        pkt->v[0].rgba[2] = col[2];
-        pkt->v[0].rgba[3] = a;
-        pkt->v[0].q = uv[0].z;
-        pkt->v[1].rgba[0] = col[0];
-        pkt->v[1].rgba[1] = col[1];
-        pkt->v[1].rgba[2] = col[2];
-        pkt->v[1].rgba[3] = a;
-        pkt->v[1].q = uv[1].z;
-        pkt->v[2].rgba[0] = col[0];
-        pkt->v[2].rgba[1] = col[1];
-        pkt->v[2].rgba[2] = col[2];
-        pkt->v[2].rgba[3] = a;
-        pkt->v[2].q = uv[2].z;
-        pkt->v[3].rgba[0] = col[0];
-        pkt->v[3].rgba[1] = col[1];
-        pkt->v[3].rgba[2] = col[2];
-        pkt->v[3].rgba[3] = a;
-        pkt->v[3].q = uv[3].z;
-        pkt->v[0].s = uv[0].x;
-        pkt->v[0].t = uv[0].y;
-        pkt->v[1].s = uv[1].x;
-        pkt->v[1].t = uv[1].y;
-        pkt->v[2].s = uv[2].x;
-        pkt->v[2].t = uv[2].y;
-        pkt->v[3].s = uv[3].x;
-        pkt->v[3].t = uv[3].y;
-        pkt->v[0].xyz.x = scr[0].x;
-        pkt->v[0].xyz.y = scr[0].y;
-        pkt->v[0].xyz.z = scr[0].z;
-        pkt->v[0].xyz.f = 0xFF;
-        pkt->v[1].xyz.x = scr[1].x;
-        pkt->v[1].xyz.y = scr[1].y;
-        pkt->v[1].xyz.z = scr[1].z;
-        pkt->v[1].xyz.f = 0xFF;
-        pkt->v[2].xyz.x = scr[2].x;
-        pkt->v[2].xyz.y = scr[2].y;
-        pkt->v[2].xyz.z = scr[2].z;
-        pkt->v[2].xyz.f = 0xFF;
-        pkt->v[3].xyz.x = scr[3].x;
-        pkt->v[3].xyz.y = scr[3].y;
-        pkt->v[3].xyz.z = scr[3].z;
-        pkt->v[3].xyz.f = 0xFF;
-        if (p->flags & 0x20) {
-            pkt->tex0 = *pairTex;
-        } else if (e->flags & 0x20) {
-            pkt->tex0 = e->tex[1 + p->tex];
-        } else {
-            pkt->tex0 = e->tex[0];
+#ifdef PORT
+        if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+            u32 rgba = (u8)col[0] | (u8)col[1] << 8 | (u8)col[2] << 16 | (u32)(u8)a << 24;
+            gOtCur = (u32 *)pkt;
+            pkt = Ot_NewRec(0x5C, 4);
+            if (p->flags & 0x20) {
+                Ot_RecTex0(pkt, *pairTex);
+            } else if (e->flags & 0x20) {
+                Ot_RecTex0(pkt, e->tex[1 + p->tex]);
+            } else {
+                Ot_RecTex0(pkt, e->tex[0]);
+            }
+            for (i = 0; i < 4; i++) {
+                Ot_RecVtx(pkt, i, scr[i].x, scr[i].y, scr[i].z, uv[i].x, uv[i].y, uv[i].z, rgba);
+            }
+        } else
+#endif
+        {
+            pkt->prim = 0x5C;
+            pkt->tag = 0x20000008;
+            pkt->vif0 = 0x10000000;
+            pkt->vif1 = 0x50000008;
+            pkt->gif0 = 0xE400000000008001;
+            pkt->gif1 = 0x42142142142160;
+            pkt->next = 0;
+            pkt->v[0].rgba[0] = col[0];
+            pkt->v[0].rgba[1] = col[1];
+            pkt->v[0].rgba[2] = col[2];
+            pkt->v[0].rgba[3] = a;
+            pkt->v[0].q = uv[0].z;
+            pkt->v[1].rgba[0] = col[0];
+            pkt->v[1].rgba[1] = col[1];
+            pkt->v[1].rgba[2] = col[2];
+            pkt->v[1].rgba[3] = a;
+            pkt->v[1].q = uv[1].z;
+            pkt->v[2].rgba[0] = col[0];
+            pkt->v[2].rgba[1] = col[1];
+            pkt->v[2].rgba[2] = col[2];
+            pkt->v[2].rgba[3] = a;
+            pkt->v[2].q = uv[2].z;
+            pkt->v[3].rgba[0] = col[0];
+            pkt->v[3].rgba[1] = col[1];
+            pkt->v[3].rgba[2] = col[2];
+            pkt->v[3].rgba[3] = a;
+            pkt->v[3].q = uv[3].z;
+            pkt->v[0].s = uv[0].x;
+            pkt->v[0].t = uv[0].y;
+            pkt->v[1].s = uv[1].x;
+            pkt->v[1].t = uv[1].y;
+            pkt->v[2].s = uv[2].x;
+            pkt->v[2].t = uv[2].y;
+            pkt->v[3].s = uv[3].x;
+            pkt->v[3].t = uv[3].y;
+            pkt->v[0].xyz.x = scr[0].x;
+            pkt->v[0].xyz.y = scr[0].y;
+            pkt->v[0].xyz.z = scr[0].z;
+            pkt->v[0].xyz.f = 0xFF;
+            pkt->v[1].xyz.x = scr[1].x;
+            pkt->v[1].xyz.y = scr[1].y;
+            pkt->v[1].xyz.z = scr[1].z;
+            pkt->v[1].xyz.f = 0xFF;
+            pkt->v[2].xyz.x = scr[2].x;
+            pkt->v[2].xyz.y = scr[2].y;
+            pkt->v[2].xyz.z = scr[2].z;
+            pkt->v[2].xyz.f = 0xFF;
+            pkt->v[3].xyz.x = scr[3].x;
+            pkt->v[3].xyz.y = scr[3].y;
+            pkt->v[3].xyz.z = scr[3].z;
+            pkt->v[3].xyz.f = 0xFF;
+            if (p->flags & 0x20) {
+                pkt->tex0 = *pairTex;
+            } else if (e->flags & 0x20) {
+                pkt->tex0 = e->tex[1 + p->tex];
+            } else {
+                pkt->tex0 = e->tex[0];
+            }
         }
         z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
         if (BtlCharApi_IsCircleDash(p->objId)) {
