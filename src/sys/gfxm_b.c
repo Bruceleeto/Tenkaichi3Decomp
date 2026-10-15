@@ -374,9 +374,11 @@ void GfxLens_SetPos(u32 slot, Vec4 *pos) {
 }
 
 #ifdef PORT
+extern u32 Tex_PalHandle(void *e); /* sys/gfxm_b_b.h */
+
 /* A sprite of the lens as a record: pixels x0..x1, y0..y1 (either way round), texels u0..u1, v0..v1 in sixteenths,
-   texture by handle tex or by where it was uploaded (tex0). */
-static void GfxLens_PortSprite(const RndState *st, u32 tex, u64 tex0, f32 x0, f32 y0, f32 x1, f32 y1, s32 u0,
+   texture by handles tex, pal (read as tex0 reads it), else by where it was uploaded (tex0). */
+static void GfxLens_PortSprite(const RndState *st, u32 tex, u32 pal, u64 tex0, f32 x0, f32 y0, f32 x1, f32 y1, s32 u0,
                                s32 v0, s32 u1, s32 v1, u32 rgba) {
     RndQuad r;
     s32 i;
@@ -391,13 +393,14 @@ static void GfxLens_PortSprite(const RndState *st, u32 tex, u64 tex0, f32 x0, f3
         r.rgba[i] = rgba;
     }
     r.tex = tex;
+    r.pal = pal;
     r.gsTex0 = tex0;
     Port_Quad(&r);
 }
 
 /* GfxLens_DrawOne as records, the same order: the frame's alpha cleared to 0 (its colour kept); the four mirrored
-   quarters of the lens texture (uploaded at 0x2F00, palette 0x2E00) write their alpha, times 0x20, into it (colour
-   kept); the capture (0x150, its colour) stretched over the lens, blended by that alpha (blend 0 normal, 1 added,
+   quarters of the lens texture (entry 0 of its file, uploaded at 0x2F00, palette 0x2E00; named by its handles)
+   write their alpha, times 0x20, into it (colour kept); the capture (0x150, its colour) stretched over the lens, blended by that alpha (blend 0 normal, 1 added,
    2 subtracted), drawn where the depth is 0 or more as with the default state's depth test. Then the state its
    packet leaves. */
 static void GfxLens_PortOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend) {
@@ -431,13 +434,14 @@ static void GfxLens_PortOne(IVec4 *pt, s32 split, s32 side, u32 rgba, s32 blend)
     Rnd_FillRect(&st, 0.0f, 0.0f, 512.0f, 448.0f, 0);
     st.flags = RND_NO_COLOUR | RND_SMOOTH;
     for (i = 0; i < 4; i++) {
-        GfxLens_PortSprite(&st, 0, tex0, x[i], y[i], x[4], y[4], 0, 0, 0xFF0, 0xFF0, 0x20808080);
+        GfxLens_PortSprite(&st, Port_TexHandle(gGfxLens.tex->entries), Tex_PalHandle(gGfxLens.tex->entries), tex0, x[i],
+                           y[i], x[4], y[4], 0, 0, 0xFF0, 0xFF0, 0x20808080);
     }
     Rnd_StateInit(&st, GFX_FRAME_FBP());
     st.blend = sBlend[(u32)blend < 3 ? blend : 0];
     st.flags = RND_DEST_ALPHA | RND_SMOOTH;
     st.ztest = RND_Z_GEQUAL;
-    GfxLens_PortSprite(&st, Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB, 0, x[0], y[0], x[3], y[3],
+    GfxLens_PortSprite(&st, Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB, 0, 0, x[0], y[0], x[3], y[3],
                        (s32)(s[0] * 4096.0f), (s32)(t[0] * 4096.0f), (s32)(s[1] * 4096.0f), (s32)(t[1] * 4096.0f),
                        rgba);
     Gfx_AddDefaultEnv();
