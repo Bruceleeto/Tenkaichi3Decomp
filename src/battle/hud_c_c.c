@@ -222,21 +222,45 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
    pixels and the bar drawn in the pieces of its rectangle outside them, as plain quads. Only sprites drawn straight
    (no rotation) are cut this way; those are all the gauges' (any other is drawn as before: by the mark test). */
 
-/* The masks' opaque texels (measured from the gauge sheet, 00005.bin's first, textures 8 and 0x18): in the texel
-   rectangle u0..u1 x v0..v1, row r (r < rows) is opaque from u0 + start - r / 2 to u1 - end - r / 2 (the slant of the
-   bar's ends); the rows below are clear. A mask not listed is taken as opaque throughout its rectangle. */
-typedef struct HudCMaskShape {
-    s16 u0, v0, u1, v1;
-    s16 start, end, rows;
-} HudCMaskShape;
-
-static const HudCMaskShape sHudMaskShape[] = {
-    {0, 48, 160, 64, 5, 0, 12}, /* the life bars' (HudGauge_DrawHp) */
-    {192, 0, 218, 6, 2, 0, 6},  /* the blast gauge's (HudGauge_DrawBlast) */
-    {0, 16, 32, 32, 1, 2, 4},   /* the team panel's health bars and switch gauge (HudTeam_DrawHpA, DrawHpB, DrawGauge) */
+/* The masks' opaque texels, as rectangles of texels (u0, v0, u1, v1), read off the disc (pzs3us1/00005.bin's first
+   sheet, the gauges': every mask is one of its textures). The test a mask is written with picks which texels count:
+   the bars' masks any alpha (TEST_2 0x3000F, alpha not 0), the aura panel's from 0x7F (TEST_1 0x307FB); a slant
+   steps every two rows. A mask of a texture not listed is taken as opaque throughout its rectangle. */
+/* texture 0x7: the aura panel (HudGauge_DrawAura: sprite 47, alpha from 0x7F) */
+static const s16 sHudMaskTex7[][4] = {
+    {71, 1, 128, 3}, {69, 3, 129, 5}, {31, 5, 131, 7}, {27, 7, 238, 9}, {25, 9, 236, 11}, {23, 11, 234, 13},
+    {21, 13, 233, 15}, {20, 15, 232, 17}, {19, 17, 231, 19}, {19, 19, 229, 21}, {18, 21, 228, 23},
+    {17, 23, 118, 25}, {17, 25, 115, 27}, {17, 27, 113, 29}, {17, 29, 112, 31}, {17, 31, 111, 33},
+    {17, 33, 110, 35}, {17, 35, 109, 37}, {16, 37, 108, 39}, {15, 39, 107, 41}, {15, 41, 106, 43},
+    {15, 43, 104, 45}, {15, 45, 31, 53}, {16, 53, 30, 55}, {18, 55, 28, 57}, {20, 57, 26, 58},
+};
+/* texture 0x8: the life bars and the blast gauge (HudGauge_DrawHp, DrawBlast) */
+static const s16 sHudMaskTex8[][4] = {
+    {5, 48, 160, 50}, {4, 50, 159, 52}, {3, 52, 158, 54}, {2, 54, 157, 56}, {1, 56, 156, 58}, {0, 58, 155, 60},
+    {194, 0, 218, 2}, {193, 2, 217, 4}, {192, 4, 216, 6},
+};
+/* texture 0xF: the status icons' shades (HudGauge_DrawAura: sprites 48 to 52, alpha from 0x7F) */
+static const s16 sHudMaskTexF[][4] = {
+    {5, 12, 40, 14}, {5, 14, 38, 16}, {4, 16, 37, 18}, {4, 18, 36, 20}, {3, 20, 35, 22}, {12, 44, 35, 46},
+    {10, 46, 33, 48}, {8, 48, 31, 50}, {7, 50, 30, 52}, {6, 52, 29, 54}, {5, 54, 28, 56}, {4, 56, 27, 58},
+    {3, 58, 26, 60}, {2, 60, 25, 62}, {1, 62, 24, 64},
+};
+/* texture 0x18: the team panel's bars (HudTeam_DrawHpA / DrawHpB / DrawGauge) */
+static const s16 sHudMaskTex18[][4] = {
+    {1, 16, 30, 18}, {0, 18, 29, 20},
 };
 
-#define HUDC_MARKS 96
+typedef struct HudCMaskTex {
+    s16 tex, n;
+    const s16 (*r)[4];
+} HudCMaskTex;
+
+#define HUDC_MASK_TEX(i, a) {i, sizeof(a) / sizeof(a[0]), a}
+static const HudCMaskTex sHudMaskTex[] = {
+    HUDC_MASK_TEX(7, sHudMaskTex7), HUDC_MASK_TEX(8, sHudMaskTex8), HUDC_MASK_TEX(0xF, sHudMaskTexF), HUDC_MASK_TEX(0x18, sHudMaskTex18),
+};
+
+#define HUDC_MARKS 192
 
 static f32 sHudMark[HUDC_MARKS][4]; /* x0, y0, x1, y1 (x0 < x1, y0 < y1): pixels marked */
 static s32 sHudMarkCount;
@@ -256,7 +280,11 @@ static void HudSprite_PortMarkTexels(f32 (*v)[4], s32 (*uv)[2], s32 u0, s32 v0, 
     f32 y1 = ya + (f32)(v1 - uv[0][1]) * (yb - ya) / (f32)(uv[2][1] - uv[0][1]);
     f32 *m;
 
-    if (sHudMarkCount >= HUDC_MARKS || u1 <= u0 || v1 <= v0) {
+    if (u1 <= u0 || v1 <= v0) {
+        return;
+    }
+    if (sHudMarkCount >= HUDC_MARKS) {
+        Port_Lost("a HUD mask's rectangle: no room for another mark (HUDC_MARKS)", HUDC_MARKS, __builtin_return_address(0));
         return;
     }
     m = sHudMark[sHudMarkCount++];
@@ -266,21 +294,22 @@ static void HudSprite_PortMarkTexels(f32 (*v)[4], s32 (*uv)[2], s32 u0, s32 v0, 
     m[3] = y0 < y1 ? y1 : y0;
 }
 
-/* A mask sprite: marks the pixels under its opaque texels (sHudMaskShape). */
-static void HudSprite_PortMark(f32 (*v)[4], s32 (*uv)[2]) {
+/* A mask sprite of texture tex: marks the pixels under its opaque texels (sHudMaskTex). */
+static void HudSprite_PortMark(f32 (*v)[4], s32 (*uv)[2], s32 tex) {
     s32 u0 = uv[0][0] < uv[1][0] ? uv[0][0] : uv[1][0], u1 = uv[0][0] < uv[1][0] ? uv[1][0] : uv[0][0];
     s32 v0 = uv[0][1] < uv[2][1] ? uv[0][1] : uv[2][1], v1 = uv[0][1] < uv[2][1] ? uv[2][1] : uv[0][1];
     u32 i;
-    s32 r;
+    s32 k;
 
     if (uv[1][0] == uv[0][0] || uv[2][1] == uv[0][1]) {
         return;
     }
-    for (i = 0; i < sizeof(sHudMaskShape) / sizeof(sHudMaskShape[0]); i++) {
-        const HudCMaskShape *s = &sHudMaskShape[i];
-        if (s->u0 == u0 && s->v0 == v0 && s->u1 == u1 && s->v1 == v1) {
-            for (r = 0; r < s->rows; r += 2) {
-                HudSprite_PortMarkTexels(v, uv, u0 + s->start - r / 2, v0 + r, u1 - s->end - r / 2, v0 + (r + 2 < s->rows ? r + 2 : s->rows));
+    for (i = 0; i < sizeof(sHudMaskTex) / sizeof(sHudMaskTex[0]); i++) {
+        const HudCMaskTex *s = &sHudMaskTex[i];
+        if (s->tex == tex) {
+            for (k = 0; k < s->n; k++) { /* (each of its rectangles inside the sprite's) */
+                HudSprite_PortMarkTexels(v, uv, s->r[k][0] > u0 ? s->r[k][0] : u0, s->r[k][1] > v0 ? s->r[k][1] : v0,
+                                         s->r[k][2] < u1 ? s->r[k][2] : u1, s->r[k][3] < v1 ? s->r[k][3] : v1);
             }
             return;
         }
@@ -365,9 +394,10 @@ static u32 HudSprite_PortLerp(const u32 *c, f32 fx, f32 fy) {
     return out;
 }
 
-/* A sprite drawn where the pixels are not marked: the pieces of its rectangle outside the marks, each a quad r with
-   the texels and colours of its place. */
-static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *rgba) {
+/* A sprite drawn where the pixels are not marked (inside 0) or where they are (inside 1): the pieces of its rectangle
+   outside the marks or inside them (each pixel once where marks overlap), each a quad r with the texels and colours
+   of its place. */
+static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *rgba, s32 inside) {
     f32 xa = (f32)(s32)v[0][0], xb = (f32)(s32)v[1][0], ya = (f32)(s32)v[0][1], yb = (f32)(s32)v[2][1];
     f32 fx0 = xa < xb ? xa : xb, fx1 = xa < xb ? xb : xa, fy0 = ya < yb ? ya : yb, fy1 = ya < yb ? yb : ya;
     f32 ys[2 * HUDC_MARKS + 2], span[HUDC_MARKS][2];
@@ -410,6 +440,18 @@ static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *
         }
         for (i = 0; i <= ns; i++) {
             f32 x0 = cur, x1 = i < ns ? span[i][0] : fx1;
+            if (inside) { /* (the marks' spans, the ones that overlap as one) */
+                if (i == ns) {
+                    break;
+                }
+                x0 = span[i][0] > cur ? span[i][0] : cur;
+                x1 = span[i][1];
+                for (j = i + 1; j < ns && span[j][0] <= x1; j++) {
+                    x1 = span[j][1] > x1 ? span[j][1] : x1;
+                }
+                i = j - 1;
+                x0 = x0 > fx0 ? x0 : fx0;
+            }
             if (x1 > fx1) {
                 x1 = fx1;
             }
@@ -432,7 +474,9 @@ static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *
                 }
                 Port_Quad(&q);
             }
-            if (i < ns && span[i][1] > cur) {
+            if (inside) {
+                cur = x1 > cur ? x1 : cur;
+            } else if (i < ns && span[i][1] > cur) {
                 cur = span[i][1];
             }
         }
@@ -444,7 +488,7 @@ static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *
    HUD has set it (gRndCtx). t: the texture entry, pal: the one whose palette it is drawn with, tex0 the TEX0 the
    packet sends. `end`: the end of the packet begun for it (its state, ended in front of the record). 0 = not
    taken: the vertices are sent. */
-static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, HudCTex *pal, u64 tex0, const u32 *rgba, u64 *end) {
+static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, HudCTex *pal, u64 tex0, const u32 *rgba, u64 *end, s32 texIdx) {
     RndQuad r;
     s32 i;
 
@@ -476,15 +520,18 @@ static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, Hu
     if (!Rnd_TestsMarks() && HudSprite_PortStraight(v)) {
         if ((r.st.flags & RND_MARK) && (r.st.flags & RND_NO_COLOUR) && r.st.mask == RND_MASK_NONE) {
             if (uv != NULL) { /* a mask (it writes nothing else) */
-                HudSprite_PortMark(v, uv);
+                HudSprite_PortMark(v, uv, texIdx);
                 return 1;
             }
-        } else if (r.st.mask == RND_IF_UNMARKED) {
+        } else if (r.st.mask == RND_IF_UNMARKED || r.st.mask == RND_IF_MARKED) {
             s32 none[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+            s32 inside = r.st.mask == RND_IF_MARKED;
             r.st.mask = RND_MASK_NONE;
-            HudSprite_PortCut(&r, v, uv != NULL ? uv : none, rgba);
+            HudSprite_PortCut(&r, v, uv != NULL ? uv : none, rgba, inside);
             return 1;
         }
+    } else if (!Rnd_TestsMarks() && r.st.mask != RND_MASK_NONE) {
+        Port_Lost("a HUD sprite drawn by the marks, turned (the cut takes straight ones)", (u32)r.st.mask, __builtin_return_address(0));
     }
     return Port_Quad(&r);
 }
@@ -540,7 +587,7 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
         HudSprite_PortBounds(v, b);
         HudSprite_PortMarkRect(b, 0); /* (its alpha 0: the marks there cleared) */
         p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
-        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
+        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p, -1)) {
             return;
         }
         p[-12] &= ~(1ull << 15);
@@ -605,7 +652,7 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
         HudSprite_PortBounds(v, b);
         HudSprite_PortMarkRect(b, 1); /* (its alpha 0xFF: the pixels marked) */
         p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
-        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
+        if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p, -1)) {
             return;
         }
         p[-12] &= ~(1ull << 15);
@@ -647,7 +694,7 @@ void HudGfx_ClearAlpha(void) {
         PORT_REG(p, 0, GS_ZBUF_1, GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0));
         p += 2;
         Rnd_SetFlag(0, RND_ZWRITE, 1);
-        HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p);
+        HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p, -1);
         gRndCtx[0] = keep;
         p = Dma_BeginDirect();
         PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
@@ -823,7 +870,7 @@ void HudSprite_DrawAt(HudCSprite *spr, HudCRes *res, u8 ctx2, s32 tbp, s32 cbp) 
         u32 c = (u32)spr->r | ((u32)spr->g << 8) | ((u32)spr->b << 16) | ((u32)spr->a << 24);
         u32 cs[4] = {c, c, c, c};
         u64 t0 = spr->tex >= 0 ? t->tex0 | ((u64)(pal->clutBlock + cbp) << 37) | (t->imageBlock + tbp) | ((u64)0x8000 << 19) : 0;
-        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag)) {
+        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag, spr->tex)) {
             return;
         }
     }
@@ -936,7 +983,7 @@ void HudSprite_DrawGradient(HudCSprite *spr, HudCRes *res, u8 ctx2, s32 colorL, 
         u32 cl = (u32)HUDC_RGBA(colorL), cr = (u32)HUDC_RGBA(colorR);
         u32 cs[4] = {cl, cr, cl, cr};
         u64 t0 = spr->tex >= 0 ? t->tex0 | ((u64)(pal->clutBlock + HUDC_GRADIENT_CBP) << 37) | (t->imageBlock + HUDC_GRADIENT_TBP) | ((u64)0x8000 << 19) : 0;
-        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag)) {
+        if (HudSprite_PortQuad(ctx, v, uv, spr->tex >= 0 ? t : NULL, pal, t0, cs, tag, spr->tex)) {
             return;
         }
     }
