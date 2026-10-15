@@ -213,6 +213,7 @@ void PadWatch_DrawMessage(void) {
         p += 2;
         p[0] = 0x44; /* (Cs - Cd) * As + Cd */
         p[1] = GS_ALPHA_1;
+        PORT_AD(p, 0);
         p += 2;
         p[0] = GIF_TAG_EX(1, 1, GIF_FLG_REGLIST, 4);
         p[1] = 0x5510; /* PRIM, RGBAQ, XYZ2, XYZ2 */
