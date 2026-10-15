@@ -205,18 +205,9 @@ static void load_program(uint32_t at, uint32_t size) { /* the MPG codes of a pro
     while (w < end) {
         uint32_t code = *w++, cmd = (code >> 24) & 0x7F;
         if (cmd == 0x4A) {
-            uint32_t num = (code >> 16) & 0xFF, k, pr[512];
+            uint32_t num = (code >> 16) & 0xFF;
             num = num ? num : 256;
-            /* gs_vu1.c loads I before the upper instruction of the same pair runs; the unit (and the programs:
-               "maddi vf28, vf24 | loi 1/3" wants the 1 loaded the pair before) has the upper one read the I from
-               before. The one pair where it matters (the clipper's centroid) as maddw ... vf0w, the same sum. */
-            memcpy(pr, w, num * 8);
-            for (k = 0; k < num; k++) {
-                if ((pr[k * 2 + 1] & 0x80000000u) && (pr[k * 2 + 1] & 0x3F) == 0x23 && ((pr[k * 2 + 1] >> 16) & 31) == 0) {
-                    pr[k * 2 + 1] = (pr[k * 2 + 1] & ~0x3Fu) | 0x0B;
-                }
-            }
-            GsVu1_Program(code & 0xFFFF, pr, num * 2);
+            GsVu1_Program(code & 0xFFFF, w, num * 2);
             w += num * 2;
         } else if (cmd != 0) {
             fprintf(stderr, "vu1_check: VIF code %08X in a program packet\n", code);

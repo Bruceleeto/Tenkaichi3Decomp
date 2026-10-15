@@ -272,8 +272,7 @@ static void run(uint32_t start) {
         fd = (hi >> 6) & 31;
         op = hi & 0x3F;
         bc = hi & 3;
-        if (hi & 0x80000000u) { /* I bit: the lower word is a float for the I register */
-            memcpy(&vu.i, &lo, 4);
+        if (hi & 0x80000000u) { /* I bit: the lower word is a float for the I register (loaded after the upper one) */
             lower = 0;
         }
         /* ---- upper instruction: result into `res`, committed after the lower one has read its operands ---- */
@@ -373,7 +372,11 @@ static void run(uint32_t start) {
         }
 upper_done:
         /* ---- lower instruction ---- */
-        if (lower && lo != 0x8000033Cu) { /* 0x8000033C: the lower NOP (move vf0, vf0) */
+        if (!lower) {
+            /* LOI: the upper instruction of the pair has read the I from before ("maddi vf28, vf24 | loi 1/3" in
+               program 4's clipper wants the 1 the pair before loaded); the new value is there for the next pair */
+            memcpy(&vu.i, &lo, 4);
+        } else if (lo != 0x8000033Cu) { /* 0x8000033C: the lower NOP (move vf0, vf0) */
             uint32_t lop = lo >> 25, it = (lo >> 16) & 31, is = (lo >> 11) & 31, id = (lo >> 6) & 31, ld = (lo >> 21) & 15;
             int32_t imm11 = (int32_t)(lo << 21) >> 21;
             uint32_t imm15 = ((lo >> 10) & 0x7800) | (lo & 0x7FF);
