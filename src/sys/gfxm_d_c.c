@@ -140,8 +140,9 @@ void ObjSeam_Draw(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view) {
         tex0Shade = (tex0Shade & 0xFFF8001FFFFFFFFF) | ((u64)cbpShade << 37);
         vtx = (ObjSeamVtx *)((u8 *)model + sec->vtxOfs);
 #ifdef PORT
-        /* the triangles as records (include/port/rnd.h): each pass's TEX0 written (followed), then its triangles
-           through its context, those of a corner outside the guard band left out as the GS does */
+        /* the triangles as records (include/port/rnd.h): each pass's TEX0 set (and its packet where the list is
+           read), then its triangles through its context, those of a corner outside the guard band left out as the
+           GS does */
         if (Port_TakesRecords() && gRndCtxBad[0] == 0 && gRndCtxBad[1] == 0) {
             u32 rgba = ((u32)(s32)view->color.x & 0xFF) | (((u32)(s32)view->color.y & 0xFF) << 8) |
                        (((u32)(s32)view->color.z & 0xFF) << 16) | 0x80000000; /* (the packed RGBAQ's low bytes) */
@@ -149,14 +150,18 @@ void ObjSeam_Draw(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view) {
             for (pass = 0; pass < 2; pass++) {
                 u64 reg = (pass == 0 ? tex0Base : tex0Shade) | 0x400000000;
 
-                p = Dma_BeginDirect();
-                p[0] = GIF_TAG(2, 0, 1);
-                p[1] = GIF_REG_AD;
-                p[2] = 0;
-                p[3] = GS_TEXFLUSH;
-                p[4] = reg;
-                p[5] = pass == 0 ? GS_TEX0_1 : 7; /* TEX0_2 */
-                Dma_EndDirect(p + 6);
+                Rnd_GsReg(GS_TEXFLUSH, 0);
+                Rnd_GsReg(pass == 0 ? GS_TEX0_1 : 7, reg); /* (7: TEX0_2) */
+                if (Port_ListRead()) {
+                    p = Dma_BeginDirect();
+                    p[0] = GIF_TAG(2, 0, 1);
+                    p[1] = GIF_REG_AD;
+                    p[2] = 0;
+                    p[3] = GS_TEXFLUSH;
+                    p[4] = reg;
+                    p[5] = pass == 0 ? GS_TEX0_1 : 7;
+                    Dma_EndDirect(p + 6);
+                }
                 for (i = 0; i < sec->triCount; i++) {
                     RndPoly r;
                     s32 k;
@@ -947,6 +952,31 @@ void BtlObjDraw_End(void) {
 /* Queues the default environment of the objects' pass for both GS contexts: frame, depth buffer, offset, the
    current view's scissor, blending, tests, texture filter, clamp. */
 void BtlObjDraw_SetEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ZBUF_1, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_ZBUF_2, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_XYOFFSET_2, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_SCISSOR_1, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_SCISSOR_2, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_ALPHA_2, 0x44);
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    Rnd_GsReg(GS_TEST_2, 0x50000);
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(0x15, 0x60);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_CLAMP_2, 0);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_PRMODECONT, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[88] = {
         DMA_TAG_CNT | 21, 0, VIF_FLUSHE, VIF_DIRECT | 21,
         GIF_EOP | 20, 0x10000000, GIF_REG_AD, 0,
@@ -981,6 +1011,21 @@ void BtlObjDraw_SetEnv(void) {
 
 /* Queues the texturing state of the lit draw: blend, tests, bilinear filter, clamp of context 2. */
 void ObjGs_AddTexEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_1, ((u64)(u32)(0x80) << 32 | (u32)(0x64)));
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_TEST_2, 0x50000);
+    Rnd_GsReg(0x15, 0x60);
+    Rnd_GsReg(GS_CLAMP_2, 5);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    Rnd_GsReg(GS_FBA_2, 0);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[48] = {
         DMA_TAG_CNT | 11, 0, VIF_FLUSHE, VIF_DIRECT | 11,
         GIF_EOP | 10, 0x10000000, GIF_REG_AD, 0,
@@ -1001,6 +1046,15 @@ void ObjGs_AddTexEnv(void) {
 
 /* Queues FRAME_1 (current colour buffer, write mask `fbmsk`) with the blend, test and FBA of context 1. */
 void ObjGs_AddFrame1(u32 fbmsk, s32 unused) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, OBJ_FRAME_REG(fbmsk));
+    Rnd_GsReg(GS_ALPHA_1, ((u64)(u32)(0x80) << 32 | (u32)(0x64)));
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    Rnd_GsReg(GS_FBA_1, 0);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[24] = {
         DMA_TAG_CNT | 5, 0, VIF_FLUSHE, VIF_DIRECT | 5,
         GIF_EOP | 4, 0x10000000, GIF_REG_AD, 0,
@@ -1015,6 +1069,13 @@ void ObjGs_AddFrame1(u32 fbmsk, s32 unused) {
 
 /* Queues ALPHA_2 = `alpha` and FRAME_2 (current colour buffer, write mask `fbmsk`). */
 void ObjGs_AddFrame2Alpha(u32 fbmsk, u64 alpha) {
+#ifdef PORT
+    Rnd_GsReg(GS_ALPHA_2, alpha);
+    Rnd_GsReg(GS_FRAME_2, OBJ_FRAME_REG(fbmsk));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
@@ -1030,6 +1091,30 @@ void ObjGs_AddFrame2Alpha(u32 fbmsk, u64 alpha) {
 /* Queues the environment of the fade pass: as BtlObjDraw_SetEnv, but context 1 writes alpha only (FBMSK
    0x00FFFFFF) and context 2 blends with ALPHA 0x58 and clamps. */
 void ObjGs_AddFadeEnv(void) {
+#ifdef PORT
+    Rnd_GsReg(GS_FRAME_1, ((u64)(u32)(0xFFFFFF) << 32 | (u32)(GFX_FRAME_REG())));
+    Rnd_GsReg(GS_FRAME_2, (u32)(GFX_FRAME_REG()));
+    Rnd_GsReg(GS_ZBUF_1, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_ZBUF_2, (u32)(GS_SET_ZBUF(GFX_ZBP, GS_PSMZ24, 0)));
+    Rnd_GsReg(GS_XYOFFSET_1, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_XYOFFSET_2, ((u64)(u32)(GFX_OFY) << 32 | (u32)(GFX_OFX)));
+    Rnd_GsReg(GS_SCISSOR_1, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_SCISSOR_2, GS_SET_SCISSOR(gBtlCamView->scissorX0, gBtlCamView->scissorX1, gBtlCamView->scissorY0, gBtlCamView->scissorY1));
+    Rnd_GsReg(GS_ALPHA_1, 0x44);
+    Rnd_GsReg(GS_ALPHA_2, 0x58);
+    Rnd_GsReg(GS_TEST_1, 0x50000);
+    Rnd_GsReg(GS_TEST_2, 0x50000);
+    Rnd_GsReg(GS_TEX1_1, 0x60);
+    Rnd_GsReg(0x15, 0x60);
+    Rnd_GsReg(GS_FBA_1, 0);
+    Rnd_GsReg(GS_FBA_2, 0);
+    Rnd_GsReg(GS_CLAMP_1, 0);
+    Rnd_GsReg(GS_CLAMP_2, 5);
+    Rnd_GsReg(GS_COLCLAMP, 1);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[84] = {
         DMA_TAG_CNT | 20, 0, VIF_FLUSHE, VIF_DIRECT | 20,
         GIF_EOP | 19, 0x10000000, GIF_REG_AD, 0,
@@ -1063,6 +1148,14 @@ void ObjGs_AddFadeEnv(void) {
 
 /* Queues TEST_1 with alpha reference `aref` (pass when greater), TEX0_2 = `tex0`, TEXFLUSH. */
 void ObjGs_AddFadeTex(u64 tex0, s32 aref) {
+#ifdef PORT
+    Rnd_GsReg(GS_TEST_1, ((u64)aref << 4) | 0x50004);
+    Rnd_GsReg(7, tex0);
+    Rnd_GsReg(GS_TEXFLUSH, 0);
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[20] = {
         DMA_TAG_CNT | 4, 0, VIF_FLUSHE, VIF_DIRECT | 4,
         GIF_EOP | 3, 0x10000000, GIF_REG_AD, 0,
@@ -1076,6 +1169,13 @@ void ObjGs_AddFadeTex(u64 tex0, s32 aref) {
 
 /* Queues ZBUF_1 and ZBUF_2: depth buffer page (24-bit) and the "do not write depth" flag. */
 void ObjGs_AddZbufBoth(s32 zbp, s32 zmsk) {
+#ifdef PORT
+    Rnd_GsReg(GS_ZBUF_1, GS_SET_ZBUF(zbp, GS_PSMZ24, zmsk));
+    Rnd_GsReg(GS_ZBUF_2, GS_SET_ZBUF(zbp, GS_PSMZ24, zmsk));
+    if (!Port_ListRead()) { /* (the packet only for the PS2 reference) */
+        return;
+    }
+#endif
     u32 pkt[16] = {
         DMA_TAG_CNT | 3, 0, VIF_FLUSHE, VIF_DIRECT | 3,
         GIF_EOP | 2, 0x10000000, GIF_REG_AD, 0,
