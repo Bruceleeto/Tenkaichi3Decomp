@@ -646,6 +646,7 @@ void EftStreak_DrawScreen(Vec4 *corner, EftTVec color, s32 blend, s32 segs, s32 
             tt[3] = t.w;
             q = Ot_NewRec(0x5C, 4);
             Ot_RecTex0(q, tex0);
+            EftVram_PortRecTex(q, tex0);
             for (i = 0; i < 4; i++) {
                 Ot_RecVtx(q, i, (u16)((u16)scr[i].x * 16 + 0x7000), (u16)((u16)scr[i].y * 16 + 0x7200), zz & 0xFFFFFF, s[i],
                           tt[i], 1.0f, rgba);
