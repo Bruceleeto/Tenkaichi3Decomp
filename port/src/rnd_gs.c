@@ -99,10 +99,14 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
         uint32_t k = (uint32_t)(v >> 4) & 3;
         s->blend = b == 0x44 ? RND_BLEND_NORMAL : b == 0x48 ? RND_BLEND_ADD : b == 0x42 ? RND_BLEND_SUB : b == 0x49 ? RND_BLEND_DEST : RND_BLEND_NORMAL;
         s->flags = (uint16_t)(k == 1 ? s->flags | RND_DEST_ALPHA : s->flags & ~RND_DEST_ALPHA);
-        s->flags &= (uint16_t)~RND_ONE;
+        s->flags &= (uint16_t)~(RND_ONE | RND_FIX);
         if (k == 2 && ((v >> 32) & 0xFF) == 0x80) { /* by 1: (Cs - Cd) * 1 + Cd is the source as it is (the fighters' lit draw) */
             s->blend = b == 0x44 ? RND_BLEND_NONE : s->blend;
             s->flags |= b == 0x44 ? 0 : RND_ONE;
+            k = 0;
+        } else if (k == 2) { /* by another constant (the fighters' flat shadow: normal by 0x46) */
+            s->flags |= RND_ONE | RND_FIX;
+            s->fix = (uint8_t)(v >> 32);
             k = 0;
         }
         gRndCtxBad[c] = (b == 0x44 || b == 0x48 || b == 0x42 || b == 0x49) && k <= 1 ? gRndCtxBad[c] & ~RND_BAD_BLEND : gRndCtxBad[c] | RND_BAD_BLEND;

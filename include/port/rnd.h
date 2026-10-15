@@ -38,6 +38,8 @@
 #define RND_GOURAUD 0x80    /* colours blended between the corners (else each triangle has its last corner's) */
 #define RND_ONE 0x100       /* blended by 1 instead of an alpha (the GS's FIX 0x80): add Cs + Cd, subtract Cd - Cs */
 #define RND_VU 0x200        /* made by a vertex program (port/src/vu1_native.c; kept by Rnd_Draw): 3D, as the GS's VU1 draws */
+#define RND_FIX 0x400       /* with RND_ONE: blended by the constant RndState.fix instead of 1 (the GS's FIX, 0x80 = 1;
+                               normal: Cs * fix + Cd * (1 - fix)) */
 
 /* RndState.atest: which texels are drawn, by alpha against aref (0x80 = 1.0). */
 #define RND_ATEST_ALWAYS 0
@@ -68,7 +70,9 @@ typedef struct RndState {
     uint8_t atest, aref, afail;
     uint8_t ztest;      /* RND_Z_ */
     uint8_t mask;       /* RND_MASK_NONE, RND_IF_ */
-    uint32_t fbp;       /* the frame buffer drawn into (its page) */
+    uint16_t fbp;       /* the frame buffer drawn into (its page) */
+    uint8_t fix;        /* RND_FIX's factor (read only with RND_FIX) */
+    uint8_t spare;
     int16_t scissor[4]; /* x0, y0, x1, y1: the pixels drawn, inclusive */
 } RndState; /* 20 bytes */
 

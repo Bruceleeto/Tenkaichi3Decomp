@@ -1278,8 +1278,8 @@ static void rnd_check(const RndState *st, uint32_t gsCtx, int textured) {
     if (!on || ctx < 0 || ctx > 1) { return; }
     want[0] = (st->fbp & 0x1FF) | (st->flags & RND_NO_COLOUR ? 0x00FFFFFFull << 32 : 0) | (st->flags & RND_NO_ALPHA ? 0xFF000000ull << 32 : 0);
     have[0] = gGs.frame[ctx] & 0xFFFFFFFF000001FFull;
-    want[1] = st->blend == RND_BLEND_NONE ? 0 : sRndAlpha[st->blend < 4 ? st->blend : 0] | (st->flags & RND_ONE ? 0x20 : st->flags & RND_DEST_ALPHA ? 0x10 : 0);
-    have[1] = st->blend == RND_BLEND_NONE ? 0 : gGs.alpha[ctx] & 0xFF;
+    want[1] = st->blend == RND_BLEND_NONE ? 0 : sRndAlpha[st->blend < 4 ? st->blend : 0] | (st->flags & RND_ONE ? 0x20 | (uint64_t)(st->flags & RND_FIX ? st->fix : 0x80) << 32 : st->flags & RND_DEST_ALPHA ? 0x10 : 0);
+    have[1] = st->blend == RND_BLEND_NONE ? 0 : gGs.alpha[ctx] & (((gGs.alpha[ctx] >> 4) & 3) == 2 ? 0xFF000000FFull : 0xFF);
     for (k = 0; k < 2; k++) { /* (the same tests written two ways: no depth test, and an alpha test that always passes) */
         t = k ? gGs.test[ctx] : (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
                                 (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
@@ -1328,7 +1328,7 @@ static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, 
     r.clamp = st->flags & RND_REPEAT ? 0 : 5;
     r.scissor = (uint64_t)(uint16_t)st->scissor[0] | (uint64_t)(uint16_t)st->scissor[2] << 16 |
                 (uint64_t)(uint16_t)st->scissor[1] << 32 | (uint64_t)(uint16_t)st->scissor[3] << 48;
-    r.alpha = alpha | (st->flags & RND_ONE ? 0x20 | 0x80ull << 32 : st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by 1, or by Ad, instead of As) */
+    r.alpha = alpha | (st->flags & RND_ONE ? 0x20 | (uint64_t)(st->flags & RND_FIX ? st->fix : 0x80) << 32 : st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by 1 or the constant, or by Ad, instead of As) */
     r.test = (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
              (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
              1ull << 16 | (uint64_t)(st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1) << 17;
@@ -1403,7 +1403,7 @@ static int rnd_draw_state(GsDraw *d, const RndState *st, GsTex g, uint64_t t0) {
     d->misc[0] = (float)st->aref;
     d->misc[1] = st->mask == RND_IF_UNMARKED ? 1.0f : st->mask == RND_IF_MARKED ? 2.0f : 0.0f;
     d->misc[2] = st->flags & RND_MARK ? 1.0f : 0.0f;
-    d->blendc = 1.0f; /* (RND_ONE's constant factor) */
+    d->blendc = st->flags & RND_FIX ? (float)st->fix / 128.0f : 1.0f; /* (RND_ONE's constant factor) */
     d->vurec = (st->flags & RND_VU) != 0;
     d->scissor[0] = st->scissor[0] * SCALE;
     d->scissor[1] = st->scissor[1] * SCALE;
