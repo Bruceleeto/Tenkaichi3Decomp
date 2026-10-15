@@ -217,6 +217,9 @@ static inline void EftSurf_QueueTri(EftScrPos *scr0, EftScrPos *scr1, EftScrPos 
             t[2] = (f32 *)st2;
             prim = 0x1B;
             ((EftPrim *)&prim)->abe = abe;
+            if (!Ot_RecRoom(Ot_RecBytes(3))) {
+                break; /* (no room left in the packet memory: this one and the rest not drawn) */
+            }
             pkt = Ot_NewRec(prim, 3);
             Ot_RecTex0(pkt, tex[i]);
             EftVram_PortRecTex(pkt, tex[i]);
