@@ -45,6 +45,25 @@ extern void Vu0Cur_RotateYXZ(void *vec);                   /* applies a rotation
 extern void Vu0Clip_StoreMtx(void *m);                     /* m = vf20-23 */
 extern void Vu0Screen_StoreMtx(void *m);                     /* m = vf24-27 */
 
+#ifdef PORT
+/* VU1's packets only where the display list is read for them (port/src/gs/gs_walk.c Port_ListRead: the PS2
+   reference). Else nothing reads them: the microprograms are not sent, and a packet's memory is a buffer of the
+   function's own, where its caller still writes the constants the native programs (port/src/vu1_native.c) read. */
+extern s32 Port_ListRead(void);
+static u32 *Vu1Pkt_Alloc(u32 *own, s32 size) {
+    return Port_ListRead() ? (u32 *)Dma_Alloc(size) : own;
+}
+#define VU1_ALLOC(size) Vu1Pkt_Alloc(({ static u32 own_[(size) / 4] __attribute__((aligned(16))); own_; }), size)
+#ifdef PORT_GS_REF
+#define VU1_UPLOAD(addr, n) do { if (Port_ListRead()) { Dma_AddRef(addr, n); } } while (0)
+#else
+#define VU1_UPLOAD(addr, n) ((void)0)
+#endif
+#else
+#define VU1_ALLOC(size) Dma_Alloc(size)
+#define VU1_UPLOAD(addr, n) Dma_AddRef(addr, n)
+#endif
+
 /* Program 7 draw: current matrix, the two camera matrices and w, then the caller's vertex chain. */
 u32 *Vu1Pkt_CallProg7(u32 chain, f32 w) {
 #ifdef PORT
@@ -61,7 +80,7 @@ u32 *Vu1Pkt_CallProg7(u32 chain, f32 w) {
         }
     }
 #endif
-    u32 *p = Dma_Alloc(0xF0);
+    u32 *p = VU1_ALLOC(0xF0);
 
     Vu0Cur_StoreMtx(p + 4);
     Vu0Screen_StoreMtx(p + 0x14);
@@ -82,8 +101,8 @@ u32 *Vu1Pkt_CallProg7(u32 chain, f32 w) {
 u32 *Vu1Pkt_LoadProg7(void) {
     u32 *p;
 
-    Dma_AddRef(D_002C2D30, D_002C3080 - D_002C2D30);
-    p = Dma_Alloc(0xF0);
+    VU1_UPLOAD(D_002C2D30, D_002C3080 - D_002C2D30);
+    p = VU1_ALLOC(0xF0);
     Vu0Screen_StoreMtx(p + 0x14);
     Vu0Clip_StoreMtx(p + 0x24);
     p[0] = VU1_DMA_CNT | 0xE;
@@ -99,7 +118,7 @@ u32 *Vu1Pkt_LoadProg7(void) {
 
 /* Program 0 draw: 0x22 quadwords of constants for the caller to fill, then the caller's chain. */
 u32 *Vu1Pkt_CallProg0(u32 chain) {
-    u32 *p = Dma_Alloc(0x240);
+    u32 *p = VU1_ALLOC(0x240);
 
     p[0] = VU1_DMA_CALL | 0x23;
     p[1] = chain & VU1_ADDR_MASK;
@@ -116,8 +135,8 @@ u32 *Vu1Pkt_CallProg0(u32 chain) {
 u32 *Vu1Pkt_LoadProg0(void) {
     u32 *p;
 
-    Dma_AddRef(D_002BF6B0, D_002BFAB0 - D_002BF6B0);
-    p = Dma_Alloc(0x240);
+    VU1_UPLOAD(D_002BF6B0, D_002BFAB0 - D_002BF6B0);
+    p = VU1_ALLOC(0x240);
     p[0] = VU1_DMA_CNT | 0x23;
     p[1] = 0;
     p[2] = VU1_VIF_FLUSHE;
@@ -131,7 +150,7 @@ u32 *Vu1Pkt_LoadProg0(void) {
 
 /* Program 1 draw: as program 0, for an object whose chain starts at +0x60. */
 u32 *Vu1Pkt_CallProg1(u32 obj) {
-    u32 *p = Dma_Alloc(0x240);
+    u32 *p = VU1_ALLOC(0x240);
 
     p[0] = VU1_DMA_CALL | 0x23;
     p[1] = (obj + 0x60) & VU1_ADDR_MASK;
@@ -148,8 +167,8 @@ u32 *Vu1Pkt_CallProg1(u32 obj) {
 u32 *Vu1Pkt_LoadProg1(void) {
     u32 *p;
 
-    Dma_AddRef(D_002BFAB0, D_002BFEA0 - D_002BFAB0);
-    p = Dma_Alloc(0x240);
+    VU1_UPLOAD(D_002BFAB0, D_002BFEA0 - D_002BFAB0);
+    p = VU1_ALLOC(0x240);
     p[0] = VU1_DMA_CNT | 0x23;
     p[1] = 0;
     p[2] = VU1_VIF_FLUSHE;
@@ -163,7 +182,7 @@ u32 *Vu1Pkt_LoadProg1(void) {
 
 /* Program 2/3 draw: 0xB quadwords of per-object constants, then the object's chain at +0x60. */
 u32 *Vu1Pkt_CallProg2(u32 obj) {
-    u32 *p = Dma_Alloc(0xD0);
+    u32 *p = VU1_ALLOC(0xD0);
 
     p[0] = VU1_DMA_CALL | 0xC;
     p[1] = (obj + 0x60) & VU1_ADDR_MASK;
@@ -181,11 +200,11 @@ u32 *Vu1Pkt_LoadProg2(s32 alt) {
     u32 *p;
 
     if (alt) {
-        Dma_AddRef(D_002C01C0, D_002C04F0 - D_002C01C0);
+        VU1_UPLOAD(D_002C01C0, D_002C04F0 - D_002C01C0);
     } else {
-        Dma_AddRef(D_002BFEA0, D_002C01C0 - D_002BFEA0);
+        VU1_UPLOAD(D_002BFEA0, D_002C01C0 - D_002BFEA0);
     }
-    p = Dma_Alloc(0x150);
+    p = VU1_ALLOC(0x150);
     p[0] = VU1_DMA_CNT | 0x14;
     p[1] = 0;
     p[2] = VU1_VIF_FLUSHE;
@@ -208,7 +227,7 @@ void Vu1Pkt_CallProg4(u32 chain) {
         return;
     }
 #endif
-    u32 *p = Dma_Alloc(0x20);
+    u32 *p = VU1_ALLOC(0x20);
 
     p[0] = VU1_DMA_CALL | 1;
     p[1] = chain & VU1_ADDR_MASK;
@@ -224,8 +243,8 @@ void Vu1Pkt_CallProg4(u32 chain) {
 void Vu1Pkt_LoadProg4(void *mtx) {
     u32 *p;
 
-    Dma_AddRef(D_002C04F0, D_002C1180 - D_002C04F0);
-    p = Dma_Alloc(0xE0);
+    VU1_UPLOAD(D_002C04F0, D_002C1180 - D_002C04F0);
+    p = VU1_ALLOC(0xE0);
     Mtx_Copy(p + 0x24, mtx);
     Vu0Screen_StoreMtx(p + 4);
     Vu0Clip_StoreMtx(p + 0x14);
@@ -244,7 +263,7 @@ void Vu1Pkt_LoadProg4(void *mtx) {
 
 /* Program 5 draw: one matrix, then the caller's chain. No callers. */
 void Vu1Pkt_CallProg5(u32 chain, void *mtx) {
-    u32 *p = Dma_Alloc(0x60);
+    u32 *p = VU1_ALLOC(0x60);
 
     Mtx_Copy(p + 4, mtx);
     p[0] = VU1_DMA_CALL | 5;
@@ -261,8 +280,8 @@ void Vu1Pkt_CallProg5(u32 chain, void *mtx) {
 void Vu1Pkt_LoadProg5(void *mtx) {
     u32 *p;
 
-    Dma_AddRef(D_002C1180, D_002C1F00 - D_002C1180);
-    p = Dma_Alloc(0x120);
+    VU1_UPLOAD(D_002C1180, D_002C1F00 - D_002C1180);
+    p = VU1_ALLOC(0x120);
     Mtx_StoreIdentity(p + 4);
     Mtx_Copy(p + 0x34, mtx);
     Vu0Screen_StoreMtx(p + 0x14);
@@ -398,7 +417,7 @@ void Vu1Node_Draw(Vu1Node *node) {
 
 /* Program 8 draw: 0xA quadwords of per-node constants, then the node's VIF stream. */
 u32 *Vu1Pkt_CallProg8(Vu1Node *node) {
-    u32 *p = Dma_Alloc(0xC0);
+    u32 *p = VU1_ALLOC(0xC0);
 
     p[0] = VU1_DMA_CALL | 0xB;
     p[1] = (u32)node->vif & VU1_ADDR_MASK;
@@ -418,11 +437,11 @@ u32 *Vu1Pkt_LoadProg8(void) {
 #ifdef PORT
     /* D_002C3380 is the first symbol of the next data file: on PC the linker puts it elsewhere, and the length
        came out as nonsense (the chain then ran off into unrelated memory on every stage with animated objects). */
-    Dma_AddRef(D_002C3080, 0x300 / sizeof(D_002C3080[0]));
+    VU1_UPLOAD(D_002C3080, 0x300 / sizeof(D_002C3080[0]));
 #else
-    Dma_AddRef(D_002C3080, D_002C3380 - D_002C3080);
+    VU1_UPLOAD(D_002C3080, D_002C3380 - D_002C3080);
 #endif
-    p = Dma_Alloc(0x140);
+    p = VU1_ALLOC(0x140);
     p[0] = VU1_DMA_CNT | 0x13;
     p[1] = 0;
     p[2] = VU1_VIF_FLUSHE;
@@ -445,7 +464,7 @@ void Vu1Pkt_CallProg6(u32 chain) {
         return;
     }
 #endif
-    u32 *p = Dma_Alloc(0x20);
+    u32 *p = VU1_ALLOC(0x20);
 
     p[0] = VU1_DMA_CALL | 1;
     p[1] = chain & VU1_ADDR_MASK;
@@ -461,8 +480,8 @@ void Vu1Pkt_CallProg6(u32 chain) {
 void Vu1Pkt_LoadProg6(u8 *obj, void *mtx, f32 *vec) {
     u32 *p;
 
-    Dma_AddRef(D_002C1F00, D_002C2D30 - D_002C1F00);
-    p = Dma_Alloc(0x130);
+    VU1_UPLOAD(D_002C1F00, D_002C2D30 - D_002C1F00);
+    p = VU1_ALLOC(0x130);
     memset(p, 0, 0x130);
     Mtx_Copy(p + 0x24, obj + 0x100);
     Mtx_Mul(p + 4, obj + 0x80, obj + 0x40);

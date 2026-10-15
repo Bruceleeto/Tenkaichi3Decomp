@@ -31,6 +31,16 @@ static int sWalk;  /* the lists are walked here, not by the reference (the Dream
                       carried out as the walk meets them; 2 the markers queued with the records (Port_Mark), the walk
                       only counting them; 3 the same and the frame's list not walked: the queue drawn in order */
 int Gs_MarksQueued(void) { return sWalk >= 2 && sGpu; }
+/* 1: something reads the frame's display list for what the PS2 alone needs from it (VU1's microprograms and
+   constants, ...): the PS2 reference. 0: nothing does (the Dreamcast; BT3_WALK=3 on PC): such packets are not
+   built (src/sys/vu1_packet.c). */
+int Port_ListRead(void) {
+#ifdef PORT_GS_REF
+    return sWalk != 3;
+#else
+    return 0;
+#endif
+}
 
 #ifdef PORT_GS_REF
 int GsRef_Start(int gpu);  /* gs_core.c: the reference's tables and switches, the GPU back end (on its thread) */
@@ -676,7 +686,7 @@ static void walk_vif(const uint32_t *w, uint32_t count) {
 }
 
 /* One frame's list: the DMA chain at `tadr` on VIF1, the records at their places, then the end of the frame. */
-static void walk_chain(uint32_t tadr, int tte) {
+static void walk_list(uint32_t tadr, int tte) {
     uint32_t stack[2], sp = 0;
     int guard;
 
@@ -706,6 +716,10 @@ static void walk_chain(uint32_t tadr, int tte) {
             break;
         }
     }
+}
+
+static void walk_chain(uint32_t tadr, int tte) {
+    walk_list(tadr, tte);
     Gs_RndRest();
     walk_report();
     if (sGpu) {
@@ -716,13 +730,21 @@ static void walk_chain(uint32_t tadr, int tte) {
 #endif
 
 /* One frame's list not walked (sWalk 3): its records and markers in the order they were queued, then the end of
-   the frame. */
-static void list_draw(void) {
+   the frame. (On PC with BT3_GS_VERBOSE the list is still walked afterwards, only to count what it holds that
+   nothing reads: walk_report.) */
+static void list_draw(uint32_t tadr, int tte) {
     RndQueue *w = &sRndWalk;
     while (w->next < w->n) {
         rnd_draw(&w->cmd[w->next++]);
     }
     w->n = w->next = 0;
+#ifdef PORT_GS_REF
+    if (getenv("BT3_GS_VERBOSE") != NULL) {
+        walk_list(tadr, tte);
+    }
+#else
+    (void)tadr; (void)tte;
+#endif
     if (sRndLost != 0 && getenv("BT3_GS_VERBOSE") != NULL) {
         fprintf(stderr, "rnd: frame %u: %u records not queued (no memory)\n", sFrame, sRndLost);
     }
@@ -758,8 +780,7 @@ void Port_GsVif1Chain(uint32_t tadr, int tte) {
     } else
 #endif
     {
-        (void)tte;
-        list_draw();
+        list_draw(tadr, tte);
     }
     Gs_FramePace(tChain); /* the frame's work ends here */
 }
