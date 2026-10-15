@@ -517,8 +517,12 @@ converted to float through a spilled variable, and pointer variables assigned tw
 /* The same sprite as a record: the flat strip's PRIM, TEX0, colour (q 1) and corners, in the same chain. */
 static void EftStorm_RecSprite(EftStormBolt *bolt, EftScrXyz *a, EftScrXyz *b, u64 tex0, f32 col) {
     u32 rgba = (u8)(u32)col | (u8)(u32)col << 8 | (u8)(u32)col << 16 | (u32)(u8)((bolt->life << 7) / bolt->lifeMax) << 24;
-    void *r = Ot_NewRec(0x54, 4);
+    void *r;
 
+    if (!Ot_RecRoom(Ot_RecBytes(4))) {
+        return; /* (no room left in the packet memory: not drawn) */
+    }
+    r = Ot_NewRec(0x54, 4);
     Ot_RecTex0(r, tex0);
     EftVram_PortRecTex(r, tex0);
     Ot_RecVtx(r, 0, a->x, a->y, a->z, 0.0f, 0.0f, 1.0f, rgba);
@@ -754,6 +758,9 @@ void EftStorm_DrawRainLines(EftStormDrop *drop, s32 count, Vec4 *streak) {
         if (Vu0Cur_ProjectPoints(xyz, pos, 2) != 0 && EftScr_IsValid(&xyz[0]) && EftScr_IsValid(&xyz[1])) {
 #ifdef PORT
         if (Port_TakesRecords()) { /* the line as a record, in the packet's place */
+            if (!Ot_RecRoom(Ot_RecBytes(2))) {
+                continue; /* (no room left in the packet memory: this one not drawn) */
+            }
             p = Ot_NewRec(0x41, 2);
             Ot_RecVtx(p, 0, (u16)xyz[0].x, (u16)xyz[0].y, xyz[0].z & 0xFFFFFF, 0.0f, 0.0f, 1.0f, 0x20606060);
             Ot_RecVtx(p, 1, (u16)xyz[1].x, (u16)xyz[1].y, xyz[1].z & 0xFFFFFF, 0.0f, 0.0f, 1.0f, 0x20606060);
