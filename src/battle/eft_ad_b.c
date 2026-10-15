@@ -3,6 +3,7 @@
 #ifdef PORT
 #include "port/rnd.h"
 #include "port/ot_rec.h"
+extern void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal); /* battle/eft_ae.h */
 #endif
 
 /*
@@ -879,6 +880,7 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
             ctx = layer >= 2;
             p = Ot_NewRec(((s64)abe << 6) | ((s64)ctx << 9) | 0x1B, 3);
             Ot_RecTex0(p, tex0);
+            EftVram_PortRecTex(p, tex0);
             Ot_RecVtx(p, 0, p0->x, p0->y, p0->z, t0->x, t0->y, t0->z, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
             Ot_RecVtx(p, 1, p1->x, p1->y, p1->z, t1->x, t1->y, t1->z, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
             Ot_RecVtx(p, 2, p2->x, p2->y, p2->z, t2->x, t2->y, t2->z, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
@@ -1038,6 +1040,12 @@ void EftMesh_SendTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Eft
                     cr | (u32)cg << 8 | (u32)cb << 16 | (u32)ca << 24);
         }
         r.n = 3;
+        {
+            u32 tex, pal;
+            EftVram_PortHandles(tex0, &tex, &pal); /* (by handles: what the TEX0 names among this frame's uploads) */
+            r.tex = tex;
+            r.pal = pal;
+        }
         r.gsTex0 = tex0;
         if (Rnd_Draw(&r, 0, abe, 1)) {
             return;
