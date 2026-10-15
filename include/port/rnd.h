@@ -127,6 +127,8 @@ int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud);
 /* A corner from what a GS packet gives: x, y in sixteenths of a pixel (XYOFFSET of context ctx at 0, 0), the
    24-bit depth, s t q, r g b a. */
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
+/* An untextured flat rectangle (a sprite's two corners, as Rnd_Vtx takes them) as Rnd_Draw. */
+int Rnd_Rect(int ctx, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t z, uint32_t rgba, int abe);
 /* The ordering table's packets as polygons (from src/sys/gfx_ot.c Ot_Send, between Rnd_OtBegin and Rnd_OtEnd):
    whether a packet is a draw taken (1) or one kept (0: its register writes are followed); its polygons to the
    queue; the registers the GS would hold after those taken, written as A+D at dst (the new end) before a packet

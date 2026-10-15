@@ -403,3 +403,15 @@ int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
     p->gsCtx = (uint32_t)ctx;
     return Port_Poly(p);
 }
+
+int Rnd_Rect(int ctx, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t z, uint32_t rgba, int abe) {
+    RndPoly r;
+    int i;
+
+    memset(&r, 0, sizeof(r));
+    for (i = 0; i < 4; i++) {
+        Rnd_Vtx(&r.v[i], ctx, (i & 1) ? x1 : x0, (i & 2) ? y1 : y0, z, 0.0f, 0.0f, 1.0f, rgba);
+    }
+    r.n = 4;
+    return Rnd_Draw(&r, ctx, abe, 0);
+}

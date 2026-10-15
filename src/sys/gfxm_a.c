@@ -6,6 +6,9 @@
 #include "sys/heap.h"
 #include "sys/math3d.h"
 #include "sys/gfxm_a.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Full-screen post effects, 0x102F28..0x106D60. See include/sys/gfxm_a.h for the overview.
@@ -1326,6 +1329,15 @@ void GfxPost_FillBlend(u64 alpha, u64 rgbaq) {
     p[0] = rgbaq;
     p[1] = GS_RGBAQ;
     p += 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the rectangle as a record, under the state just set (followed) */
+        Dma_EndDirect(p);
+        if (Rnd_Rect(0, 0x7000, 0x7200, 0x9000, 0x8E00, 0, (u32)rgbaq, 1)) {
+            return;
+        }
+        p = Dma_BeginDirect();
+    }
+#endif
     tag = p;
     p += 2;
     x0 = 0;
