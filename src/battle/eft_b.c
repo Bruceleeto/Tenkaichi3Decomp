@@ -1725,6 +1725,13 @@ void EftGeyser_DrawColumn(EftBTask *task) {
                 } else {
                     e = &gOtZ[z].layer[0];
                 }
+#ifdef PORT
+                q = Ot_NewAd2(8, 0, 9, 0); /* CLAMP_1, CLAMP_2 = 0: register writes in the packet's place */
+                if (q != NULL) {
+                    e->tail->next = (OtPrim *)q;
+                    e->tail = (OtPrim *)q;
+                }
+#else
                 q = (EftBClampPkt *)gOtCur;
                 gOtCur = (u32 *)(q + 1);
                 q->dmaTag = 0x20000003;
@@ -1739,6 +1746,7 @@ void EftGeyser_DrawColumn(EftBTask *task) {
                 q->clamp2 = 0;
                 e->tail->next = (OtPrim *)q;
                 e->tail = (OtPrim *)q;
+#endif
 #ifdef PORT
                 if (Port_TakesRecords()) { /* the strip as a record behind the CLAMP packet */
                     p = Ot_NewRec(((u64)abe << 6) | 0x1C, 4);
