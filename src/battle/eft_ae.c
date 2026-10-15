@@ -893,6 +893,8 @@ static inline void EftSprAnim_QueueTri(EftAeScr *v0, EftAeScr *v1, EftAeScr *v2,
     if (Port_TakesRecords()) { /* the triangle as a record between the packet's two CLAMP (0x08 + ctx) writes, kept as packets */
         void *q;
         u32 fz = mode != 0;
+        u32 tex, pal;
+        EftVram_PortHandles(tex0, &tex, &pal); /* (its texture: the animation's, uploaded this frame) */
         l = otLayer;
         if (l >= 2) {
             l -= 2;
@@ -910,6 +912,7 @@ static inline void EftSprAnim_QueueTri(EftAeScr *v0, EftAeScr *v1, EftAeScr *v2,
         Ot_RecVtx(q, 0, v0->x, v0->y, fz ? 0xFFFFFF : v0->z, uv0->x, uv0->y, uv0->z, Ot_RecRgba(c0->x, c0->y, c0->z, c0->w));
         Ot_RecVtx(q, 1, v1->x, v1->y, fz ? 0xFFFFFF : v1->z, uv1->x, uv1->y, uv1->z, Ot_RecRgba(c1->x, c1->y, c1->z, c1->w));
         Ot_RecVtx(q, 2, v2->x, v2->y, fz ? 0xFFFFFF : v2->z, uv2->x, uv2->y, uv2->z, Ot_RecRgba(c2->x, c2->y, c2->z, c2->w));
+        Ot_RecTexHandles(q, tex, pal);
         Ot_Add(q, e);
         return;
     }
@@ -1710,10 +1713,47 @@ void EftTexSet_Keep16(EftAeTexSet16 *set, s32 tcc, s32 tfx) {
     }
 }
 
+#ifdef PORT
+/* The list EftVram_UploadAll last uploaded, as it was (EftVram_Reset empties it right after, before the frame's draws,
+   which name what it uploaded by their TEX0's blocks); none when the frame uploaded nothing. */
+static EftAeVramEntry sEftVramSent[128];
+static u32 sEftVramSentCount;
+static s32 sEftVramSentNow;
+
+/* The handles (include/port/rnd.h) of the textures a draw's TEX0 names: the image uploaded this frame at its TBP0
+   and the CLUT at its CBP (the last of each there, as the GS has them), 0 for what was not (or not as a texture of
+   tex.pak); the draw is then looked up by its TEX0. The image's CLUT packet is at 0x3C of it (its size at 0x0C), as
+   a texture file entry's. */
+void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
+    u32 tbp = (u32)tex0 & 0x3FFF;
+    u32 cbp = (u32)(tex0 >> 37) & 0x3FFF;
+    u32 i;
+
+    *tex = 0;
+    *pal = 0;
+    for (i = 0; i < sEftVramSentCount; i++) {
+        EftAeVramEntry *e = &sEftVramSent[i];
+        u8 *image = (u8 *)e->tex->image;
+
+        if ((e->flags & 1) && (u32)e->imageBlock == tbp) {
+            *tex = Port_TexHandle(image);
+        }
+        if ((e->flags & 2) && (u32)e->clutBlock == cbp) {
+            *pal = *(s32 *)(image + 0x0C) != 0 ? Port_PalHandle(*(void **)(image + 0x3C)) : 0;
+        }
+    }
+}
+#endif
+
 /* Uploads every texture queued this frame (from BtlScene_Draw, once per frame). */
 void EftVram_UploadAll(void) {
     u32 i;
 
+#ifdef PORT
+    __builtin_memcpy(sEftVramSent, gEftVram->entry, gEftVram->count * sizeof(EftAeVramEntry));
+    sEftVramSentCount = gEftVram->count;
+    sEftVramSentNow = 1;
+#endif
     for (i = 0; i < gEftVram->count; i++) {
         EftAeVramEntry *e = &gEftVram->entry[i];
         s32 clutBlock = -1;
@@ -1731,6 +1771,12 @@ void EftVram_UploadAll(void) {
 
 /* Empties the list and rewinds the cursors (from BtlScene_Draw, after the upload). */
 void EftVram_Reset(void) {
+#ifdef PORT
+    if (!sEftVramSentNow) {
+        sEftVramSentCount = 0;
+    }
+    sEftVramSentNow = 0;
+#endif
     gEftVram->imageNext = 0x2B00;
     gEftVram->clutNext = 0x2A00;
     gEftVram->count = 0;

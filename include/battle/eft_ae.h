@@ -241,4 +241,10 @@ typedef struct EftSprAnim {
     /* 0x40 */ Vec4 color;      /* 0..1 per channel */
 } EftSprAnim; /* size 0x50 */
 
+#ifdef PORT
+/* The handles (include/port/rnd.h) of what a draw's TEX0 names among the textures EftVram_UploadAll uploaded this
+   frame (eft_ae.c); 0 each for what it did not. */
+void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal);
+#endif
+
 #endif
