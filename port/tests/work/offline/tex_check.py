@@ -121,7 +121,7 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     jobs = [j for j in bt3walk.files(ROOT) if not j[0].startswith('pzs3us2')]
     res = {}
-    with mp.Pool(int(sys.argv[1]) if len(sys.argv) > 1 else 4) as pool:
+    with mp.Pool(int(sys.argv[1]) if len(sys.argv) > 1 else 2) as pool:
         for i, (rel, fid, out) in enumerate(pool.imap_unordered(do_file, jobs, chunksize=4)):
             if out is not None:
                 res[rel] = (fid, out)
