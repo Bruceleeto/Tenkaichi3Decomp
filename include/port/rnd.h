@@ -36,6 +36,8 @@
 #define RND_MARK 0x20       /* marks the pixels it writes (bit 7 of their alpha set: the GS's FBA) */
 #define RND_ZWRITE 0x40     /* writes its depth */
 #define RND_GOURAUD 0x80    /* colours blended between the corners (else each triangle has its last corner's) */
+#define RND_ONE 0x100       /* blended by 1 instead of an alpha (the GS's FIX 0x80): add Cs + Cd, subtract Cd - Cs */
+#define RND_VU 0x200        /* made by a vertex program (port/src/vu1_native.c; kept by Rnd_Draw): 3D, as the GS's VU1 draws */
 
 /* RndState.atest: which texels are drawn, by alpha against aref (0x80 = 1.0). */
 #define RND_ATEST_ALWAYS 0

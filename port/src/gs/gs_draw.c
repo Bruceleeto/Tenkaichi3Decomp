@@ -891,7 +891,7 @@ void Port_WallMesh(const void *key, int second, int culled, const float *screen,
 /* Two draws can be merged into one call when everything they need is the same. `scissor` is compared as
    four ints (the scissor a draw has recorded). */
 static int same_state(const GsDraw *a, const GsDraw *b) {
-    return !a->native && a->vu == b->vu && a->wall == b->wall && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
+    return !a->native && a->vu == b->vu && a->vurec == b->vurec && a->wall == b->wall && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
            memcmp(a->mode, b->mode, sizeof(a->mode)) == 0 && a->misc[0] == b->misc[0] && a->misc[1] == b->misc[1] &&
            a->misc[2] == b->misc[2] && a->misc[3] == b->misc[3] && a->blendc == b->blendc &&
            memcmp(a->rect, b->rect, sizeof(a->rect)) == 0 && memcmp(a->orig, b->orig, sizeof(a->orig)) == 0 &&
@@ -1278,7 +1278,7 @@ static void rnd_check(const RndState *st, uint32_t gsCtx, int textured) {
     if (!on || ctx < 0 || ctx > 1) { return; }
     want[0] = (st->fbp & 0x1FF) | (st->flags & RND_NO_COLOUR ? 0x00FFFFFFull << 32 : 0) | (st->flags & RND_NO_ALPHA ? 0xFF000000ull << 32 : 0);
     have[0] = gGs.frame[ctx] & 0xFFFFFFFF000001FFull;
-    want[1] = st->blend == RND_BLEND_NONE ? 0 : sRndAlpha[st->blend < 4 ? st->blend : 0] | (st->flags & RND_DEST_ALPHA ? 0x10 : 0);
+    want[1] = st->blend == RND_BLEND_NONE ? 0 : sRndAlpha[st->blend < 4 ? st->blend : 0] | (st->flags & RND_ONE ? 0x20 : st->flags & RND_DEST_ALPHA ? 0x10 : 0);
     have[1] = st->blend == RND_BLEND_NONE ? 0 : gGs.alpha[ctx] & 0xFF;
     for (k = 0; k < 2; k++) { /* (the same tests written two ways: no depth test, and an alpha test that always passes) */
         t = k ? gGs.test[ctx] : (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
@@ -1328,7 +1328,7 @@ static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, 
     r.clamp = st->flags & RND_REPEAT ? 0 : 5;
     r.scissor = (uint64_t)(uint16_t)st->scissor[0] | (uint64_t)(uint16_t)st->scissor[2] << 16 |
                 (uint64_t)(uint16_t)st->scissor[1] << 32 | (uint64_t)(uint16_t)st->scissor[3] << 48;
-    r.alpha = alpha | (st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by Ad instead of As) */
+    r.alpha = alpha | (st->flags & RND_ONE ? 0x20 | 0x80ull << 32 : st->flags & RND_DEST_ALPHA ? 0x10 : 0); /* (by 1, or by Ad, instead of As) */
     r.test = (st->atest != RND_ATEST_ALWAYS ? 1 | (uint64_t)sRndAtst[st->atest & 7] << 1 | (uint64_t)st->aref << 4 | (uint64_t)(st->afail & 3) << 12 : 0) |
              (st->mask != RND_MASK_NONE ? 1ull << 14 | (uint64_t)(st->mask == RND_IF_MARKED) << 15 : 0) |
              1ull << 16 | (uint64_t)(st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1) << 17;
@@ -1382,7 +1382,8 @@ static int rnd_draw_state(GsDraw *d, const RndState *st, GsTex g, uint64_t t0) {
         if (psm == 0x13 || psm == 0x14 || psm == 0x1B || psm == 0x24 || psm == 0x2C) { d->tint = gGsTint[(uint32_t)(t0 >> 42) & 511]; }
     }
     d->sampler = (st->flags & RND_SMOOTH ? 1 : 0) | (st->flags & RND_REPEAT ? 0 : 2 | 4);
-    d->pipeline = pipeline_key(b >= 4 ? 0 : 1u | (uint32_t)factor[b][0] << 1 | (uint32_t)factor[b][1] << 4 | (st->flags & RND_DEST_ALPHA ? 1u << 7 : 0),
+    d->pipeline = pipeline_key(b >= 4 ? 0 : 1u | (uint32_t)factor[b][0] << 1 | (uint32_t)factor[b][1] << 4 |
+                                                (st->flags & RND_ONE ? 2u << 7 : st->flags & RND_DEST_ALPHA ? 1u << 7 : 0),
                                st->ztest == RND_Z_GEQUAL ? 2 : st->ztest == RND_Z_GREATER ? 3 : 1, (st->flags & RND_ZWRITE) != 0, 0,
                                (st->flags & RND_NO_COLOUR ? 0 : GS_CC_R | GS_CC_G | GS_CC_B) | (st->flags & RND_NO_ALPHA ? 0 : GS_CC_A), 0);
     d->mode[0] = g != 0;
@@ -1393,6 +1394,8 @@ static int rnd_draw_state(GsDraw *d, const RndState *st, GsTex g, uint64_t t0) {
     d->misc[0] = (float)st->aref;
     d->misc[1] = st->mask == RND_IF_UNMARKED ? 1.0f : st->mask == RND_IF_MARKED ? 2.0f : 0.0f;
     d->misc[2] = st->flags & RND_MARK ? 1.0f : 0.0f;
+    d->blendc = 1.0f; /* (RND_ONE's constant factor) */
+    d->vurec = (st->flags & RND_VU) != 0;
     d->scissor[0] = st->scissor[0] * SCALE;
     d->scissor[1] = st->scissor[1] * SCALE;
     d->scissor[2] = (st->scissor[2] + 1) * SCALE - d->scissor[0];

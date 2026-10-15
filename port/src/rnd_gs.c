@@ -94,6 +94,12 @@ static int gs_write(uint32_t addr, uint64_t v, int taken) {
         uint32_t k = (uint32_t)(v >> 4) & 3;
         s->blend = b == 0x44 ? RND_BLEND_NORMAL : b == 0x48 ? RND_BLEND_ADD : b == 0x42 ? RND_BLEND_SUB : b == 0x49 ? RND_BLEND_DEST : RND_BLEND_NORMAL;
         s->flags = (uint16_t)(k == 1 ? s->flags | RND_DEST_ALPHA : s->flags & ~RND_DEST_ALPHA);
+        s->flags &= (uint16_t)~RND_ONE;
+        if (k == 2 && ((v >> 32) & 0xFF) == 0x80) { /* by 1: (Cs - Cd) * 1 + Cd is the source as it is (the fighters' lit draw) */
+            s->blend = b == 0x44 ? RND_BLEND_NONE : s->blend;
+            s->flags |= b == 0x44 ? 0 : RND_ONE;
+            k = 0;
+        }
         gRndCtxBad[c] = (b == 0x44 || b == 0x48 || b == 0x42 || b == 0x49) && k <= 1 ? gRndCtxBad[c] & ~RND_BAD_BLEND : gRndCtxBad[c] | RND_BAD_BLEND;
         return 1;
     }
@@ -418,8 +424,11 @@ int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
     if (!Port_TakesRecords() || gRndCtxBad[ctx] != 0) {
         return 0;
     }
-    p->st = gRndCtx[ctx];
-    p->st.flags = (uint16_t)((p->st.flags & ~RND_GOURAUD) | (gouraud ? RND_GOURAUD : 0));
+    {
+        uint16_t vu = (uint16_t)(p->st.flags & RND_VU);
+        p->st = gRndCtx[ctx];
+        p->st.flags = (uint16_t)((p->st.flags & ~(RND_GOURAUD | RND_VU)) | (gouraud ? RND_GOURAUD : 0) | vu);
+    }
     if (!abe) {
         p->st.blend = RND_BLEND_NONE;
     }

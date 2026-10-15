@@ -192,6 +192,7 @@ static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t 
             k++;
         }
         p.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+        p.st.flags = RND_VU;
         Rnd_Draw(&p, ctx, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
     }
 }
@@ -318,6 +319,7 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
         r.v[2] = fan[k];
         r.n = 3;
         r.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+        r.st.flags = RND_VU;
         Rnd_Draw(&r, ctx, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
     }
 }

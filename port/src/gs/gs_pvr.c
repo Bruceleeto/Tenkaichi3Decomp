@@ -667,7 +667,7 @@ static int draw_kept(const GsDraw *d, uint32_t n) {
        to 0 before them, and each layer sets bit 7 where it draws (FBA), so the test only keeps a second layer
        from blending over a pixel a first one has; without it overlapping grass is a little thicker. The 2D
        ones (a HUD bar's fill cut to length by a mask) are left out: the whole fill would show. */
-    if (d->misc[1] != 0.0f && !d->vu) { return 0; }
+    if (d->misc[1] != 0.0f && !d->vu && !d->vurec) { return 0; }
     return 1;
 }
 
