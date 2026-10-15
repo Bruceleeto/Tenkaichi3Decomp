@@ -109,7 +109,11 @@ $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 # again to convert them again
 HOSTCC ?= cc
 ASSETS := $(BUILD)/assets
-dc-assets: $(ASSETS)/tex.pak
+dc-assets: $(ASSETS)/tex.pak $(ASSETS)/ZS3USOP.mpg $(ASSETS)/ZS3USED.mpg
+# the movies as pl_mpeg plays them (port/tools/dc_movie.sh: MPEG-1, with ffmpeg)
+$(ASSETS)/%.mpg: gamedata/disc/DATA/%.PSS port/tools/dc_movie.sh
+	mkdir -p $(ASSETS)
+	port/tools/dc_movie.sh $< $@
 $(ASSETS)/tex.pak: port/tools/dc_tex.c Makefile.dc
 	mkdir -p $(ASSETS)
 	$(HOSTCC) -O2 -o $(BUILD)/dc_tex $<

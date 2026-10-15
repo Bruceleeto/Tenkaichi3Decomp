@@ -59,6 +59,7 @@ extern char gMovieTagFull[];
 #define D4_QWC HW_EE(0x1000B420)
 
 #ifdef PORT
+#include "port/rnd.h"
 #define UNCACHED(p) ((void *)(p)) /* no uncached mirror of memory on PC */
 #else
 #define UNCACHED(p) ((void *)(((u32)(p) & 0x0FFFFFFF) | 0x20000000))
@@ -256,6 +257,34 @@ void Movie_PlayEnding(void) {
 }
 
 /* The player's frame loop: decodes and shows one picture per frame until the stream ends or START skips it. */
+#ifdef PORT
+/* The picture as a record where the renderer has it in a texture of its own (Rnd_MovieOn: plat_movie.c filled it in
+   sceMpegGetPicture), instead of its upload into the frame buffer: the whole picture, first in the frame's list. */
+static void Movie_PortDraw(void) {
+    RndQuad r;
+    s32 i;
+
+    memset(&r, 0, sizeof(r));
+    /* into the buffer the picture's upload goes to (tags[0] at y 0, tags[1] at y 448, by the field): the one shown
+       next, not the one the list is drawing (the list is sent before the swap) */
+    Rnd_StateInit(&r.st, gGfx.field ? GFX_FBP_A : GFX_FBP_B);
+    r.st.blend = RND_BLEND_NONE;
+    r.st.ztest = RND_Z_ALWAYS;
+    r.st.flags = RND_SMOOTH;
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = (i & 1) ? 512.0f : 0.0f;
+        r.xy[i][1] = (i & 2) ? 448.0f : 0.0f;
+        r.uv[i][0] = (int16_t)((i & 1) ? 512 << 4 : 0);
+        r.uv[i][1] = (int16_t)((i & 2) ? 448 << 4 : 0);
+        r.rgba[i] = 0x80808080;
+    }
+    r.tex = RND_TEX_MOVIE;
+    if (!Port_Quad(&r)) {
+        Port_Lost("the movie's picture (the renderer takes no records)", 0, __builtin_return_address(0));
+    }
+}
+#endif
+
 void Movie_Run(void) {
     Movie *m;
     sceMpeg *mp;
@@ -294,9 +323,16 @@ void Movie_Run(void) {
             skip = 1;
         }
         sceMpegGetPicture(mp, m->rgb, MOVIE_MB_COUNT);
-        sceGsSyncPath(0, 0);
-        MovieTag_Send(gGfx.field ? m->tags[0] : m->tags[1]);
-        sceGsSyncPath(0, 0);
+#ifdef PORT
+        if (Rnd_MovieOn()) {
+            Movie_PortDraw();
+        } else
+#endif
+        {
+            sceGsSyncPath(0, 0);
+            MovieTag_Send(gGfx.field ? m->tags[0] : m->tags[1]);
+            sceGsSyncPath(0, 0);
+        }
         Dma_Flush();
         do {
             if (!(Timer_GetFrames(0) < MOVIE_FRAME_FIELDS)) {

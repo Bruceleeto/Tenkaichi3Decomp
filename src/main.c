@@ -152,6 +152,18 @@ void Game_Main(void) {
     FontIcon_Init();
     Fade_Init();
     PadWatch_Init();
+#ifdef PORT
+    {
+        extern int Port_TestMovie(void); /* port/src/plat_stages.c: BT3_TEST_MOVIE */
+        extern void Movie_PlayOpening(void);
+        extern void Movie_PlayEnding(void);
+        if (Port_TestMovie() == 1) {
+            Movie_PlayOpening();
+        } else if (Port_TestMovie() == 2) {
+            Movie_PlayEnding();
+        }
+    }
+#endif
     for (;;) {
         Overlay_Load(0);
         Progress_Main(0);

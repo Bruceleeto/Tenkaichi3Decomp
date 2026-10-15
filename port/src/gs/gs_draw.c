@@ -2030,6 +2030,15 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingsWrite();
 }
 
+/* include/port/rnd.h: 1 = the renderer draws the movie from a texture of its own (RND_TEX_MOVIE: the PVR's). */
+int Rnd_MovieOn(void) {
+#ifdef BT3_PVR
+    return sBackend == &sPvrBackend;
+#else
+    return 0;
+#endif
+}
+
 /* 1: the renderer tests the pixels' marks (RND_IF_UNMARKED / RND_IF_MARKED: the GS's destination alpha test). The
    PVR cannot: what is drawn by them is cut by the caller (src/battle/hud_c_c.c). */
 int Rnd_TestsMarks(void) {

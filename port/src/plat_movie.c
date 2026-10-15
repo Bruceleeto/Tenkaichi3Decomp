@@ -1,14 +1,18 @@
 /*
- * Movies on PC: Sony's libmpeg (sceMpeg*) as the game's movie player uses it (src/sys/movie.c).
+ * Movies: Sony's libmpeg (sceMpeg*) as the game's movie player uses it (src/sys/movie.c).
  *
  * On the PS2 the game reads the .PSS file itself, hands the bytes to the library to split off the video stream,
  * and asks for one decoded picture per frame. A picture comes back as 16 x 16 blocks of RGBA, columns first, which
  * the game uploads straight into the frame buffer. The sound is a separate ADX file (port/src/gs/snd_adx.c).
  *
- * Here the pictures come from the port's own decoder (plat_mpeg2.c: both movies are intra-only MPEG-2), reading
- * the movie file the game opened last (the path from plat_file.c): each sceMpegGetPicture decodes one picture and
- * rearranges it into the block order. The bytes the game feeds to sceMpegDemuxPss are ignored. Without a window a
- * movie ends at once, except when recorded input is played back (the movie has to take the same number of frames).
+ * Where the renderer has the movie in a texture of its own (Rnd_MovieOn: the PVR's, on the Dreamcast and the PC's
+ * simulation of it), the pictures come from pl_mpeg (port/third_party/pl_mpeg) reading the movie converted to MPEG-1
+ * (port/tools/dc_movie.sh, `make -f Makefile.dc dc-assets`: NAME.mpg beside tex.pak): each sceMpegGetPicture decodes
+ * one into that texture, and the game draws it as a record (Movie_Run). Elsewhere they come from the port's own
+ * decoder (plat_mpeg2.c: both movies are intra-only MPEG-2) reading the PSS file, each rearranged into the block order
+ * the game uploads. Either way the movie file is the one the game opened last (the path from plat_file.c) and the
+ * bytes the game feeds to sceMpegDemuxPss are ignored. Without a window a movie ends at once, except when recorded
+ * input is played back (the movie has to take the same number of frames).
  */
 extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 #include <stdint.h>
@@ -18,6 +22,35 @@ extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 
 #define MOVIE_W 512
 #define MOVIE_H 448
+
+#define PL_MPEG_IMPLEMENTATION
+#ifdef __DREAMCAST__
+#include <kos.h>
+#include <malloc.h>
+/* the hooks the Dreamcast's pl_mpeg takes from its player (Quake2-main's client/mpeg.h) */
+#define MPEG_MALLOC(sz) malloc(sz)
+#define MPEG_FREE(p) free(p)
+#define MPEG_REALLOC(p, sz) realloc((p), (sz))
+#define MPEG_MEMALIGN(a, sz) memalign((a), (sz))
+#define MPEG_MEMZERO(p, sz) memset((p), 0, (sz))
+#define MPEG_FILE_TYPE file_t
+#define MPEG_FILE_INVALID_HANDLE FILEHND_INVALID
+#define MPEG_FILE_OPEN(fn) fs_open((fn), O_RDONLY)
+#define MPEG_FILE_CLOSE(fh) fs_close((fh))
+#define MPEG_FILE_SEEK(fh, off, st) fs_seek((fh), (off), (st))
+#define MPEG_FILE_READ(fh, buf, size) fs_read((fh), (buf), (size))
+#define MPEG_FILE_TELL(fh) fs_tell((fh))
+#include "../third_party/pl_mpeg/pl_mpeg_dc.h"
+#define MOVIE_DIR "/cd/"
+extern void GsPvr_MovieMacroblocks(const uint32_t *mb, int w, int h);
+#else
+#include "../third_party/pl_mpeg/pl_mpeg.h"
+#define MOVIE_DIR "port/build/dc/assets/"
+extern void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t *pcr, int w, int h, int ys, int cs);
+#endif
+extern int GsPvr_MovieBegin(void); /* gs/gs_pvr.c: the movie's texture */
+extern void GsPvr_MovieEnd(void);
+extern int Rnd_MovieOn(void);      /* gs/gs_draw.c */
 
 extern char gPortMoviePath[512];
 extern int GsGpu_Enabled(void);
@@ -30,10 +63,18 @@ extern int Mpeg2_Height(const Mpeg2 *m);
 extern void Mpeg2_Close(Mpeg2 *m);
 
 static Mpeg2 *sMovie;
+static plm_t *sPlm;
 static int sStarted, sEnd;
+#ifndef __DREAMCAST__
 static uint8_t sFrame[MOVIE_W * MOVIE_H * 4];
+#endif
 
 static void movie_close(void) {
+    if (sPlm != NULL) {
+        plm_destroy(sPlm);
+        sPlm = NULL;
+        GsPvr_MovieEnd();
+    }
     if (sMovie != NULL) {
         Mpeg2_Close(sMovie);
         sMovie = NULL;
@@ -49,8 +90,32 @@ static void movie_start(void) {
     if ((!GsGpu_Enabled() && getenv("BT3_PAD_PLAY") == NULL) || gPortMoviePath[0] == '\0' || getenv("BT3_NOMOVIE") != NULL || Port_NetSession()) {
         return;
     }
+    if (Rnd_MovieOn()) { /* NAME.mpg in MOVIE_DIR for the disc's NAME.PSS */
+        char path[600];
+        const char *name = strrchr(gPortMoviePath, '/') != NULL ? strrchr(gPortMoviePath, '/') + 1 : gPortMoviePath;
+        size_t n = strcspn(name, ".");
+        snprintf(path, sizeof(path), "%s%.*s.mpg", MOVIE_DIR, (int)n, name);
+        sPlm = plm_create_with_filename(path);
+        if (sPlm == NULL || !plm_has_headers(sPlm) || plm_get_width(sPlm) > 512 || plm_get_height(sPlm) > 512 || !GsPvr_MovieBegin()) {
+            fprintf(stderr, "bt3: ERROR: the movie %s is not played: %s\n", path,
+                    sPlm == NULL ? "not there (make -f Makefile.dc dc-assets converts the disc's)" :
+                    !plm_has_headers(sPlm) ? "not an MPEG-1 program stream" : plm_get_width(sPlm) > 512 || plm_get_height(sPlm) > 512 ?
+                    "larger than 512 x 512" : "no PVR memory for its texture");
+            if (sPlm != NULL) {
+                plm_destroy(sPlm);
+                sPlm = NULL;
+            }
+            return;
+        }
+        plm_set_audio_enabled(sPlm, 0); /* (its sound is the game's ADX) */
+        fprintf(stderr, "bt3: movie %s: %d x %d\n", path, plm_get_width(sPlm), plm_get_height(sPlm));
+        sEnd = 0;
+        return;
+    }
+#ifndef __DREAMCAST__
     sMovie = Mpeg2_Open(gPortMoviePath);
     sEnd = sMovie == NULL;
+#endif
 }
 
 int sceMpegInit(void) { return 0; }
@@ -73,12 +138,33 @@ int sceMpegIsEnd(void *mp) {
    chain expects); alpha 0x80. */
 int sceMpegGetPicture(void *mp, void *rgb, int blocks) {
     uint8_t *out = rgb;
+#ifndef __DREAMCAST__
     int cols = MOVIE_W / 16, rows = MOVIE_H / 16, i, j, y, x;
+#endif
 
     (void)mp;
     if (!sStarted) {
         movie_start();
     }
+    if (sPlm != NULL) { /* into the renderer's texture */
+        plm_frame_t *f = sEnd ? NULL : plm_decode_video(sPlm);
+        if (f == NULL) {
+            sEnd = 1;
+            return -1;
+        }
+#ifdef __DREAMCAST__
+        GsPvr_MovieMacroblocks(f->display, (int)f->width, (int)f->height);
+#else
+        GsPvr_MovieYuv(f->y.data, f->cb.data, f->cr.data, (int)f->width, (int)f->height, (int)f->y.width, (int)f->cb.width);
+#endif
+        return 0;
+    }
+#ifdef __DREAMCAST__
+    (void)out;
+    (void)blocks;
+    sEnd = 1;
+    return -1;
+#else
     if (sMovie == NULL || !Mpeg2_Next(sMovie, sFrame) || Mpeg2_Width(sMovie) != MOVIE_W || Mpeg2_Height(sMovie) != MOVIE_H) {
         sEnd = 1;
         return -1;
@@ -98,4 +184,5 @@ int sceMpegGetPicture(void *mp, void *rgb, int blocks) {
         }
     }
     return 0;
+#endif
 }

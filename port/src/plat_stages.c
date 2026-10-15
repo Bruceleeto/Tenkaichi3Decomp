@@ -256,6 +256,13 @@ int Port_TestScreen(void) {
     return e != NULL ? (int)strtol(e, NULL, 0) : -1;
 }
 
+/* BT3_TEST_MOVIE=op / ed: the opening or ending movie played at once at start, before the logos (Game_Main): the
+   movie player looked at without waiting for it. 0 = none, 1 the opening, 2 the ending. */
+int Port_TestMovie(void) {
+    const char *e = getenv("BT3_TEST_MOVIE");
+    return e == NULL ? 0 : (e[0] == 'e' || e[0] == 'E') ? 2 : 1;
+}
+
 /* BT3_TEST_DEMO_HUD=1: the attract demo's battle draws the whole HUD (gauges, timer), as a fight does: the HUD
    looked at without going through the menus. */
 int Port_TestDemoHud(void) {

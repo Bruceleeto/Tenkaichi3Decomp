@@ -36,6 +36,7 @@
 #ifndef __DREAMCAST__
 #include "pvr_host.h" /* gpu_pvr: the window the picture is shown in */
 #else
+#include <dc/sq.h> /* the movie's macroblocks to the YUV converter */
 static uint32_t sFbCfg2; /* the pixel format the PVR writes, as vid_set_mode left it (the screen's RGB565) */
 #endif
 
@@ -1884,10 +1885,96 @@ static int pal_still_at(uint32_t pi, uint32_t cbp) {
     return 0;
 }
 
+/* ---- the movie (port/src/plat_movie.c): its pictures in a YUV422 texture of their own, RND_TEX_MOVIE ----
+   Not twiddled, MOVIE_TW x MOVIE_TH (the picture at its top left). The PC writes its texels from the decoder's
+   planes; the Dreamcast hands the decoder's macroblocks to the PVR's YUV converter, which writes them. */
+#define MOVIE_TW 512
+#define MOVIE_TH 512
+static PvrTex sMovie;
+
+int GsPvr_MovieBegin(void) {
+    if (sMovie.mem == NULL) {
+        sMovie.mem = pvr_alloc(MOVIE_TW * MOVIE_TH * 2, "the movie", 0);
+        if (sMovie.mem == NULL) { return 0; }
+    }
+    sMovie.w = sMovie.pw = MOVIE_TW;
+    sMovie.h = sMovie.ph = MOVIE_TH;
+    sMovie.format = GS_TEXFMT_RGBA8;
+    sMovie.fmt = PVR_TXRFMT_YUV422 | PVR_TXRFMT_NONTWIDDLED;
+    sMovie.base = sMovie.mem;
+    sMovie.bytes = MOVIE_TW * MOVIE_TH * 2;
+#ifdef __DREAMCAST__
+    PVR_SET(PVR_YUV_ADDR, (uint32_t)sMovie.mem & 0xFFFFFF);
+    PVR_SET(PVR_YUV_CFG, ((MOVIE_TH / 16 - 1) << 8) | (MOVIE_TW / 16 - 1));
+    PVR_GET(PVR_YUV_CFG);
+    sq_set(sMovie.mem, 0, MOVIE_TW * MOVIE_TH * 2); /* (black) */
+#else
+    {
+        static uint32_t black[MOVIE_TW / 2];
+        int y;
+        for (y = 0; y < MOVIE_TW / 2; y++) { black[y] = 0x10801080u; } /* (Y 16, U V 128) */
+        for (y = 0; y < MOVIE_TH; y++) { pvr_txr_load(black, (uint8_t *)sMovie.mem + y * MOVIE_TW * 2, MOVIE_TW * 2); }
+    }
+#endif
+    return 1;
+}
+
+void GsPvr_MovieEnd(void) {
+    if (sMovie.mem != NULL) {
+        pvr_mem_free(sMovie.mem);
+        sMovie.mem = sMovie.base = NULL;
+    }
+}
+
+#ifdef __DREAMCAST__
+/* A picture of w x h (multiples of 16, at most the texture's) as the decoder keeps it for the converter: its
+   macroblocks of 384 bytes, rows first. Each row padded to the texture's width. */
+void GsPvr_MovieMacroblocks(const uint32_t *mb, int w, int h) {
+    int bw = w >> 4, bh = h >> 4, x, y, i;
+    uint32_t *d;
+
+    if (sMovie.mem == NULL) { return; }
+    PVR_SET(PVR_YUV_CFG, ((MOVIE_TH / 16 - 1) << 8) | (MOVIE_TW / 16 - 1)); /* (again each picture, as Quake2-main does
+                                                                              for Flycast) */
+    d = SQ_MASK_DEST((void *)PVR_TA_YUV_CONV);
+    sq_lock((void *)PVR_TA_YUV_CONV);
+    for (y = 0; y < bh; y++) {
+        for (x = 0; x < bw; x++, mb += 96) { sq_fast_cpy(d, mb, 384 / 32); }
+        for (i = 0; i < (MOVIE_TW / 16 - bw) * (384 / 32); i++) { sq_flush(d); }
+    }
+    sq_unlock();
+}
+#else
+/* A picture of w x h from the decoder's planes (Y w x h, Cb and Cr half as wide and high), their rows ys / cs bytes
+   apart: each two pixels one word of the PVR's YUV422, U Y0 V Y1. */
+void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t *pcr, int w, int h, int ys, int cs) {
+    static uint32_t row[MOVIE_TW / 2];
+    int x, y;
+
+    if (sMovie.mem == NULL) { return; }
+    w = w < MOVIE_TW ? w : MOVIE_TW;
+    h = h < MOVIE_TH ? h : MOVIE_TH;
+    for (y = 0; y < h; y++) {
+        const uint8_t *l = py + y * ys, *u = pcb + (y >> 1) * cs, *v = pcr + (y >> 1) * cs;
+        for (x = 0; x + 1 < w; x += 2) {
+            row[x >> 1] = (uint32_t)u[x >> 1] | (uint32_t)l[x] << 8 | (uint32_t)v[x >> 1] << 16 | (uint32_t)l[x + 1] << 24;
+        }
+        pvr_txr_load(row, (uint8_t *)sMovie.mem + y * MOVIE_TW * 2, (uint32_t)(w & ~1) * 2);
+    }
+}
+#endif
+
 static GsTex tex_handle(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
     uint32_t ti = tex & 0xFFFF, pi = pal & 0xFFFF, psm, w, h;
     NatTex *n;
     const NatPal *p = NULL;
+
+    if (tex == RND_TEX_MOVIE) { /* (the movie's picture) */
+        if (sMovie.mem == NULL) { return 0; }
+        *tw = MOVIE_TW;
+        *th = MOVIE_TH;
+        return (GsTex)&sMovie;
+    }
 
     if (ti == 0 || ti > MAX_NAT || sNat[ti - 1].e == 0 || sNat[ti - 1].none || sNat[ti - 1].gen != tex >> 16) { return 0; }
     n = &sNat[ti - 1];
