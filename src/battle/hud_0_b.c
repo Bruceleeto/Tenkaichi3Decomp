@@ -1,4 +1,5 @@
 #include "common.h"
+#include "sys/dma.h"
 #include "battle/hud_0.h"
 #include "sys/pad.h"
 #include "sys/heap.h"
@@ -83,9 +84,11 @@ void BtlMenu_BeginDraw(u64 **pkt) {
     *pkt += 2;
     (*pkt)[0] = 0;
     (*pkt)[1] = 0x47;
+    PORT_AD((*pkt), 0);
     *pkt += 2;
     (*pkt)[0] = 0x1310000E0;
     (*pkt)[1] = 0x4E;
+    PORT_AD((*pkt), 0);
     *pkt += 2;
 #ifdef PORT
     Rnd_SetTest(0, RND_Z_ALWAYS, RND_ATEST_ALWAYS, 0, 0, RND_MASK_NONE); /* TEST_1 0 */
