@@ -107,12 +107,25 @@ static int adx_blanks(const char *path) {
 /* How long a stream of the ORIGINAL disc lasts, by its place in the data (plat_adxlen_tab.h); 0 when the table does
    not know the file. */
 #include "../plat_adxlen_tab.h"
+static int adx_len(int fid) {
+    int lo = 0, hi = ADXLEN_WIDE - 1, mid;
+    if (kAdxLen8[fid] != 0) {
+        return kAdxLen8[fid];
+    }
+    while (lo <= hi) { /* (the ones that do not fit a byte, by file number) */
+        mid = (lo + hi) / 2;
+        if (kAdxLenWide[mid].fid == fid) { return kAdxLenWide[mid].blanks; }
+        if (kAdxLenWide[mid].fid < fid) { lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return 0;
+}
+
 static int disc_blanks(const char *path) {
     const char *at = strstr(path, "pzs3us2/"), *name;
     int fid, i;
 
     if (at != NULL && sscanf(at + 8, "%d.bin", &fid) == 1 && strchr(at + 8, '/') == NULL) {
-        return fid >= 0 && fid < ADXLEN_COUNT ? kAdxLen[fid] : 0;
+        return fid >= 0 && fid < ADXLEN_COUNT ? adx_len(fid) : 0;
     }
     name = strrchr(path, '/');
     name = name != NULL ? name + 1 : path;

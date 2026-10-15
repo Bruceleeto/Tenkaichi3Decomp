@@ -27,7 +27,17 @@
 #include "../../../include/port/rnd.h" /* quads the game hands over (GsGpu_Quad) */
 static void lists_full(const void *from);
 static int lists_room(uint32_t verts, uint32_t draws, const void *from);
+#if defined(__DREAMCAST__) && defined(BT3_NO_RTT)
+/* The Dreamcast without its renders to textures (gs_draw.h): the lists hold a part of a frame, drawn as they fill,
+   and the in-between pictures need the whole of it. None, then: a constant 0 here, so that their code and tables
+   are left out of the program (gsInterp stays for port/src/plat_stub.c, always 0). */
+int gsInterp;
+#define GS_INTERP 0
+#define GS_INTERP_NONE
+#else
 extern int gsInterp;
+#define GS_INTERP gsInterp
+#endif
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -864,7 +874,7 @@ static int lists_room(uint32_t verts, uint32_t draws, const void *from) {
     if (gsVertCount + verts <= capV && gsDrawCount + draws <= capD) {
         return 1;
     }
-    if (sBackend != NULL && sBackend->spill != NULL && gsInterp <= 0 && sBackend->spill()) {
+    if (sBackend != NULL && sBackend->spill != NULL && GS_INTERP <= 0 && sBackend->spill()) {
         gsVertCount = 0;
         gsDrawCount = 0;
         return 1;
@@ -907,7 +917,6 @@ static WallMesh *sWallRing; /* WALL_RING of them (interp_alloc) */
 static uint32_t sWallSeq; /* patches handed over so far */
 static uint64_t sWallTex0; /* TEX0 of the wall's texture: the triangles drawn with it are the wall's */
 static float sWallUs = 1.0f, sWallVs = 1.0f;
-extern int gsInterp;
 
 /* From the game (src/battle/eft_g.c, EftBound_DrawMesh / EftBound_DrawMeshCulled), each time it draws a wall mesh:
    the 24 points before anything is cut off, the quads, the view's matrix. */
@@ -916,7 +925,7 @@ void Port_WallMesh(const void *key, int second, int culled, const float *screen,
     WallMesh *m;
     int i;
 
-    if (GS_NO_PICTURE || gsInterp <= 0 || sWallRing == NULL || quadCount <= 0 || quadCount > 15) {
+    if (GS_NO_PICTURE || GS_INTERP <= 0 || sWallRing == NULL || quadCount <= 0 || quadCount > 15) {
         return;
     }
     if (getenv("BT3_INTERP_WALLLOG") != NULL && atoi(getenv("BT3_INTERP_WALLLOG")) > 2) {
@@ -2166,7 +2175,9 @@ int GsGpu_Init(void) {
  * of n - 1 at the same place in the list if it is the same kind of draw (signature below); a pair whose model
  * would jump far on screen (a camera cut, a teleport) is not blended, and when most are like that no in-between
  * picture is shown at all. */
+#ifndef GS_INTERP_NONE
 int gsInterp = -1;
+#endif
 /* (the per-block arrays: MAX_VU_UNIFORMS each, taken when the in-between pictures are first switched on, interp_alloc) */
 static uint32_t *sInterpBlkView, *sInterpPrevBlkView; /* the view each block is drawn in (a number made of its draws' scissor rectangle) */
 static float (*sInterpPrevRep)[3];
@@ -4372,7 +4383,7 @@ static void interp_present_log(char kind) {
 /* How many pictures a tick is shown as: 1 = the game's own (30 a second), 2 = one in-between picture (60), 4 = three
    (120), 8 = seven (240). The setting "interp" is 0..3. */
 static int interp_steps(void) {
-    return gsInterp <= 0 ? 1 : gsInterp == 1 ? 2 : gsInterp == 2 ? 4 : 8;
+    return GS_INTERP <= 0 ? 1 : GS_INTERP == 1 ? 2 : GS_INTERP == 2 ? 4 : 8;
 }
 
 static void interp_counts_restore(void) {
@@ -4488,6 +4499,10 @@ static void interp_show(int step) {
    the pictures that fall before the blank) and after (those at it).
    all = 1: the game is back with a new tick: what is left is dropped, except the tick's real picture. */
 void GsGpu_InterpPump(int ahead_ms, int all) {
+#ifdef GS_INTERP_NONE
+    (void)ahead_ms; (void)all;
+    return; /* (none: the tick's one picture was shown at its end) */
+#endif
     if (sInterpNext == 0 || sBackend == NULL) {
         return;
     }
@@ -4644,13 +4659,15 @@ void GsGpu_FrameEnd(void) {
                 sInterpNext = 0;
             }
         }
-        if (gsInterp < 0) {
+#ifndef GS_INTERP_NONE
+        if (GS_INTERP < 0) {
             gsInterp = getenv("BT3_INTERP") != NULL ? atoi(getenv("BT3_INTERP")) : Port_Setting("interp", 0);
             gsInterp = gsInterp < 0 ? 0 : gsInterp > 3 ? 3 : gsInterp;
         }
-        if (gsInterp > 0 && !interp_alloc()) { /* (the first tick with them on: their memory) */
+        if (GS_INTERP > 0 && !interp_alloc()) { /* (the first tick with them on: their memory) */
             gsInterp = 0;
         }
+#endif
         {
             /* A scene the game shows at 60 a second (one vertical blank per picture: menus, the character select) has
                half the time per tick and needs half the pictures: none at "60", one at "120". How many blanks this
@@ -4662,11 +4679,11 @@ void GsGpu_FrameEnd(void) {
             sInterpSteps = (interp_steps() < sInterpCap ? interp_steps() : sInterpCap) * (int)blanks / 2;
             sInterpTickNs = (uint64_t)blanks * Port_BlankNs();
         }
-        if (gsInterp > 0) {
+        if (GS_INTERP > 0) {
             interp_signatures(sInterpSig);
             sInterpPrimCount = interp_prims(sInterpPrims);
         }
-        if (gsInterp > 0 && sInterpSteps > 1 && interp_build(getenv("BT3_INTERP_T") != NULL ? (float)atof(getenv("BT3_INTERP_T")) : 1.0f / (float)sInterpSteps, 1)) {
+        if (GS_INTERP > 0 && sInterpSteps > 1 && interp_build(getenv("BT3_INTERP_T") != NULL ? (float)atof(getenv("BT3_INTERP_T")) : 1.0f / (float)sInterpSteps, 1)) {
             uint64_t before;
 
             sInterpSaved.verts = gsVertCount;
@@ -4702,7 +4719,7 @@ void GsGpu_FrameEnd(void) {
             }
         } else {
             uint64_t t1;
-            if (gsInterp > 0) {
+            if (GS_INTERP > 0) {
                 interp_remember();
                 gInterpSkipped++;
             }
