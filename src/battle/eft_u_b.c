@@ -1003,6 +1003,7 @@ void EftPtcl_DrawAxisQuads(EftPtclWork *w, EftPtclWork *w2) {
                     }
                     rgba = (u8)col.x | (u8)col.y << 8 | (u8)col.z << 16 | (u32)(u8)col.w << 24;
                     Ot_RecTex0(pkt, w->tex0);
+                    EftVram_PortRecTex(pkt, w->tex0);
                     for (i = 0; i < 4; i++) {
                         Ot_RecVtx(pkt, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, st[i].x, st[i].y, st[i].z, rgba);
                     }
