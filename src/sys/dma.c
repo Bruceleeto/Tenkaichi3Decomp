@@ -187,9 +187,11 @@ void Dma_ReclaimBufferTails(void) {
 
 /* Enables the DMA controller, sets the channel condition/interrupt mask and clears the status. */
 void Dma_InitController(void) {
+#ifndef PORT /* (no controller: sys/dma.h) */
     *D_CTRL = 1;
     *D_PCR = 0x83FF0002;
     *D_STAT = 0;
+#endif
 }
 
 /* Spins until the DMA condition flag (CPCOND0: the channels selected in D_PCR have finished) is set. */
@@ -220,6 +222,9 @@ void Dma_WaitVu1(void) {
 
 /* Starts a source-chain transfer of `chain` on DMA channel 1 (VIF1) once VIF1, VU1 and the GIF path are idle. */
 void Dma_SendVif1(u32 chain) {
+#ifdef PORT
+    Port_GsVif1Chain(DMA_PHYS(chain), 1);
+#else
     if (gDmaVif1Started) {
         Dma_WaitCond();
         gDmaVif1Started = 1;
@@ -234,10 +239,14 @@ void Dma_SendVif1(u32 chain) {
     *D_STAT = 2;
     FlushCache(0);
     *D1_CHCR = 0x145;
+#endif
 }
 
 /* Like Dma_SendVif1, but always waits for the previous transfer first and for this one to finish. */
 void Dma_SendVif1Sync(u32 chain) {
+#ifdef PORT
+    Port_GsVif1Chain(DMA_PHYS(chain), 1);
+#else
     Dma_WaitCond();
     while (*VIF1_STAT & 0x1F000003) {
     }
@@ -255,10 +264,14 @@ void Dma_SendVif1Sync(u32 chain) {
     Dma_WaitVu1();
     while (*GIF_STAT & 0xC00) {
     }
+#endif
 }
 
 /* Starts a VIF1 chain transfer of a list that lives in the scratchpad (address bit 31 set). */
 void Dma_SendVif1Spr(u32 chain) {
+#ifdef PORT
+    Port_GsVif1Chain(chain | 0x80000000, 1);
+#else
     Dma_WaitCond();
     while (*VIF1_STAT & 0x1F000003) {
     }
@@ -270,10 +283,14 @@ void Dma_SendVif1Spr(u32 chain) {
     *D_STAT = 2;
     FlushCache(0);
     *D1_CHCR = 0x145;
+#endif
 }
 
 /* Dma_SendVif1Spr, then waits for the transfer to finish. */
 void Dma_SendVif1SprSync(u32 chain) {
+#ifdef PORT
+    Port_GsVif1Chain(chain | 0x80000000, 1);
+#else
     Dma_WaitCond();
     while (*VIF1_STAT & 0x1F000003) {
     }
@@ -291,10 +308,14 @@ void Dma_SendVif1SprSync(u32 chain) {
     Dma_WaitVu1();
     while (*GIF_STAT & 0xC00) {
     }
+#endif
 }
 
 /* Starts a source-chain transfer of `chain` on DMA channel 2 (GIF) once the channel and the GIF path are idle. */
 void Dma_SendGifChain(u32 chain) {
+#ifdef PORT
+    Port_GsGifChannel(DMA_PHYS(chain), 0, 1);
+#else
     do {
         while (*D2_CHCR & 0x100) {
         }
@@ -304,10 +325,14 @@ void Dma_SendGifChain(u32 chain) {
     *D_STAT = 4;
     FlushCache(0);
     *D2_CHCR = 0x145;
+#endif
 }
 
 /* Dma_SendGifChain, then waits for the transfer to finish. */
 void Dma_SendGifChainSync(u32 chain) {
+#ifdef PORT
+    Port_GsGifChannel(DMA_PHYS(chain), 0, 1);
+#else
     do {
         while (*D2_CHCR & 0x100) {
         }
@@ -321,10 +346,14 @@ void Dma_SendGifChainSync(u32 chain) {
         while (*D2_CHCR & 0x100) {
         }
     } while (*GIF_STAT & 0xC00);
+#endif
 }
 
 /* Starts a plain (normal mode) transfer of `qwc` quadwords at `addr` on the GIF channel. */
 void Dma_SendGifNoWait(u32 addr, u32 qwc) {
+#ifdef PORT
+    Port_GsGifChannel(DMA_PHYS(addr), qwc, 0);
+#else
     do {
         while (*D2_CHCR & 0x100) {
         }
@@ -333,10 +362,14 @@ void Dma_SendGifNoWait(u32 addr, u32 qwc) {
     *D2_MADR = DMA_PHYS(addr);
     FlushCache(0);
     *D2_CHCR = 0x101;
+#endif
 }
 
 /* Sends `qwc` quadwords at `addr` on the GIF channel and waits for the transfer to finish. */
 void Dma_SendGif(u32 addr, u32 qwc) {
+#ifdef PORT
+    Port_GsGifChannel(DMA_PHYS(addr), qwc, 0);
+#else
     do {
         while (*D2_CHCR & 0x100) {
         }
@@ -349,14 +382,19 @@ void Dma_SendGif(u32 addr, u32 qwc) {
         while (*D2_CHCR & 0x100) {
         }
     } while (*GIF_STAT & 0xC00);
+#endif
 }
 
 /* Waits until the GIF channel and the GIF path are idle. */
 void Dma_WaitGif(void) {
+#ifdef PORT
+    /* (done when the call returned) */
+#else
     do {
         while (*D2_CHCR & 0x100) {
         }
     } while (*GIF_STAT & 0xC00);
+#endif
 }
 
 /* Copies `size` bytes at `data` to IOP memory at `iopAddr` over SIF DMA and waits for completion. */

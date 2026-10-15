@@ -6,9 +6,18 @@
 
 /* EE hardware timers 0 and 1 used as a stopwatch, src/sys/timer.c = 0x11F190..0x11F548. */
 
+#ifdef PORT
+/* No hardware timer: the registers as numbers of their own, which keep what was written (the count does not run,
+   as it did not when they were plain memory at the PS2 offsets). */
+extern volatile u32 gTimerRegs[2][3];
+#define TIMER_COUNT(ch) (gTimerRegs[ch][0])
+#define TIMER_MODE(ch) (gTimerRegs[ch][1])
+#define TIMER_COMP(ch) (gTimerRegs[ch][2])
+#else
 #define TIMER_COUNT(ch) (*HW_EE(0x10000000 + (ch) * 0x800)) /* Tn_COUNT */
 #define TIMER_MODE(ch) (*HW_EE(0x10000010 + (ch) * 0x800))  /* Tn_MODE */
 #define TIMER_COMP(ch) (*HW_EE(0x10000020 + (ch) * 0x800))  /* Tn_COMP */
+#endif
 
 /* Tn_MODE bits */
 #define TIMER_MODE_CLK_HBLANK 0x003 /* count horizontal blanks */

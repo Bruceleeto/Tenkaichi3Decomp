@@ -70,8 +70,6 @@ typedef unsigned int u128 __attribute__((mode(TI)));
 #define GS_SET_UV(u, v) ((u64)(u) | ((u64)(v) << 16))
 #define GS_PSMZ24 0x31
 
-/* EE hardware registers. */
-extern volatile u32 *Port_DmaChcr(s32 channel);
 /* What goes into a DMA address register: the physical address on the PS2 (28 bits); on PC the pointer itself
    (a PC stack or global address does not fit in 28 bits). */
 #ifdef PORT
@@ -79,18 +77,26 @@ extern volatile u32 *Port_DmaChcr(s32 channel);
 #else
 #define DMA_PHYS(a) ((a) & 0x0FFFFFFF)
 #endif
+#ifdef PORT
+/* A transfer is a call (port/src/gs/gs_walk.c): the frame's list on VIF1 (a source chain at `tadr`, tte its tags'
+   transfer), GIF data (`qwc` quadwords at `addr`, or a source chain at it). Done when they return. */
+void Port_GsVif1Chain(u32 tadr, s32 tte);
+void Port_GsGifChannel(u32 addr, u32 qwc, s32 chain);
+#else
+/* EE hardware registers. */
 #define VIF1_STAT HW_EE(0x10003C00)
 #define GIF_STAT HW_EE(0x10003020)
-#define D1_CHCR Port_DmaChcr(1) /* every access first completes a transfer that was started (port/src/plat_gs.c) */
+#define D1_CHCR HW_EE(0x10009000)
 #define D1_QWC HW_EE(0x10009020)
 #define D1_TADR HW_EE(0x10009030)
-#define D2_CHCR Port_DmaChcr(2)
+#define D2_CHCR HW_EE(0x1000A000)
 #define D2_MADR HW_EE(0x1000A010)
 #define D2_QWC HW_EE(0x1000A020)
 #define D2_TADR HW_EE(0x1000A030)
 #define D_CTRL HW_EE(0x1000E000)
 #define D_STAT HW_EE(0x1000E010)
 #define D_PCR HW_EE(0x1000E020)
+#endif
 
 /* One quadword of GS packet data seen as a whole, as two doublewords or as four words. */
 typedef union GsQword {

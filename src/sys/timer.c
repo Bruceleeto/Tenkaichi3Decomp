@@ -11,6 +11,9 @@
  */
 
 extern u32 gTimerLines[2];
+#ifdef PORT
+volatile u32 gTimerRegs[2][3];
+#endif
 
 /* Writes Tn_MODE: op '=' stores the value, '&' masks with it, '|' sets its bits. */
 void Timer_SetMode(s32 ch, u32 value, u8 op) {

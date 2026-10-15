@@ -7,7 +7,7 @@
  *                           0x1EFB000 minus the end of the menu overlay); Port_Malloc returns the address the
  *                           PS2's malloc returns (0x3BE730, read from a save state), so heap pointers have the
  *                           same values as on the console and memory can be compared with an emulator dump.
- * The hardware registers are not mapped at their PS2 addresses: they are arrays (include/sys/hwreg.h).
+ * The hardware registers are not mapped at all: the port has none (include/sys/hwreg.h).
  */
 #include "port_host.h"
 #include "port_addr.h"

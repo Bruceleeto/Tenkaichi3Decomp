@@ -54,9 +54,11 @@ extern char gMovieTagIdle[];
 extern char gMovieTagNoData[];
 extern char gMovieTagFull[];
 
-#define D4_CHCR Port_DmaChcr(4)
+#ifndef PORT /* (the port's decoder reads the movie file itself: port/src/plat_movie.c) */
+#define D4_CHCR HW_EE(0x1000B400)
 #define D4_MADR HW_EE(0x1000B410)
 #define D4_QWC HW_EE(0x1000B420)
+#endif
 
 #ifdef PORT
 #include "port/rnd.h"
@@ -163,12 +165,12 @@ void MovieTag_SetTrxDir(u32 *p, s32 dir) {
 /* Starts an upload chain on the GIF DMA channel without waiting for it. */
 void MovieTag_Send(u32 *tags) {
 #ifdef PORT
-    *D2_TADR = (u32)tags;
+    Port_GsGifChannel((u32)tags, 0, 1);
 #else
     *D2_TADR = (u32)tags & 0x0FFFFFFF;
-#endif
     *D2_QWC = 0;
     *D2_CHCR = 0x105;
+#endif
 }
 
 /* Initialises libmpeg; called once at boot. */
@@ -426,9 +428,11 @@ s32 Movie_CbNoData(sceMpeg *mp, void *cbData, void *data) {
         size = limit - start;
         end = start + size;
     }
+#ifndef PORT
     *D4_QWC = size / 16;
     *D4_MADR = (u32)start;
     *D4_CHCR = 0x101;
+#endif
     gMovieEsDmaEnd = end;
     if (!(gMovieEsDmaEnd < limit)) {
         gMovieEsDmaEnd -= gMovieEsSize;

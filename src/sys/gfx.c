@@ -135,12 +135,16 @@ void Gfx_SetDisplayRegs(s32 field, s32 blend) {
     u64 display2 = dx | ((u64)(dy + 0x32) << 12) | size;
     u64 display1 = dx | ((u64)(dy + 0x33) << 12) | size;
 
+#ifdef PORT /* (no display registers: the renderer shows the buffer the swap names, sys/hwreg.h) */
+    (void)odd; (void)display1; (void)display2;
+#else
     *GS_PMODE = (blend & 1) ? 0x7F23 : 0xFF23;
     *GS_DISPFB2 = !odd ? GFX_DISPFB_B : GFX_DISPFB_A;
     *GS_DISPLAY2 = display2;
     *GS_DISPFB1 = !odd ? GFX_DISPFB_B : GFX_DISPFB_A;
     *GS_DISPLAY1 = display1;
     *GS_EXTWRITE = 0;
+#endif
 }
 
 /* Resets the GS and the VIF/GIF paths, clears both frame buffers and sets up gGfx. Called once at boot. */
