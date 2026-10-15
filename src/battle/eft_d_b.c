@@ -91,6 +91,26 @@ static s32 EftBurst_PortQuad(u64 **pkt, u64 tex0, u64 rgbaq, EftIVec *scr, EftFV
     *pkt = Dma_BeginDirect();
     return 0;
 }
+
+/* A triangle of the burst model as a record through context ctx: each corner's RGBAQ (q in its high word), s t
+   and XYZ2 as the packet carries them. */
+static void EftBurst_PortTri(s32 ctx, u64 tex0, u64 *rgbaq, s32 stride, EftFVec *st, EftIVec *scr) {
+    RndPoly r;
+    s32 k;
+
+    memset(&r, 0, sizeof(r));
+    for (k = 0; k < 3; k++) {
+        u64 xyz = (s64)scr[k][0] | ((s64)scr[k][1] << 16) | ((s64)scr[k][2] << 32);
+        u32 qb = (u32)(rgbaq[k * stride] >> 32);
+        f32 q;
+        __builtin_memcpy(&q, &qb, 4);
+        Rnd_Vtx(&r.v[k], ctx, (s32)(xyz & 0xFFFF), (s32)((xyz >> 16) & 0xFFFF), (u32)(xyz >> 32), st[k][0], st[k][1], q,
+                (u32)rgbaq[k * stride]);
+    }
+    r.n = 3;
+    r.gsTex0 = tex0;
+    Rnd_Draw(&r, ctx, 1, 1);
+}
 #endif
 
 /* The part of the camera view (gBtlCamView) the transition reads. */
@@ -709,6 +729,12 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
         pkt[0] = 0x44;
         pkt[1] = 0x43; /* ALPHA_2 */
         pkt += 2;
+#ifdef PORT
+        if (Port_TakesRecords()) { /* (the state followed before the records) */
+            Dma_EndDirect(pkt);
+            pkt = Dma_BeginDirect();
+        }
+#endif
         for (t = 0; t < grp->triCount; t++, tri++) {
             vis = 0;
             env = flags & 0x800;
@@ -767,6 +793,18 @@ void EftBurst_DrawModel(EftBurstModel *model, s32 unused) {
                 }
                 vis += EftBurst_IsVisible(scr[k]);
             }
+#ifdef PORT
+            /* the triangle as records (include/port/rnd.h): its pass through context 1 and the environment map's
+               through context 2 */
+            if (vis != 0 && Port_TakesRecords() && gRndCtxBad[0] == 0 && (!env || gRndCtxBad[1] == 0)) {
+                EftBurst_PortTri(0, tex->tex0 | 0x5400400002D00, &rgbaq[0][0], 2, st, scr);
+                if (env) {
+                    EftBurst_PortTri(1, envTex->tex0 | (((u64)(u32)envTex->vramY << 37) | (u64)(u32)envTex->vramX | 0x400000000),
+                                     &rgbaq[0][1], 2, st2, scr);
+                }
+                continue;
+            }
+#endif
             if (vis != 0) {
                 pkt[0] = 0x1000000000008002;
                 pkt[1] = 0xE;
