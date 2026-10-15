@@ -1387,6 +1387,14 @@ static inline void EftBlind_SetRect(EftBlindPkt *p, s32 x0, s32 y0, s32 x1, s32 
     p->xyz1.f = 0xFF;
 }
 
+#ifdef PORT
+/* The same two corners in a record (EftBlind_DrawOverlay's sprite as a record). */
+static inline void EftBlind_RecRect(void *p, s32 x0, s32 y0, s32 x1, s32 y1, u32 rgba) {
+    Ot_RecVtx(p, 0, x0, y0, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
+    Ot_RecVtx(p, 1, x1, y1, 0xFFFFFF, 0.0f, 0.0f, 1.0f, rgba);
+}
+#endif
+
 /* Queues a grey blended sprite in the last ordering table slot: the whole screen, or the left (view 0) or
    right (view 1) half. */
 void EftBlind_DrawOverlay(s32 view, s32 full, f32 alpha) {
@@ -1395,28 +1403,45 @@ void EftBlind_DrawOverlay(s32 view, s32 full, f32 alpha) {
     EftAaOtEntry *e;
 
     Vec4_Set((Vec4 *)&c, 128.0f, 128.0f, 128.0f, alpha);
-    p = (EftBlindPkt *)gOtCur;
-    gOtCur = (u8 *)(p + 1);
-    p->prim = 0x46;
-    p->dmaTag = 0x20000003;
-    p->vif1 = 0x50000003;
-    p->vif0 = 0x10000000;
-    p->gifTag = 0x4400000000008001;
-    p->regs = 0x4410;
-    p->next = NULL;
-    p->rgbaq.r = c.x;
-    p->rgbaq.g = c.y;
-    p->rgbaq.b = c.z;
-    p->rgbaq.a = c.w;
-    p->rgbaq.q = 1.0f;
-    if (full == 0) {
-        if (view == 0) {
-            EftBlind_SetRect(p, 0x7000, 0x7200, -0x8000, -0x7200);
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the sprite as a record */
+        u32 rgba = Ot_RecRgba(c.x, c.y, c.z, c.w);
+        p = Ot_NewRec(0x46, 2);
+        if (full == 0) {
+            if (view == 0) {
+                EftBlind_RecRect(p, 0x7000, 0x7200, -0x8000, -0x7200, rgba);
+            } else {
+                EftBlind_RecRect(p, -0x8000, 0x7200, -0x7000, -0x7200, rgba);
+            }
         } else {
-            EftBlind_SetRect(p, -0x8000, 0x7200, -0x7000, -0x7200);
+            EftBlind_RecRect(p, 0x7000, 0x7200, -0x7000, -0x7200, rgba);
         }
-    } else {
-        EftBlind_SetRect(p, 0x7000, 0x7200, -0x7000, -0x7200);
+    } else
+#endif
+    {
+        p = (EftBlindPkt *)gOtCur;
+        gOtCur = (u8 *)(p + 1);
+        p->prim = 0x46;
+        p->dmaTag = 0x20000003;
+        p->vif1 = 0x50000003;
+        p->vif0 = 0x10000000;
+        p->gifTag = 0x4400000000008001;
+        p->regs = 0x4410;
+        p->next = NULL;
+        p->rgbaq.r = c.x;
+        p->rgbaq.g = c.y;
+        p->rgbaq.b = c.z;
+        p->rgbaq.a = c.w;
+        p->rgbaq.q = 1.0f;
+        if (full == 0) {
+            if (view == 0) {
+                EftBlind_SetRect(p, 0x7000, 0x7200, -0x8000, -0x7200);
+            } else {
+                EftBlind_SetRect(p, -0x8000, 0x7200, -0x7000, -0x7200);
+            }
+        } else {
+            EftBlind_SetRect(p, 0x7000, 0x7200, -0x7000, -0x7200);
+        }
     }
     e = &gOtLast[0].layer[1];
     e->tail->next = p;
