@@ -25,6 +25,9 @@
 #include "common.h"
 #include "sys/vu1_packet.h"
 #include "sys/dma.h"
+#ifdef PORT
+#include "vu1_native.h"
+#endif
 
 extern void *memset(void *dst, s32 value, u32 size);
 extern void Vec4_Set(void *dst, f32 x, f32 y, f32 z, f32 w);
@@ -182,6 +185,12 @@ u32 *Vu1Pkt_LoadProg2(s32 alt) {
 
 /* Program 4 draw: runs the caller's chain with the constants already loaded. */
 void Vu1Pkt_CallProg4(u32 chain) {
+#ifdef PORT
+    /* the mesh as records (port/include/vu1_native.h), with the constants Vu1Pkt_LoadProg4 loaded; else the packet */
+    if (Vu1Native_Prog4((void *)(chain & VU1_ADDR_MASK))) {
+        return;
+    }
+#endif
     u32 *p = Dma_Alloc(0x20);
 
     p[0] = VU1_DMA_CALL | 1;
@@ -211,6 +220,9 @@ void Vu1Pkt_LoadProg4(void *mtx) {
     p[0x35] = VU1_VIF_BASE(0x8D);
     p[0x36] = VU1_VIF_OFFSET(0x1B4);
     p[0x37] = VU1_VIF_NOP;
+#ifdef PORT
+    Vu1Native_SetProg4(p + 4); /* (the same constants for the draws as records) */
+#endif
 }
 
 /* Program 5 draw: one matrix, then the caller's chain. No callers. */

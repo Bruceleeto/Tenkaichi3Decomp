@@ -409,6 +409,10 @@ void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, floa
     o->rgba = rgba;
 }
 
+uint64_t Rnd_Tex0(int ctx) {
+    return sTex0[ctx & 1];
+}
+
 int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud) {
     ctx &= 1;
     if (!Port_TakesRecords() || gRndCtxBad[ctx] != 0) {

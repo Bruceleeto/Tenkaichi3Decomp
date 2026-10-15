@@ -51,7 +51,7 @@ NL_CFLAGS   := $(DC_FLAGS) -std=gnu89 -c -fno-builtin -Iport/include -Iport/thir
 GS_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
 PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/include -Iport/src -Iport/src/dc
 PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
-PC_HARD     := plat_libm plat_fastvec
+PC_HARD     := plat_libm plat_fastvec vu1_native
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 

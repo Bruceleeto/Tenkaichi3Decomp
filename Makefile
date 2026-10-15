@@ -85,11 +85,11 @@ GS_CFLAGS   := -m32 -std=gnu99 -c -O2 -g -fno-pic -msse2 -mfpmath=sse -fno-stric
                -Wno-misleading-indentation -I$(GEN_GS) -MMD -MP
 CXXFLAGS    := -m32 -std=c++17 -c -O2 -g -fno-pic -msse2 -mfpmath=sse -fno-exceptions -fno-rtti -w \
                -Iport/third_party/imgui -Iport/src/gs -I$(GEN_GS) -MMD -MP
-# the port's own C: software float except the host maths (plat_libm.c, plat_fastvec.c)
+# the port's own C: software float except the host maths (plat_libm.c, plat_fastvec.c) and the VU1 programs (vu1_native.c)
 PC_CFLAGS   := -m32 -std=gnu99 -c -O2 -g -fno-pic -malign-double -fno-strict-aliasing -ffp-contract=off -fno-builtin -w \
                -Iinclude -Iport/include -Iport/src $(BT3_PORT_CFLAGS)
 PC_SOFT     := -msoft-float -mno-sse -mno-mmx -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
-PC_HARD     := plat_libm plat_fastvec
+PC_HARD     := plat_libm plat_fastvec vu1_native
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 
@@ -190,6 +190,9 @@ $(OBJ)/pc_texpack_null.o: port/src/null/texpack_null.c | $(OBJ)
 	$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@
 $(OBJ)/pc_%.o: port/src/%.c | $(OBJ) $(PYTHON)
 	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))
+# the VU1 programs as C: drawing only, the host's floats as the VU1 interpreter (gs_vu1.c) has them, so that the
+# two give the same corners
+$(OBJ)/pc_vu1_native.o: PC_CFLAGS += -msse2 -mfpmath=sse
 
 # link.py: the link (with stubs for anything still missing), then the game-state map (make_state.py)
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link.py
