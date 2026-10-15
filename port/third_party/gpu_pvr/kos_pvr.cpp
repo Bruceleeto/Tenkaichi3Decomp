@@ -48,7 +48,7 @@
 
 using R = pvr::RegisterName;
 
-#define VRAM_SIZE      0x1000000u /* 16 MB, twice the Dreamcast's, while the textures are not yet in their final formats (the most: the 24-bit masks) */
+#define VRAM_SIZE      0x800000u /* 8 MB, the Dreamcast's */
 #define VRAM_ALIGN     0x1000000u
 #define SCREEN_W       640
 #define SCREEN_H       480

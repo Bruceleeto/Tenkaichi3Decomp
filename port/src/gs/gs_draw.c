@@ -24,6 +24,7 @@
 #include "ui.h"         /* PortVideo and the window helpers */
 #include "gs_texpack.h" /* texture packs (replacement textures) */
 #include "menu_text.h"  /* editable labels in the original menu texture slots */
+#include "../../../include/port/rnd.h" /* quads the game hands over (GsGpu_Quad) */
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -186,8 +187,22 @@ static void tex_sweep(unsigned keep) {
 /* GS memory -> an RGBA texture for the current TEX0 (alpha as stored: 0x80 is opaque). The back end makes
    the texture and takes the decoded pixels (freed after it has uploaded them). */
 
-static GsTex texture_get(int ctx) {
-    uint64_t t0 = gGs.tex0[ctx] & 0x1FFFFFFFFFFFFFFFull, texa = gGs.texa;
+/* The GS state a draw is recorded from: one context's registers and the primitive's attributes. Taken from the
+   registers (regs_of), or filled in by a draw the game hands over itself (GsGpu_Quad). */
+typedef struct GsRegs {
+    uint64_t prim, texa, tex0, tex1, clamp, scissor, alpha, test, frame, zbuf, fba;
+} GsRegs;
+
+static const GsRegs *regs_of(int ctx) {
+    static GsRegs r;
+    r.prim = gGs.prim; r.texa = gGs.texa;
+    r.tex0 = gGs.tex0[ctx]; r.tex1 = gGs.tex1[ctx]; r.clamp = gGs.clamp[ctx]; r.scissor = gGs.scissor[ctx];
+    r.alpha = gGs.alpha[ctx]; r.test = gGs.test[ctx]; r.frame = gGs.frame[ctx]; r.zbuf = gGs.zbuf[ctx]; r.fba = gGs.fba[ctx];
+    return &r;
+}
+
+static GsTex texture_get(const GsRegs *r) {
+    uint64_t t0 = r->tex0 & 0x1FFFFFFFFFFFFFFFull, texa = r->texa;
     uint32_t tbp = t0 & 0x3FFF, tbw = (t0 >> 14) & 0x3F, psm = (t0 >> 20) & 0x3F, tw = 1u << ((t0 >> 26) & 15), th = 1u << ((t0 >> 30) & 15);
     uint32_t cbp = (t0 >> 37) & 0x3FFF, cpsm = (t0 >> 51) & 15;
     uint32_t bits = (uint32_t)Gs_PsmBits(psm), gen = 0, pages, i, x, y, *px;
@@ -202,9 +217,9 @@ static GsTex texture_get(int ctx) {
     if (th > 1024) { th = 1024; }
     rw = tw; rh = th;
 #ifdef BT3_PVR
-    if (bits <= 8 && sBackend == &sPvrBackend) { /* the game's texture entry, a PVR texture of its own */
-        uint32_t palKey = GsPvr_PalKey(cbp); /* (a palette of tex.pak: nothing read out of GS memory) */
-        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, palKey != 0 ? palKey : clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
+    if (sBackend == &sPvrBackend) { /* the game's texture entry, a PVR texture of its own */
+        uint32_t palKey = bits > 8 ? 0 : GsPvr_PalKey(cbp); /* (a palette of tex.pak: nothing read out of GS memory) */
+        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, palKey != 0 || bits > 8 ? palKey : clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
         if (nat != 0) { return nat; }
     }
 #endif
@@ -479,12 +494,12 @@ static uint32_t blend_key(uint64_t alpha, int abe) {
    bits 0..8 blend, 10..11 depth test, 12 depth write, 13..14 topology, 16..19 colour write mask,
    20..21 vertices: 0 GS vertices, 1 program 0, 2 program 4, 3 program 6, 22 full-screen table pass,
    23 the fragment shader without its own depth output. */
-static int pipeline_get(int ctx, int topo, int vu) {
-    uint64_t test = gGs.test[ctx], zb = gGs.zbuf[ctx];
+static int pipeline_get(const GsRegs *r, int topo, int vu) {
+    uint64_t test = r->test, zb = r->zbuf;
     int zte = (test >> 16) & 1, ztst = (test >> 17) & 3, zwrite = !((zb >> 32) & 1);
-    uint32_t bkey, key, wmask, m = (uint32_t)(gGs.frame[ctx] >> 32);
+    uint32_t bkey, key, wmask, m = (uint32_t)(r->frame >> 32);
 
-    bkey = blend_key(gGs.alpha[ctx], (int)((gGs.prim >> 6) & 1));
+    bkey = blend_key(r->alpha, (int)((r->prim >> 6) & 1));
     if (!zte) {
         ztst = 1;
     }
@@ -571,12 +586,12 @@ int GsDraw_TargetGet(uint32_t fbp, int create) {
     return slot;
 }
 
-static int pipeline_get(int ctx, int topo, int vu);
+static int pipeline_get(const GsRegs *r, int topo, int vu);
 
 /* GfxPost_DrawDepthClut as one full-screen pass (the game sends 16 strips; they become one draw). */
-static void depth_clut(int ctx) {
-    uint64_t sc = gGs.scissor[ctx];
-    uint32_t wm = (uint32_t)(gGs.frame[ctx] >> 32);
+static void depth_clut(const GsRegs *r) {
+    uint64_t sc = r->scissor;
+    uint32_t wm = (uint32_t)(r->frame >> 32);
     GsDraw d, *last = gsDrawCount ? &gsDraws[gsDrawCount - 1] : NULL;
 
     if (gsDrawCount == MAX_DRAWS) {
@@ -585,13 +600,13 @@ static void depth_clut(int ctx) {
     memset(&d, 0, sizeof(d));
     d.native = 3;
     d.src = gsDepthByteIsFog ? 0 : 1;
-    d.target = GsDraw_TargetGet((uint32_t)(gGs.frame[ctx] & 0x1FF), 0);
+    d.target = GsDraw_TargetGet((uint32_t)(r->frame & 0x1FF), 0);
     /* switched off by the user: the passes that colour the picture (the ones that only write alpha feed the glow) */
     if (d.target < 0 || ((gsFxOff & 4) && d.src == 0 && wm != 0x00FFFFFFu)) {
         return;
     }
     {
-        uint32_t cbp = (uint32_t)((gGs.tex0[ctx] >> 37) & 0x3FFF);
+        uint32_t cbp = (uint32_t)((r->tex0 >> 37) & 0x3FFF);
         if (cbp == 0x3E8C) {
             return; /* the outline's own passes: the outline is drawn natively at its marker (outline.frag) */
         }
@@ -599,13 +614,13 @@ static void depth_clut(int ctx) {
             return; /* the see-through tint, switched off */
         }
     }
-    d.tex = clut_texture((uint32_t)((gGs.tex0[ctx] >> 37) & 0x3FFF));
+    d.tex = clut_texture((uint32_t)((r->tex0 >> 37) & 0x3FFF));
     if (d.tex == 0) {
         return;
     }
-    d.pipeline = pipeline_get(ctx, 0, 4);
-    d.blendc = (float)((gGs.alpha[ctx] >> 32) & 0xFF) / 128.0f;
-    d.misc[0] = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
+    d.pipeline = pipeline_get(r, 0, 4);
+    d.blendc = (float)((r->alpha >> 32) & 0xFF) / 128.0f;
+    d.misc[0] = ((r->zbuf >> 24) & 15) == 0 ? 4294967295.0f : ((r->zbuf >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
     d.scissor[0] = (int)(sc & 0x7FF) * SCALE;
     d.scissor[1] = (int)((sc >> 32) & 0x7FF) * SCALE;
     d.scissor[2] = ((int)((sc >> 16) & 0x7FF) + 1) * SCALE - d.scissor[0];
@@ -616,8 +631,8 @@ static void depth_clut(int ctx) {
     gsDraws[gsDrawCount++] = d;
 }
 
-static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *us, float *vs) {
-    uint64_t prim = gGs.prim, t0 = gGs.tex0[ctx], test = gGs.test[ctx], cl = gGs.clamp[ctx], sc = gGs.scissor[ctx];
+static int draw_state(const GsRegs *r, int topo, int sprite, int vu, GsDraw *d, float *us, float *vs) {
+    uint64_t prim = r->prim, t0 = r->tex0, test = r->test, cl = r->clamp, sc = r->scissor;
     int tme = (prim >> 4) & 1, src;
     float tw = (float)(1u << ((t0 >> 26) & 15)), th = (float)(1u << ((t0 >> 30) & 15));
 
@@ -628,7 +643,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
          - drawing INTO the depth buffer's memory as if it were a picture,
          - sampling the depth buffer's memory, or the top byte of a buffer as an 8-bit index (PSMT8H / T4HL / T4HH). */
     {
-        uint32_t fpsm = (uint32_t)((gGs.frame[ctx] >> 24) & 0x3F), fbp = (uint32_t)(gGs.frame[ctx] & 0x1FF), zbp = (uint32_t)(gGs.zbuf[ctx] & 0x1FF);
+        uint32_t fpsm = (uint32_t)((r->frame >> 24) & 0x3F), fbp = (uint32_t)(r->frame & 0x1FF), zbp = (uint32_t)(r->zbuf & 0x1FF);
         uint32_t tpsm = (uint32_t)((t0 >> 20) & 0x3F), tbp = (uint32_t)(t0 & 0x3FFF);
         sWholeFrame = tme && tpsm == 1 && sprite && tbp / 32 == zbp; /* the cross-fade's picture (below) */
         if (Gs_PsmBits(fpsm) != 16 && fbp == zbp && tme) {
@@ -663,7 +678,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
             return 0;
         }
         if (tme && sprite && tpsm == 0x1B && tbp / 32 == zbp) {
-            depth_clut(ctx); /* that byte through a table over the screen: a native pass */
+            depth_clut(r); /* that byte through a table over the screen: a native pass */
             gsSkipped++;
             return 0;
         }
@@ -681,7 +696,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
         }
     }
     memset(d, 0, sizeof(*d));
-    d->target = GsDraw_TargetGet((uint32_t)(gGs.frame[ctx] & 0x1FF), 1);
+    d->target = GsDraw_TargetGet((uint32_t)(r->frame & 0x1FF), 1);
     if (d->target < 0) {
         return 0;
     }
@@ -716,13 +731,13 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
             /* The user's switches act on the pass that puts a work buffer back over the picture: added (the
                glare and the object glow, blend "source + destination") or mixed in by the destination's alpha
                (the blur of distant things). */
-            if (sprite && (uint32_t)(gGs.frame[ctx] & 0x1FF) == (uint32_t)gGsMainFbp && ((prim >> 6) & 1) &&
-                ((((gGs.alpha[ctx] & 0xFF) == 0x68) && (gsFxOff & 8)) || (((gGs.alpha[ctx] & 0xFF) == 0x54) && (gsFxOff & 16)))) {
+            if (sprite && (uint32_t)(r->frame & 0x1FF) == (uint32_t)gGsMainFbp && ((prim >> 6) & 1) &&
+                ((((r->alpha & 0xFF) == 0x68) && (gsFxOff & 8)) || (((r->alpha & 0xFF) == 0x54) && (gsFxOff & 16)))) {
                 gsSkipped++;
                 return 0;
             }
             if (src == d->target || tp > 1) {
-                if (d->target != src && (uint32_t)(gGs.frame[ctx] & 0x1FF) != (uint32_t)gGsMainFbp) {
+                if (d->target != src && (uint32_t)(r->frame & 0x1FF) != (uint32_t)gGsMainFbp) {
                     gsTargets[d->target].stale = 1; /* a work buffer missed a pass */
                 }
                 gsSkipped++;
@@ -747,12 +762,12 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
             *us = tw / (float)GS_W;
             *vs = th / (float)GS_H;
         } else {
-            d->tex = texture_get(ctx);
+            d->tex = texture_get(r);
         }
     }
-    d->sampler = (int)((gGs.tex1[ctx] >> 5) & 1) | ((cl & 3) ? 2 : 0) | (((cl >> 2) & 3) ? 4 : 0);
+    d->sampler = (int)((r->tex1 >> 5) & 1) | ((cl & 3) ? 2 : 0) | (((cl >> 2) & 3) ? 4 : 0);
     {   /* a palette texture: its palette's tint, if the game tints the palettes there (gs_pvr.c Port_ClutTint) */
-        uint64_t t0 = gGs.tex0[ctx];
+        uint64_t t0 = r->tex0;
         uint32_t psm = (uint32_t)(t0 >> 20) & 0x3F;
         if (psm == 0x13 || psm == 0x14 || psm == 0x1B || psm == 0x24 || psm == 0x2C) { d->tint = gGsTint[(uint32_t)(t0 >> 42) & 511]; }
     }
@@ -762,7 +777,7 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     if (d->tex != 0 && sLast != NULL && sLast->tex == d->tex && sLast->replaced) {
         d->sampler |= 1 | 8; /* (GsGpu_Draw takes the 8 off again for 2D art) */
     }
-    d->pipeline = pipeline_get(ctx, topo, vu);
+    d->pipeline = pipeline_get(r, topo, vu);
     d->mode[0] = !tme ? 0 : d->tex_is_target ? 2 : 1; /* 2: a frame buffer as texture, its alpha is already rescaled */
     /* (BT3_TEX_ALPHA=0 switches the replacement's alpha treatment off, for telling which one a fault comes from) */
     if (d->mode[0] == 1 && sLast != NULL && sLast->tex == d->tex && sLast->replaced == 1 &&
@@ -775,8 +790,8 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
     d->mode[3] = (test & 1) && ((test >> 12) & 3) == 0 ? (int32_t)((test >> 1) & 7) + 1 : 0;
     d->misc[0] = (float)((test >> 4) & 0xFF);
     d->misc[1] = ((test >> 14) & 1) ? (float)(1 + (int)((test >> 15) & 1)) : 0.0f; /* DATE, DATM */
-    d->misc[2] = (float)(gGs.fba[ctx] & 1);
-    d->blendc = (float)((gGs.alpha[ctx] >> 32) & 0xFF) / 128.0f;
+    d->misc[2] = (float)(r->fba & 1);
+    d->blendc = (float)((r->alpha >> 32) & 0xFF) / 128.0f;
     d->scissor[0] = (int)(sc & 0x7FF) * SCALE;
     d->scissor[1] = (int)((sc >> 32) & 0x7FF) * SCALE;
     d->scissor[2] = ((int)((sc >> 16) & 0x7FF) + 1) * SCALE - d->scissor[0];
@@ -963,14 +978,14 @@ void GsGpu_PagesMoved(uint32_t delta) {
     }
 }
 
-void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
+static void draw_prim(int type, const GsRegs *r, const GsVertex *v) {
     if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
-    uint64_t prim = gGs.prim, t0 = gGs.tex0[ctx];
+    uint64_t prim = r->prim, t0 = r->tex0;
     int fst = (prim >> 8) & 1, gouraud = (prim >> 3) & 1, n = type == 6 ? 2 : type == 3 ? 3 : type == 1 ? 2 : 1;
     float tw = (float)(1u << ((t0 >> 26) & 15)), th = (float)(1u << ((t0 >> 30) & 15)), us, vs;
-    float zmax = ((gGs.zbuf[ctx] >> 24) & 15) == 0 ? 4294967295.0f : ((gGs.zbuf[ctx] >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
+    float zmax = ((r->zbuf >> 24) & 15) == 0 ? 4294967295.0f : ((r->zbuf >> 24) & 15) == 1 ? 16777215.0f : 65535.0f;
     float s[3], t[3], q[3];
     const GsVertex *flat = &v[n - 1];
     GsDraw d, *last;
@@ -979,7 +994,7 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
         return;
     }
-    if (!draw_state(ctx, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
+    if (!draw_state(r, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
         return;
     }
     if (type == 6 || fst) {
@@ -1118,8 +1133,8 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
             gsVerts[k].t -= dt;
         }
         /* the user's strength for the glare and the glow: the pass that adds the blurred buffer to the picture */
-        if (gsGlowPercent != 100 && (uint32_t)(gGs.frame[ctx] & 0x1FF) == (uint32_t)gGsMainFbp && ((gGs.prim >> 6) & 1) &&
-            (gGs.alpha[ctx] & 0xFF) == 0x68) {
+        if (gsGlowPercent != 100 && (uint32_t)(r->frame & 0x1FF) == (uint32_t)gGsMainFbp && ((r->prim >> 6) & 1) &&
+            (r->alpha & 0xFF) == 0x68) {
             for (k = d.first; k < gsVertCount; k++) {
                 gsVerts[k].r = (uint8_t)(gsVerts[k].r * gsGlowPercent / 100 > 255 ? 255 : gsVerts[k].r * gsGlowPercent / 100);
                 gsVerts[k].g = (uint8_t)(gsVerts[k].g * gsGlowPercent / 100 > 255 ? 255 : gsVerts[k].g * gsGlowPercent / 100);
@@ -1205,6 +1220,46 @@ void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
     }
 }
 
+void GsGpu_Draw(int type, int ctx, const GsVertex *v) {
+    draw_prim(type, regs_of(ctx), v);
+}
+
+/* A quad the game handed over instead of a GS packet (include/port/rnd.h): recorded as the strip the packet drew,
+   from the state the record names and nothing of the GS's. 2D: depth neither tested nor written, the whole
+   picture. (The depth page is still named: draw_state tells drawing into it, and textures in it, by its address.) */
+void GsGpu_Quad(const void *rec) {
+    static const uint64_t blend[3] = {0x44, 0x48, 0x42}; /* (Cs - Cd) * As + Cd, Cs * As + Cd, Cd - Cs * As */
+    const RndQuad *q = (const RndQuad *)rec;
+    GsRegs r;
+    GsVertex v[4];
+    int i;
+
+    memset(&r, 0, sizeof(r));
+    r.prim = 4 | 1 << 6 | (q->tex0 != 0 ? 1 << 4 | 1 << 8 : 0); /* a strip, blended; textured by texel coordinates */
+    r.texa = 0x80ull << 32;
+    r.tex0 = q->tex0;
+    r.tex1 = q->flags & RND_SMOOTH ? 0x60 : 0;
+    r.clamp = q->flags & RND_REPEAT ? 0 : 5;
+    r.scissor = (uint64_t)(512 - 1) << 16 | (uint64_t)(448 - 1) << 48;
+    r.alpha = blend[q->blend < 3 ? q->blend : 0];
+    r.test = 0x30000; /* depth test "always", no alpha test */
+    r.frame = q->fbp & 0x1FF;
+    r.zbuf = 0xE0 | 0x31ull << 24 | 1ull << 32; /* the game's depth page (24-bit), not written */
+    memset(v, 0, sizeof(v));
+    for (i = 0; i < 4; i++) {
+        v[i].x = (float)(int32_t)(q->xy[i][0] * 16.0f) / 16.0f; /* (in the GS's sixteenths of a pixel) */
+        v[i].y = (float)(int32_t)(q->xy[i][1] * 16.0f) / 16.0f;
+        v[i].u = q->uv[i][0] * 16;
+        v[i].v = q->uv[i][1] * 16;
+        v[i].r = (uint8_t)q->rgba;
+        v[i].g = (uint8_t)(q->rgba >> 8);
+        v[i].b = (uint8_t)(q->rgba >> 16);
+        v[i].a = (uint8_t)(q->rgba >> 24);
+    }
+    draw_prim(3, &r, &v[0]);
+    draw_prim(3, &r, &v[1]);
+}
+
 /* Vertex program 6 as a shader: one strip of the ground under a fighter, textured with the shadow page (see
    shaders/vu6.vert). Vertices: four quadwords each (position with an integer "no draw" flag in w, normal, colour
    as floats, a slot the original fills with s, t). A flagged vertex means: the triangle that ends here is not
@@ -1222,7 +1277,7 @@ void GsGpu_DrawVu6(int ctx, const float *vertices, uint32_t count, const float *
         gsVuUniCount == MAX_VU_UNIFORMS) {
         return;
     }
-    if (!draw_state(ctx, 0, 0, 3, &d, &us, &vs)) {
+    if (!draw_state(regs_of(ctx), 0, 0, 3, &d, &us, &vs)) {
         return;
     }
     date_snapshot(&d);
@@ -1284,7 +1339,7 @@ void GsGpu_DrawVu4(int ctx, const float *vertices, uint32_t count, const float *
         gsVuUniCount == MAX_VU_UNIFORMS) {
         return;
     }
-    if (!draw_state(ctx, 0, 0, 2, &d, &us, &vs)) {
+    if (!draw_state(regs_of(ctx), 0, 0, 2, &d, &us, &vs)) {
         return;
     }
     date_snapshot(&d);
@@ -1331,7 +1386,7 @@ void GsGpu_DrawVu0(int layer, int ctx, const float *vertices, uint32_t count, co
         gsVuUniCount == MAX_VU_UNIFORMS) {
         return;
     }
-    if (!draw_state(ctx, 0, 0, 1, &d, &us, &vs)) {
+    if (!draw_state(regs_of(ctx), 0, 0, 1, &d, &us, &vs)) {
         return;
     }
     date_snapshot(&d);

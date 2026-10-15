@@ -9,6 +9,9 @@
 #include "sys/dma.h"
 #include "sys/gfx.h"
 #include "sys/gfxm_b_b.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 extern void *memcpy(void *dst, const void *src, u32 size);
 extern void *memset(void *dst, s32 c, u32 n);
@@ -749,6 +752,43 @@ u64 *FlashDraw_PutSprite(u64 *p, FlashQuad *q, u64 tex0) {
     return p;
 }
 
+#ifdef PORT
+/* The quad as a record for the renderer (include/port/rnd.h) instead of a GS packet: the same corners, texels
+   (FlashDraw_PutSprite's), colour and blending. 0 = not taken: the packet is sent. */
+static s32 FlashDraw_PortQuad(FlashQuad *q, u64 tex0) {
+    RndQuad r;
+    s32 uv[4];
+    s32 i;
+
+    for (i = 0; i < 4; i++) {
+        r.xy[i][0] = q->pt[i][0];
+        r.xy[i][1] = FlashDraw_AdjustY(q->pt[i][1]);
+    }
+    uv[0] = q->uv.u0 + 1;
+    uv[2] = q->uv.u1 - 1;
+    uv[1] = q->uv.v0 + 1;
+    uv[3] = q->uv.v1 - 1;
+    if (q->flags & FLASH_QUAD_FLIPX) {
+        uv[0] = q->uv.u1;
+        uv[2] = q->uv.u0;
+    }
+    if (q->flags & FLASH_QUAD_FLIPY) {
+        uv[1] = q->uv.v1;
+        uv[3] = q->uv.v0;
+    }
+    for (i = 0; i < 4; i++) {
+        r.uv[i][0] = (int16_t)uv[(i & 1) ? 2 : 0];
+        r.uv[i][1] = (int16_t)uv[(i & 2) ? 3 : 1];
+    }
+    r.rgba = (u32)FLASH_RGBA(q);
+    r.fbp = (u32)(GFX_FRAME_REG() & 0x1FF);
+    r.tex0 = tex0;
+    r.blend = (q->flags & FLASH_QUAD_ADD) ? RND_BLEND_ADD : (q->flags & FLASH_QUAD_SUB) ? RND_BLEND_SUB : RND_BLEND_NORMAL;
+    r.flags = tex0 != 0 ? RND_SMOOTH | ((q->flags & FLASH_QUAD_REPEAT) ? RND_REPEAT : 0) : 0;
+    return Port_Quad(&r);
+}
+#endif
+
 /* Draws an untextured quad in its colour. */
 void FlashDraw_FlatQuad(FlashQuad *q) {
     u64 *p = Dma_BeginDirect();
@@ -860,6 +900,11 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
         tex0 = FlashDraw_UploadTex(tex, q->uv.tex, 0x3000);
         Dma_AddTexFlush();
     } else {
+#ifdef PORT
+        if (FlashDraw_PortQuad(q, 0)) {
+            return;
+        }
+#endif
         FlashDraw_FlatQuad(q);
         return;
     }
@@ -872,6 +917,11 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
         FlashDraw_MaskQuad(q, tex0, 0);
         return;
     }
+#ifdef PORT
+    if (FlashDraw_PortQuad(q, tex0)) {
+        return;
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = 0x1000000000008006;
     p[1] = 0xE;

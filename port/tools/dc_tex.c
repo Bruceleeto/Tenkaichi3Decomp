@@ -12,11 +12,17 @@
  * loaded its file:
  *     "BT3T" u32 count, then count x {u64 key; u32 offset; u16 w, h; u8 bits, psm, 0, 0} sorted by key, then data
  * (a palette: bits 32, w its colours (16 or 256), h 1, psm its format; one u32 a colour)
+ * The 32-, 24- and 16-bit textures too, as 16-bit PVR texels in twiddled order (bits 16, psm the entry's | the PVR
+ * format << 6: 0 ARGB1555, 1 RGB565, 2 ARGB4444), keyed by the upload's hash ^ KEY_DIRECT: the 24- and 16-bit ones
+ * opaque (the game's TEXA, gfxm_e.c: 0x80 both), a 32-bit one 1555 when its alpha is only none or all. One that
+ * fits in a GS page also as 8-bit indices read from where it lies (key ^ KEY_T8; bits 8, w x h the page's blocks it
+ * covers, in rows): the game draws its light (btl_obj.c, block 0x3D40) as an 8-bit texture.
  * Run it again whenever this changes; nothing else depends on its output.
  *
  *     dc_tex OUT.pak DIR...
  */
 #include <dirent.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,7 +189,61 @@ static uint32_t sDataBytes;
 static unsigned sStat[9]; /* texture entries, 4-bit, 8-bit, other formats, bad packets, duplicates, files with textures, BPE parts,
                              palettes */
 
+#define KEY_DIRECT 0x9E3779B97F4A7C15ull /* (as port/src/gs/gs_pvr.c) */
+#define KEY_T8     0xC2B2AE3D27D4EB4Full
+
 static void out_add(uint64_t key, uint32_t w, uint32_t h, uint32_t bits, uint32_t psm, const void *data, uint32_t bytes);
+
+/* A 32-, 24- or 16-bit texture uploaded at block 0, as the PVR takes it; and, if it fits in a page, its 8-bit
+   view. */
+static void emit_direct(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, uint32_t th) {
+    uint32_t w = tw < 8 ? 8 : tw, h = th < 8 ? 8 : th, x, y, fmt = psm == 0x00 ? 0 : 1, bytes;
+    uint16_t *buf = calloc(w * h, 2);
+    if (psm == 0x00) { /* 1555 unless some alpha is neither none nor all (0x80 and over) */
+        for (y = 0; y < th && fmt == 0; y++) {
+            for (x = 0; x < tw; x++) {
+                uint32_t a = vram_rw(0, tbw, psm, x, y, 0, 0) >> 24;
+                if (a != 0 && a < 0x80) { fmt = 2; break; }
+            }
+        }
+    }
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            uint32_t v = vram_rw(0, tbw, psm, x % tw, y % th, 0, 0), r, g, b, a;
+            if (psm == 0x02 || psm == 0x0A) { r = (v & 31) << 3; g = (v >> 5 & 31) << 3; b = (v >> 10 & 31) << 3; a = 0x80; }
+            else { r = v & 255; g = v >> 8 & 255; b = v >> 16 & 255; a = psm == 0x00 ? v >> 24 : 0x80; }
+            buf[twiddle_index(x, y, w, h)] = (uint16_t)(fmt == 0 ? (a >= 0x80) << 15 | (r >> 3) << 10 | (g >> 3) << 5 | b >> 3
+                                                      : fmt == 1 ? (r >> 3) << 11 | (g >> 2) << 5 | b >> 3
+                                                      : (a >= 0x80 ? 15 : a >> 3) << 12 | (r >> 4) << 8 | (g >> 4) << 4 | b >> 4);
+        }
+    }
+    out_add(key ^ KEY_DIRECT, w, h, 16, psm | fmt << 6, buf, w * h * 2);
+    free(buf);
+    bytes = tw * th * (uint32_t)psm_bits(psm) / 8;
+    if (bytes <= 8192) { /* the 8-bit view: the blocks it covers (256 bytes each), placed as an 8-bit page places them */
+        uint32_t n = (bytes + 255) / 256, b, vw = 16, vh = 16;
+        uint8_t *v8;
+        for (b = 0; b < 32; b++) { /* (kBlock32 is also the 8-bit page's: 8 x 4 blocks of 16 x 16) */
+            for (y = 0; y < 4; y++) {
+                for (x = 0; x < 8; x++) {
+                    if (kBlock32[y][x] == b && b < n) {
+                        if ((x + 1) * 16 > vw) { vw = (x + 1) * 16; }
+                        if ((y + 1) * 16 > vh) { vh = (y + 1) * 16; }
+                    }
+                }
+            }
+        }
+        while (vw & (vw - 1)) { vw += vw & -vw; }
+        while (vh & (vh - 1)) { vh += vh & -vh; }
+        v8 = malloc(vw * vh);
+        for (y = 0; y < vh; y++) {
+            for (x = 0; x < vw; x++) { v8[y * vw + x] = (uint8_t)vram_rw(0, 2, 0x13, x, y, 0, 0); }
+        }
+        out_add(key ^ KEY_T8, vw, vh, 8, 0x13, v8, vw * vh);
+        free(v8);
+    }
+}
+
 static void emit(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, uint32_t th) {
     uint32_t w = tw < 8 ? 8 : tw, h = th < 8 ? 8 : th, bits = psm == 0x14 ? 4 : 8, bytes = w * h * bits / 8, x, y;
     uint8_t *buf;
@@ -257,6 +317,175 @@ static void dump(const uint8_t *e, const uint8_t *b, uint32_t n, uint32_t psm, u
     fclose(f);
 }
 
+/* DC_TEX_XML=file: the catalogue, every file and what is in it (the parts, as far as they are understood). */
+static FILE *sXml;
+static int sXd;
+static void xml(int open, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void xml(int open, const char *fmt, ...) {
+    va_list ap;
+    if (sXml == NULL) { return; }
+    if (open < 0) { sXd--; }
+    fprintf(sXml, "%*s", sXd * 2, "");
+    va_start(ap, fmt);
+    vfprintf(sXml, fmt, ap);
+    va_end(ap);
+    fputc('\n', sXml);
+    if (open > 0) { sXd++; }
+}
+/* GS image transfers in a part: an A+D TRXDIR (0x53) with BITBLTBUF (0x50) just before it, as every upload
+   packet of the game has. A part none of whose bytes holds one can't send pixels to the GS. */
+static uint32_t gs_uploads(const uint8_t *b, uint32_t n) {
+    uint32_t i, j, count = 0;
+    for (i = 48; i + 16 <= n; i += 16) {
+        if (rd32(b + i + 8) != 0x53 || rd32(b + i + 12) != 0) { continue; }
+        for (j = 1; j <= 3; j++) {
+            if (rd32(b + i - j * 16 + 8) == 0x50 && rd32(b + i - j * 16 + 12) == 0) { count++; break; }
+        }
+    }
+    return count;
+}
+
+/* Every 16-byte frame a PS2 SPU ADPCM frame: filter 0..4, shift 0..12, flags 0..7. */
+static int spu_adpcm(const uint8_t *b, uint32_t n) {
+    uint32_t i;
+    if (n < 1024 || n % 16 != 0) { return 0; }
+    for (i = 0; i < 16; i++) { if (b[i] != 0) { return 0; } } /* (a sample body starts with a frame of zeros) */
+    for (i = 0; i < n; i += 16) {
+        if ((b[i] >> 4) > 4 || (b[i] & 15) > 12 || b[i + 1] > 7) { return 0; }
+    }
+    return 1;
+}
+
+static uint32_t sUnknownUploads;
+static long sFileId;          /* the game's id of the file being read (File_OpenById), 0 for pzs3us0 */
+static const char *sRole;     /* what the code takes the part being read for, NULL = not known by its place */
+static char sRoleBuf[160];
+
+/* What the game reads part i (1-based, as BObjFile_GetEntry / BtlStage_GetFileMember + 3 count) of a top-level
+   file for, by the file's id (include/battle/battle_work.h). NULL: not a file whose parts are known by place. */
+static const char *file_role(long id, uint32_t i) {
+    static const struct { uint32_t from, to; const char *what; } chara[] = { /* BtlObj_BindTables (bobj_a.c) */
+        { 1, 1, "model textures (BObjMdl.unk38)" },
+        { 2, 2, "body volumes (BobjBodyData, BtlObj+0x54)" },
+        { 3, 3, "model (pmdl)" },
+        { 4, 0xB, "mouth set A (BObjMdl.mouthA)" },
+        { 0xC, 0xC, "BObjMdl.unk04" },
+        { 0xD, 0xD, "eye textures (BObjMdl.eyes)" },
+        { 0xE, 0x11, "mouth set B (BObjMdl.mouthB)" },
+        { 0x12, 0x12, "character parameters (BtlParam, BtlObj+0x91C)" },
+        { 0x13, 0x13, "attack records (BtlAtkRecord, BtlObj+0x920)" },
+        { 0x14, 0x14, "ki blasts (BtlKiBlastData, BtlObj+0x924)" },
+        { 0x15, 0x15, "moves (BtlMoveData, BtlObj+0x928)" },
+        { 0x16, 0x16, "pre-fight talk table (btl_seq.c talkTbl, BtlObj+0x93C)" },
+        { 0x17, 0x17, "hair and cloth chains (BObjChainParam, BtlObj+0x940)" },
+        { 0x18, 0x18, "super attacks (BtlSuperData, BtlObj+0x92C)" },
+        { 0x19, 0x19, "skills (BtlSkillData, BtlObj+0x930)" },
+        { 0x1A, 0x1A, "not read by the game" },
+        { 0x1B, 0x1B, "AI parameters (BtlObj+0x934)" },
+        { 0x1C, 0x1C, "camera cuts (ChrCamCutDef, BtlObj+0x938)" },
+        { 0x1D, 0x24, "motions (BObjMdl.unk720, unk8D0)" },
+        { 0x25, 0x28, "camera animations (BObjMdl.unk8F0)" },
+        { 0x29, 0x2B, "camera animations (BObjMdl.unk98)" },
+        { 0x2C, 0x2C, "not read by the game" },
+        { 0x2D, 0x34, "text (BObjMdl.unkA4: entry 0x2D + gProgress->unk00)" },
+        { 0x35, 0x98, "lip sync, first voice language (BObjMdl.lip)" },
+        { 0x99, 0xFC, "lip sync, second voice language (BObjMdl.lip)" },
+    }, stage[] = {
+        { 1, 1, "stage (StgModel_InitStage)" },
+        { 2, 2, "stage data (StgDataA, BtlStage_BindData)" },
+        { 3, 5, "camera animations (BtlStage_GetFileMember 0..2)" },
+        { 6, 6, "scrolling sheet textures (EftStageScroll_Load)" },
+        { 7, 7, "scrolling sheet: parameters and mesh (EftStageScroll_Load)" },
+        { 9, 9, "animated objects (StgAnimTable, StgModel_BindAnims)" },
+        { 0x13, 0x13, "stage effect points (MEF0, gBtlStageFxRes)" },
+        { 0x18, 0x18, "paths (StgPathTable, BtlStage_BindPaths)" },
+    };
+    uint32_t k;
+    if (id == 2) { /* common data 0 (common.c: gCommonRes->data[0]) */
+        return i == 1 ? "light (BtlObjLight, btl_obj.c)"
+             : i == 4 ? "AI think data (AiThData, btl_ai_cond.c)"
+             : i == 3 || (i >= 5 && i <= 9) ? "roster tables (gBtlChars->tbl, btl_char_mgr.c)" : NULL;
+    }
+    if (id == 5) { return i == 1 || i == 2 ? "font (Font_SetFont, col_c.c: gCommonRes->boot)" : NULL; }
+    if (id >= 0x590 && id < 0xBDA && (id - 0x590) % 10 < 8) {
+        for (k = 0; k < sizeof(chara) / sizeof(chara[0]); k++) {
+            if (i >= chara[k].from && i <= chara[k].to) { return chara[k].what; }
+        }
+        return NULL;
+    }
+    if (id >= 0x590 && id < 0xBDA && (id - 0x590) % 10 == 8) { return "motion (BObjMdl.anims, BtlObj_BindTables)"; }
+    if (id >= 0x590 && id < 0xBDA && (id - 0x590) % 10 == 9) {
+        return i <= 5 ? "BObjMdl.unk84 (BtlObj_BindTables)"
+             : i == 6 ? "character effect pack (BtlScene_GetCharPackEntry)" : NULL;
+    }
+    if (id >= 0x171 && id < 0x1BF) {
+        for (k = 0; k < sizeof(stage) / sizeof(stage[0]); k++) {
+            if (i >= stage[k].from && i <= stage[k].to) { return stage[k].what; }
+        }
+        return "not read by the game (no BtlStage_GetFileMember or header word read of it)";
+    }
+    return NULL;
+}
+
+/* Whether the part at b is an emitter set's header (EftSetHead, battle/eft_h.h): the group table after it adds
+   up to its part count. Its resources follow it in the same table (EftEmit_LoadSet): for each group of a kind
+   other than 0, nRes texture sets, then one parameter block per part (two, a and b, but for kinds 2 and 14). */
+static int eft_set(const uint8_t *b, uint32_t n, uint32_t *after) {
+    uint32_t g, nGroups, parts = 0, next = 0;
+    if (n < 0x20) { return 0; }
+    nGroups = b[4];
+    if (nGroups == 0 || nGroups > 16 || 0x20 + nGroups * 0x20 > n) { return 0; }
+    for (g = 0; g < nGroups; g++) {
+        const uint8_t *d = b + 0x20 + g * 0x20;
+        if (d[0] > 0x20) { return 0; }
+        parts += d[1];
+        if (d[0] != 0) { next += d[2] + d[1] * (d[0] == 2 || d[0] == 0xE ? 1u : 2u); }
+    }
+    if (parts != b[5] || parts == 0) { return 0; }
+    *after = next;
+    return 1;
+}
+
+static void xml_unknown(const uint8_t *b, uint32_t n) {
+    char head[3 * 16 + 1] = "";
+    uint32_t i;
+    if (sXml == NULL) { return; }
+    for (i = 0; i < 16 && i < n; i++) { sprintf(head + i * 3, "%02X%s", b[i], i + 1 < 16 && i + 1 < n ? " " : ""); }
+    {   /* what it is, where its first bytes tell (none of these hold textures: the game's are in texture tables) */
+        const char *kind = n >= 4 && b[0] == 0x80 && b[1] == 0x00 ? "adx sound"
+                         : n >= 4 && memcmp(b, "pmdl", 4) == 0 ? "model (pmdl)"
+                         : n >= 4 && memcmp(b, "IECS", 4) == 0 ? "sound bank header"
+                         : n >= 2 && b[0] == 0xFF && b[1] == 0xFE ? "text (UTF-16)"
+                         : n >= 4 && memcmp(b, "LIPS", 4) == 0 ? "lip sync"
+                         : n >= 4 && memcmp(b, "CMAn", 4) == 0 ? "camera animation"
+                         : n >= 4 && memcmp(b, "FOD\x11", 4) == 0 ? "menu layout (FOD)"
+                         : n >= 4 && memcmp(b, "V000", 4) == 0 ? "sprite animation (V000)"
+                         : n >= 8 && memcmp(b, "\0\0\0\x01\xD0\x07\0\0", 8) == 0 ? "item table (GetWin_Init part 10)"
+                         : n >= 4 && memcmp(b, "5tnF", 4) == 0 ? "font (Font_SetFont)"
+                         : n >= 4 && memcmp(b, "cmdl", 4) == 0 ? "stage change model (cmdl, EftBurst_RelocateModel)"
+                         : n >= 4 && memcmp(b, "GSCF", 4) == 0 ? "battle script (GSCF, gsc.c)"
+                         : n >= 4 && memcmp(b, "MAPD", 4) == 0 ? "stage data (StgDataA, BtlStage_BindData)"
+                         : n >= 4 && memcmp(b, "MEF0", 4) == 0 ? "stage effect points (MEF0)"
+                         : n >= 4 && memcmp(b, "EVPp", 4) == 0 ? "paths (StgPathTable)"
+                         : n >= 4 && b[3] == 0x60 && b[2] == 0x00 ? "VU1 geometry (DMA chain)"
+                         : n >= 0x94 && b[0] == 0x61 ? "motion (bobj_a.h BobjAnim)"
+                         : spu_adpcm(b, n) ? "sound samples (SPU ADPCM)"
+                         : NULL;
+        uint32_t up = gs_uploads(b, n);
+        if (sRole != NULL) { kind = sRole; }
+        sUnknownUploads += up;
+        if (kind != NULL) { xml(0, "<data kind=\"%s\" size=\"%u\" gs_uploads=\"%u\"/>", kind, n, up); }
+        else { xml(0, "<unknown size=\"%u\" head=\"%s\" gs_uploads=\"%u\"/>", n, head, up); }
+    }
+}
+static const char *psm_name(uint32_t psm) {
+    switch (psm) {
+    case 0x00: return "CT32"; case 0x01: return "CT24"; case 0x02: return "CT16"; case 0x0A: return "CT16S";
+    case 0x13: return "T8"; case 0x14: return "T4"; case 0x1B: return "T8H"; case 0x24: return "T4HL"; case 0x2C: return "T4HH";
+    default: return "?";
+    }
+}
+
 /* A texture file's header at b + hdr, its offsets counted from b (n bytes; the game's Res_RelocateOffsets takes the
    two apart: a table inside a resource file can count from the whole file): its textures out. 0 = not one. */
 static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
@@ -279,17 +508,34 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
         ok += pix != 0 && size != 0; /* (a table of nothing but palettes, or of nothing, is not taken for one) */
     }
     if (ok == 0) { return 0; }
+    xml(1, "<textures at=\"0x%X\" count=\"%u\">", hdr, count);
     for (i = 0; i < count; i++) {
         const uint8_t *e = b + ent + i * 0x40;
         uint32_t pix = rd32(e) * 4, size = rd32(e + 8), clut = rd32(e + 4) * 4, csize = rd32(e + 12), psm;
         uint64_t t0;
         memcpy(&t0, e + 0x30, 8);
         psm = (t0 >> 20) & 63;
+        if (pix != 0 && size != 0) {
+            xml(0, "<tex i=\"%u\" psm=\"%s\" w=\"%u\" h=\"%u\" clut=\"%s\" as=\"%s\"/>", i, psm_name(psm), 1u << ((t0 >> 26) & 15),
+                1u << ((t0 >> 30) & 15), clut != 0 && csize != 0 ? "yes" : "no",
+                psm == 0x13 || psm == 0x14 ? "indexed" : psm <= 0x0A ? "direct" : "NOT CONVERTED");
+        } else if (clut != 0 && csize != 0) {
+            xml(0, "<tex i=\"%u\" palette-only=\"yes\"/>", i);
+        }
         if (clut != 0 && csize != 0) { pal_emit(b + clut, csize, rd32(e + 0x1C)); }
         if (pix == 0 || size == 0) { continue; }
         sStat[0]++;
-        if (psm != 0x13 && psm != 0x14) { sStat[3]++; pal_emit(b + pix, size, rd32(e + 0x18)); continue; } /* (a palette kept as an
-                                                                                                 entry of its own) */
+        if (psm != 0x13 && psm != 0x14) {
+            sStat[3]++;
+            pal_emit(b + pix, size, rd32(e + 0x18)); /* (it may be a palette kept as an entry of its own) */
+            if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) {
+                memset(sVram, 0, sizeof(sVram));
+                if (upload(b + pix, size, rd32(e + 0x18), 0, 1)) {
+                    emit_direct(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
+                }
+            }
+            continue;
+        }
         memset(sVram, 0, sizeof(sVram));
         if (!upload(b + pix, size, rd32(e + 0x18), 0, 1)) { sStat[4]++; continue; }
         sStat[psm == 0x14 ? 1 : 2]++;
@@ -298,6 +544,7 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
         }
         emit(sKey, psm, (t0 >> 14) & 63, 1u << ((t0 >> 26) & 15), 1u << ((t0 >> 30) & 15));
     }
+    xml(-1, "</textures>");
     return 1;
 }
 
@@ -316,9 +563,13 @@ static uint8_t *bpe(const uint8_t *src, uint32_t n, uint32_t *outSize) { /* src/
             for (i = 0; i <= count && c < 256; i++, c++) {
                 if (in >= end) { goto bad; }
                 left[c] = *in++;
-                if (c != left[c]) { right[c] = *in++; }
+                if (c != left[c]) {
+                    if (in >= end) { goto bad; }
+                    right[c] = *in++;
+                }
             }
             if (c == 256) { break; }
+            if (in >= end) { goto bad; }
             count = *in++;
         }
         if (in + 2 > end) { goto bad; }
@@ -354,47 +605,80 @@ bad:
    anything else is searched for texture tables. */
 /* Something of a format of its own (a stage's or a model's resources): every texture table in it, wherever its
    header is, counting from b (as the game finds them: by an offset in the format's own header). */
+/* Texture tables anywhere in b (a format of its own): counting from themselves (as the game's (res, res, res)) or
+   from b. */
 static int search(const uint8_t *b, uint32_t n) {
     uint32_t h;
     int found = 0;
     for (h = 0; h + 0x20 <= n; h += 4) {
         uint32_t count = rd32(b + h), ent = rd32(b + h + 4) * 4;
-        if (count == 0 || count > 1024 || ent < 0x10 || ent > n || (n - ent) / 0x40 < count) { continue; }
-        found |= texfile(b, n, h);
+        if (count == 0 || count > 1024 || ent < 0x10) { continue; }
+        if (ent <= n - h && (n - h - ent) / 0x40 >= count && texfile(b + h, n - h, 0)) { found = 1; continue; }
+        if (ent <= n && (n - ent) / 0x40 >= count) { found |= texfile(b, n, h); }
     }
     return found;
 }
 
+/* Whatever b is: a texture file, BPE, a table of parts (u32 count, then count offsets; the game's MPACK_AT takes
+   the low two bits off), or a format of its own searched through. Each into the catalogue. */
 static int scan(const uint8_t *b, uint32_t n, int depth) {
     uint32_t count, i, found = 0;
-    if (n < 16 || depth > 4) { return 0; }
+    if (n < 16 || depth > 6) { xml_unknown(b, n); return 0; }
     if (texfile(b, n, 0)) { return 1; }
-    if (rd32(b + 4) <= n - 8 && rd32(b + 4) + 8 + 16 >= n && rd32(b) >= rd32(b + 4) && rd32(b) < (64u << 20)) {
+    if (rd32(b + 4) <= n - 8 && rd32(b + 4) + 8 + 2048 > n && rd32(b) < (64u << 20)) { /* (padded
+                                                                      to 0x40 in an archive, to a sector as a file) */
         uint32_t size;
         uint8_t *raw = bpe(b, n, &size);
         if (raw != NULL) {
             sStat[7]++;
+            xml(1, "<bpe packed=\"%u\" size=\"%u\">", n, size);
             found = (uint32_t)scan(raw, size, depth + 1);
+            xml(-1, "</bpe>");
             free(raw);
             return (int)found;
         }
     }
     count = rd32(b);
-    if (count == 0 || count > 0x10000 || 4 + count * 4 > n) { return search(b, n); }
-    for (i = 0; i < count; i++) {
-        uint32_t o = rd32(b + 4 + i * 4);
-        if (o != 0 && (o < 4 + count * 4 || o > n || o % 4)) { return search(b, n); } /* (one at the end: an empty part) */
+    for (i = 0; count != 0 && count <= 0x10000 && 4 + count * 4 <= n && i < count; i++) {
+        uint32_t o = rd32(b + 4 + i * 4) & ~3u;
+        if (o != 0 && (o < 4 + count * 4 || o > n)) { break; } /* (one at the end: an empty part) */
     }
+    if (count == 0 || count > 0x10000 || 4 + count * 4 > n || i < count) {
+        found = (uint32_t)search(b, n);
+        if (!found) { xml_unknown(b, n); }
+        return (int)found;
+    }
+    xml(1, "<table count=\"%u\">", count);
+    {
+    const char *parent = sRole;
+    uint32_t setLeft = 0;
     for (i = 0; i < count; i++) {
-        uint32_t o = rd32(b + 4 + i * 4), end = n, j;
+        uint32_t o = rd32(b + 4 + i * 4) & ~3u, end = n, j;
         if (o == 0 || o == n) { continue; }
+        if (i + 1 < count && (rd32(b + 8 + i * 4) & ~3u) == o) { continue; } /* empty: its offset is the next one's
+                                                                                (BtlStage_GetFileMember) */
         for (j = 0; j < count; j++) { /* the part runs to the next part */
-            uint32_t q = rd32(b + 4 + j * 4);
+            uint32_t q = rd32(b + 4 + j * 4) & ~3u;
             if (q > o && q < end) { end = q; }
         }
-        if (!scan(b + o, end - o, depth + 1) && !texfile(b, n, o)) { continue; } /* (counting from the part, or the file) */
-        found = 1;
+        xml(1, "<part i=\"%u\" at=\"0x%X\" size=\"%u\">", i + 1, o, end - o);
+        {
+            uint32_t after;
+            sRole = depth == 0 ? file_role(sFileId, i + 1) : parent;
+            if (eft_set(b + o, end - o, &after)) { sRole = "effect emitter set header (EftSetHead, EftEmit_LoadSet)"; setLeft = after; }
+            else if (setLeft != 0) {
+                setLeft--;
+                snprintf(sRoleBuf, sizeof(sRoleBuf), "effect emitter resource or parameters (EftEmit_LoadSet)");
+                sRole = sRoleBuf;
+            }
+        }
+        if (texfile(b, n, o)) { found = 1; } /* (counting from the whole file: Res_RelocateOffsets with another base) */
+        else { found |= (uint32_t)scan(b + o, end - o, depth + 1); }
+        sRole = parent;
+        xml(-1, "</part>");
     }
+    }
+    xml(-1, "</table>");
     return (int)found;
 }
 
@@ -415,6 +699,7 @@ int main(int argc, char **argv) {
     }
     tables_init();
     sDump = getenv("DC_TEX_DUMP");
+    if (getenv("DC_TEX_XML") != NULL && (sXml = fopen(getenv("DC_TEX_XML"), "w")) != NULL) { fprintf(sXml, "<disc>\n"); sXd = 1; }
     snprintf(tmp, sizeof(tmp), "%s.data", argv[1]);
     sData = fopen(tmp, "wb+");
     if (sData == NULL) { perror(tmp); return 1; }
@@ -434,8 +719,16 @@ int main(int argc, char **argv) {
             n = ftell(f);
             fseek(f, 0, SEEK_SET);
             b = malloc((size_t)n + 16);
-            if (n >= 0x30 && fread(b, 1, (size_t)n, f) == (size_t)n && memcmp(b + 0x20, "(c)CRI", 6) != 0) { /* (not ADX sound) */
-                sStat[6] += (unsigned)scan(b, (uint32_t)n, 0);
+            if (n >= 0x30 && fread(b, 1, (size_t)n, f) == (size_t)n) {
+                const char *dn = strrchr(argv[d], '/') ? strrchr(argv[d], '/') + 1 : argv[d];
+                long idx = strtol(de->d_name, NULL, 10);
+                long id = strcmp(dn, "pzs3us1") == 0 ? idx + 1 : strcmp(dn, "pzs3us2") == 0 ? idx + 0xD48 : -idx;
+                sFileId = id < 0 ? 0 : id;
+                sRole = NULL;
+                xml(1, "<file name=\"%s/%s\" id=\"0x%lX\" size=\"%ld\">", dn, de->d_name, id < 0 ? 0 : id, n);
+                if (memcmp(b + 0x20, "(c)CRI", 6) == 0) { xml(0, "<adx/>"); } /* (sound) */
+                else { sStat[6] += (unsigned)scan(b, (uint32_t)n, 0); }
+                xml(-1, "</file>");
             }
             free(b);
             fclose(f);
@@ -476,6 +769,11 @@ int main(int argc, char **argv) {
     fclose(f);
     fclose(sData);
     remove(tmp);
+    if (sXml != NULL) {
+        fprintf(sXml, "</disc>\n");
+        fclose(sXml);
+        printf("dc_tex: %u GS image transfers in parts that are not texture tables\n", sUnknownUploads);
+    }
     printf("dc_tex: %u files with textures (%u BPE parts unpacked); %u textures: %u 4-bit, %u 8-bit, %u 32-bit (the palettes kept as entries of their own); "
            "%u palettes; %u packets not understood; %u duplicates; %u in %s (%u KB)\n",
            sStat[6], sStat[7], sStat[0], sStat[1], sStat[2], sStat[3], sStat[8], sStat[4], sStat[5], kept, argv[1], base >> 10);
