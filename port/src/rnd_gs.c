@@ -373,10 +373,8 @@ static void follow(const uint32_t *pkt, unsigned bytes) {
     X(sDirtyVal) X(sDirtyPrim) X(sDirty) X(sRgba) X(sS) X(sT) X(sQ) X(sU) X(sVv)
 #define SNAP_SIZE(v) + sizeof(v)
 #define SNAP_PUT(v) memcpy(b, &v, sizeof(v)); b += sizeof(v);
-#define SNAP_GET(v) memcpy(&v, b, sizeof(v)); b += sizeof(v);
 typedef uint8_t Snap[0 SNAP(SNAP_SIZE)];
 static void snap(uint8_t *b) { SNAP(SNAP_PUT) }
-static void unsnap(const uint8_t *b) { SNAP(SNAP_GET) }
 static struct { const void *from; unsigned n; } sFrom[256];
 static unsigned sFromN, sFromFrames;
 static int follow_log(void) {
@@ -412,17 +410,6 @@ void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from) {
     }
 }
 
-void Rnd_GsFollowLog(const uint32_t *pkt, unsigned bytes, const void *from) {
-    Snap before, after;
-    if (!follow_log() || sInOt) {
-        return;
-    }
-    snap(before);
-    follow(pkt, bytes);
-    snap(after);
-    if (memcmp(before, after, sizeof(before)) != 0) { follow_changed(from); }
-    unsnap(before);
-}
 #endif
 
 void Rnd_OtBegin(void) {

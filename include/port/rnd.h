@@ -123,13 +123,8 @@ int Port_Poly(const RndPoly *p); /* as Port_Quad */
    sets, followed into gRndCtx from each packet the list gets as well (src/sys/dma.c: DMA CNT tags and their VIF
    DIRECT data, as Dma_AddData / Dma_EndDirect close them). Elsewhere the producers set it (Rnd_GsReg) and nothing
    reads the packets. */
-void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from);
-/* BT3_FOLLOW_LOG=1 where the list is not read: what a packet would change of the state, not applied: its producer
-   (from) counted if anything (a producer that does not set all of its state directly) */
-void Rnd_GsFollowLog(const uint32_t *pkt, unsigned bytes, const void *from);
-#define PORT_FOLLOW_LOG(pkt, bytes, from) Rnd_GsFollowLog((const uint32_t *)(pkt), bytes, from)
-#else
-#define PORT_FOLLOW_LOG(pkt, bytes, from) ((void)0)
+void Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from); /* from: the producer (BT3_FOLLOW_LOG=1:
+   the producers whose packets still change the state after they set it directly, by BT3_WALK=1 or 2) */
 #endif
 void Rnd_GsFollowFrame(void);
 /* A GS register's value as the game sets it (address of context 1's register, + 1 for context 2's; PRIM 0x00,

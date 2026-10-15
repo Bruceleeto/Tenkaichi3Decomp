@@ -150,11 +150,21 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba);
 #ifdef PORT
 void Dma_AddFillState(u32 rgba);
 #include "port/rnd.h"
-/* An A+D write just put in a packet, the value at d[i] and the register at d[i + 1]: into the renderer's state as
-   well (port/src/rnd_gs.c Rnd_GsReg), where the display list is not read for it. */
-#define PORT_AD(d, i) Rnd_GsReg((u32)(d)[(i) + 1], (u64)(d)[i])
+/* PORT_REG: an A+D write of a GS register (r, value v), straight into the renderer's state (port/src/rnd_gs.c
+   Rnd_GsReg); the pair put in the packet at d[i], d[i + 1] only where the display list is read (the PS2 reference,
+   Port_ListRead). PORT_PKT: a pair that only the list needs (a GIF tag and its register list): only there. On the
+   Dreamcast nothing reads the list: neither writes the packet. */
+#ifdef PORT_GS_REF
+#define PORT_REG(d, i, r, v) do { u64 v_ = (u64)(v); Rnd_GsReg((u32)(r), v_); \
+    if (Port_ListRead()) { (d)[i] = v_; (d)[(i) + 1] = (r); } } while (0)
+#define PORT_PKT(d, i, a, b) do { if (Port_ListRead()) { (d)[i] = (a); (d)[(i) + 1] = (b); } } while (0)
 #else
-#define PORT_AD(d, i) ((void)0)
+#define PORT_REG(d, i, r, v) Rnd_GsReg((u32)(r), (u64)(v))
+#define PORT_PKT(d, i, a, b) ((void)0)
+#endif
+#else
+#define PORT_REG(d, i, r, v) do { (d)[i] = (v); (d)[(i) + 1] = (r); } while (0)
+#define PORT_PKT(d, i, a, b) do { (d)[i] = (a); (d)[(i) + 1] = (b); } while (0)
 #endif
 void Dma_PutTexStrips(GsQword **pp, s32 x0, s32 y0, s32 x1, s32 y1, s32 xFrac, s32 yFrac, s32 u0, s32 v0, s32 u1, s32 v1,
                       s32 uFrac, s32 vFrac, u32 rgba, s32 blend);

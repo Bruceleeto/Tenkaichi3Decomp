@@ -36,7 +36,6 @@ void Dma_AddData(void *src, s32 size) {
 #ifdef PORT
     if (!Port_ListRead()) { /* nothing reads the list (the Dreamcast; BT3_WALK=3): nothing kept, the producers having
                                set the state directly (Rnd_GsReg) and queued their draws as records */
-        PORT_FOLLOW_LOG(src, size, __builtin_return_address(0));
         return;
     }
 #ifdef PORT_GS_REF
@@ -130,7 +129,6 @@ void Dma_EndDirect(u64 *end) {
         tag[3] = VIF_DIRECT | qwc;
 #ifdef PORT
         if (!Port_ListRead()) { /* (nothing reads the list: as Dma_AddData) */
-            PORT_FOLLOW_LOG(tag, (qwc + 1) << 4, __builtin_return_address(0));
             return;
         }
 #ifdef PORT_GS_REF
@@ -638,28 +636,17 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
         goto sprites;
     }
 #endif
-    p[0] = GIF_TAG(5, 0, 1);
-    p[1] = GIF_REG_AD;
+    PORT_PKT(p, 0, GIF_TAG(5, 0, 1), GIF_REG_AD);
     p += 2;
-    p[0] = 0x44;
-    p[1] = GS_ALPHA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_ALPHA_1, 0x44);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = GS_TEST_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_TEST_1, 0x30000);
     p += 2;
-    p[0] = 0;
-    p[1] = GS_FBA_1;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_FBA_1, 0);
     p += 2;
-    p[0] = 0x46;
-    p[1] = GS_PRIM;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_PRIM, 0x46);
     p += 2;
-    p[0] = (u64)rgba | (0x3F800000ULL << 32);
-    p[1] = GS_RGBAQ;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, GS_RGBAQ, (u64)rgba | (0x3F800000ULL << 32));
     p += 2;
 #ifdef PORT
 sprites:
@@ -671,8 +658,7 @@ sprites:
         p[1] = GS_SET_XYZ((x << 4) + ((i * 32 + 32) << 4), (y + h) << 4, 0);
         p += 2;
     }
-    tag[0] = GIF_TAG_EX(n, 1, GIF_FLG_REGLIST, 2);
-    tag[1] = GS_REG_XYZ2 | (GS_REG_XYZ2 << 4);
+    PORT_PKT(tag, 0, GIF_TAG_EX(n, 1, GIF_FLG_REGLIST, 2), GS_REG_XYZ2 | (GS_REG_XYZ2 << 4));
     Dma_EndDirect(p);
 }
 
@@ -685,19 +671,13 @@ void Dma_PutTexStrips(GsQword **pp, s32 x0, s32 y0, s32 x1, s32 y1, s32 xFrac, s
     s32 w = x1 - x0;
     s32 i;
 
-    (*pp)->d[0] = GIF_TAG(2, 0, 1);
-    (*pp)->d[1] = GIF_REG_AD;
+    PORT_PKT((*pp)->d, 0, GIF_TAG(2, 0, 1), GIF_REG_AD);
     (*pp)++;
-    (*pp)->d[0] = blend ? 0x156 : 0x116;
-    (*pp)->d[1] = GS_PRIM;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_PRIM, blend ? 0x156 : 0x116);
     (*pp)++;
-    (*pp)->d[0] = (u64)rgba | (0x3F800000ULL << 32);
-    (*pp)->d[1] = GS_RGBAQ;
-    PORT_AD((*pp)->d, 0);
+    PORT_REG((*pp)->d, 0, GS_RGBAQ, (u64)rgba | (0x3F800000ULL << 32));
     (*pp)++;
-    (*pp)->d[0] = GIF_TAG_EX(n, 1, GIF_FLG_REGLIST, 4);
-    (*pp)->d[1] = 0x5353;
+    PORT_PKT((*pp)->d, 0, GIF_TAG_EX(n, 1, GIF_FLG_REGLIST, 4), 0x5353);
     (*pp)++;
     if (w % n == 0) {
         s32 dx = w / n;
