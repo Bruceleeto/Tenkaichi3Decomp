@@ -270,9 +270,11 @@ void Tex_UploadPixels(TexEntry *e, s32 tbp) {
 /* Queues the upload of a texture's CLUT to GS block `cbp`. */
 void Tex_UploadClut(TexEntry *e, s32 cbp) {
     if (e->clutOfs != 0) {
-        gTexBltPacket.bitbltbuf = ((s64)cbp << 32) | ((u64)e->clutBlt << 48);
-        Dma_AddData(&gTexBltPacket, sizeof(TexBltPacket));
-        Dma_AddRef(e->clut, e->clutSize);
+        if (!Port_PalNative(e->clut, e->clutSize, e->clutBlt, cbp)) {
+            gTexBltPacket.bitbltbuf = ((s64)cbp << 32) | ((u64)e->clutBlt << 48);
+            Dma_AddData(&gTexBltPacket, sizeof(TexBltPacket));
+            Dma_AddRef(e->clut, e->clutSize);
+        }
     }
 }
 

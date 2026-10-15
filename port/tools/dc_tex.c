@@ -4,12 +4,14 @@
  * BPE-packed), its 4-bit and 8-bit pixels as the PVR takes them: indices in twiddled order (PAL4: two to a byte,
  * the first in the low nibble; PAL8 or a VQ index map: one to a byte). The game uploads most of them as 32-bit
  * pixels, so each upload packet goes through GS memory as the GS would store it and is read back in the texture's
- * own format. Palettes are left to the game: it changes them while it runs.
+ * own format. Palettes too (every entry's, and the palettes kept as entries of their own): their colours as GS
+ * memory holds them, in the order the indices count. The ones the game changes while it runs, it still sends.
  *
  * One pack, keyed by a hash of the upload's image data (the first width x height pixels of it, as the GS got them:
  * what port/src/gs/gs_core.c keeps of every 32-bit upload, Gs_SrcKey), so a texture is found however the game
  * loaded its file:
- *     "BT3T" u32 count, then count x {u64 key; u32 offset; u16 w, h; u8 bits, 0, 0, 0} sorted by key, then data
+ *     "BT3T" u32 count, then count x {u64 key; u32 offset; u16 w, h; u8 bits, psm, 0, 0} sorted by key, then data
+ * (a palette: bits 32, w its colours (16 or 256), h 1, psm its format; one u32 a colour)
  * Run it again whenever this changes; nothing else depends on its output.
  *
  *     dc_tex OUT.pak DIR...
@@ -97,7 +99,8 @@ static int psm_bits(uint32_t psm) {
 /* An upload packet (a VIF DIRECT, then GIF tags: TRXPOS / TRXREG by A+D, then IMAGE) into GS memory at block dbp,
    with BITBLTBUF's width and format from the entry (`blt`, BITBLTBUF bits 48..63); write = 0: only read through.
    0 = not such a packet. */
-static uint64_t sKey; /* upload(): the hash of the image data */
+static uint64_t sKey;              /* upload(): the hash of the image data */
+static uint32_t sSx, sSy, sRw, sRh; /* and its rectangle */
 static int upload(const uint8_t *p, uint32_t size, uint32_t blt, uint32_t dbp, int write) {
     uint32_t dbw = blt & 63, dpsm = (blt >> 8) & 63, bits = (uint32_t)psm_bits(dpsm);
     uint32_t sx = 0, sy = 0, rw = 0, rh = 0, x = 0, y = 0, i, n, at = 0, images = 0;
@@ -123,6 +126,7 @@ static int upload(const uint8_t *p, uint32_t size, uint32_t blt, uint32_t dbp, i
             }
         } else if (flg == 2) { /* IMAGE */
             if (rw == 0 || rh == 0) { return 0; }
+            sSx = sx; sSy = sy; sRw = rw; sRh = rh;
             n = nloop * 16;
             if (at + n > size) { n = size - at; }
             if (images == 0) { want = rw * rh * bits / 8; }
@@ -170,14 +174,16 @@ typedef struct Out {
     uint64_t key;
     uint32_t offset;
     uint16_t w, h;
-    uint8_t bits;
+    uint8_t bits, psm; /* a palette: bits 32, w its colours, h 1, psm its format (CT32 / CT16) */
 } Out;
 static Out *sOut;
 static uint32_t sOutN, sOutCap;
 static FILE *sData;
 static uint32_t sDataBytes;
-static unsigned sStat[8]; /* texture entries, 4-bit, 8-bit, other formats, bad packets, duplicates, files with textures, BPE parts */
+static unsigned sStat[9]; /* texture entries, 4-bit, 8-bit, other formats, bad packets, duplicates, files with textures, BPE parts,
+                             palettes */
 
+static void out_add(uint64_t key, uint32_t w, uint32_t h, uint32_t bits, uint32_t psm, const void *data, uint32_t bytes);
 static void emit(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, uint32_t th) {
     uint32_t w = tw < 8 ? 8 : tw, h = th < 8 ? 8 : th, bits = psm == 0x14 ? 4 : 8, bytes = w * h * bits / 8, x, y;
     uint8_t *buf;
@@ -189,6 +195,11 @@ static void emit(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, uint32_t
             else { buf[t] = (uint8_t)v; }
         }
     }
+    out_add(key, w, h, bits, psm, buf, bytes);
+    free(buf);
+}
+
+static void out_add(uint64_t key, uint32_t w, uint32_t h, uint32_t bits, uint32_t psm, const void *data, uint32_t bytes) {
     if (sOutN == sOutCap) {
         sOutCap = sOutCap ? sOutCap * 2 : 4096;
         sOut = realloc(sOut, sOutCap * sizeof(Out));
@@ -198,10 +209,25 @@ static void emit(uint64_t key, uint32_t psm, uint32_t tbw, uint32_t tw, uint32_t
     sOut[sOutN].w = (uint16_t)w;
     sOut[sOutN].h = (uint16_t)h;
     sOut[sOutN].bits = (uint8_t)bits;
+    sOut[sOutN].psm = (uint8_t)psm;
     sOutN++;
-    fwrite(buf, 1, bytes, sData);
+    fwrite(data, 1, bytes, sData);
     sDataBytes += bytes;
-    free(buf);
+}
+
+/* A palette upload (16x16: 256 colours, 8x2: 16), its colours in the order the indices count (256: bits 3 and 4
+   exchanged, CSM1), as GS memory holds them: the game's own expansion (TEXA) stays the renderer's. */
+static void pal_emit(const uint8_t *p, uint32_t size, uint32_t blt) {
+    uint32_t dpsm = (blt >> 8) & 63, n, i, col[256];
+    if ((dpsm != 0x00 && dpsm != 0x02 && dpsm != 0x0A) || !upload(p, size, blt, 0, 1)) { return; }
+    n = sRw == 16 && sRh == 16 ? 256 : sRw == 8 && sRh == 2 ? 16 : 0;
+    if (n == 0) { return; }
+    for (i = 0; i < n; i++) {
+        uint32_t j = n == 16 ? i : (i & ~0x18u) | (i & 8) << 1 | (i & 0x10) >> 1;
+        col[i] = vram_rw(0, blt & 63, dpsm, sSx + j % sRw, sSy + j / sRw, 0, 0);
+    }
+    sStat[8]++;
+    out_add(sKey, n, 1, 32, dpsm, col, n * 4);
 }
 
 static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
@@ -255,13 +281,15 @@ static int texfile(const uint8_t *b, uint32_t n, uint32_t hdr) {
     if (ok == 0) { return 0; }
     for (i = 0; i < count; i++) {
         const uint8_t *e = b + ent + i * 0x40;
-        uint32_t pix = rd32(e) * 4, size = rd32(e + 8), psm;
+        uint32_t pix = rd32(e) * 4, size = rd32(e + 8), clut = rd32(e + 4) * 4, csize = rd32(e + 12), psm;
         uint64_t t0;
         memcpy(&t0, e + 0x30, 8);
         psm = (t0 >> 20) & 63;
+        if (clut != 0 && csize != 0) { pal_emit(b + clut, csize, rd32(e + 0x1C)); }
         if (pix == 0 || size == 0) { continue; }
         sStat[0]++;
-        if (psm != 0x13 && psm != 0x14) { sStat[3]++; continue; }
+        if (psm != 0x13 && psm != 0x14) { sStat[3]++; pal_emit(b + pix, size, rd32(e + 0x18)); continue; } /* (a palette kept as an
+                                                                                                 entry of its own) */
         memset(sVram, 0, sizeof(sVram));
         if (!upload(b + pix, size, rd32(e + 0x18), 0, 1)) { sStat[4]++; continue; }
         sStat[psm == 0x14 ? 1 : 2]++;
@@ -432,6 +460,7 @@ int main(int argc, char **argv) {
         memcpy(rec + 12, &sOut[i].w, 2);
         memcpy(rec + 14, &sOut[i].h, 2);
         rec[16] = sOut[i].bits;
+        rec[17] = sOut[i].psm;
         memcpy(rec + 8, &off, 4);
         fwrite(rec, 1, 20, f);
         base += (uint32_t)sOut[i].w * sOut[i].h * sOut[i].bits / 8;
@@ -447,8 +476,8 @@ int main(int argc, char **argv) {
     fclose(f);
     fclose(sData);
     remove(tmp);
-    printf("dc_tex: %u files with textures (%u BPE parts unpacked); %u textures: %u 4-bit, %u 8-bit, %u 32-bit (the palettes kept as entries of their own: left), "
-           "%u packets not understood; %u duplicates; %u in %s (%u KB)\n",
-           sStat[6], sStat[7], sStat[0], sStat[1], sStat[2], sStat[3], sStat[4], sStat[5], kept, argv[1], base >> 10);
+    printf("dc_tex: %u files with textures (%u BPE parts unpacked); %u textures: %u 4-bit, %u 8-bit, %u 32-bit (the palettes kept as entries of their own); "
+           "%u palettes; %u packets not understood; %u duplicates; %u in %s (%u KB)\n",
+           sStat[6], sStat[7], sStat[0], sStat[1], sStat[2], sStat[3], sStat[8], sStat[4], sStat[5], kept, argv[1], base >> 10);
     return 0;
 }

@@ -80,6 +80,8 @@ static PvrTex sWhiteRec = {8, 8, GS_TEXFMT_RGBA8, NULL, 0, 8, 8, 0, NULL};
 static uint32_t sTexBytes, sTexPeak, sTexLive; /* in PVR memory now, the most so far; textures there */
 static int sNatOn; /* the game's texture entries are PVR textures of their own (below: NatTex); BT3_TEXPAK= none */
 static unsigned sNatWhy[5]; /* records not native: not 4/8-bit, packet not read, not in the pack, another size; no record free */
+static unsigned sTintDraws; /* per 30 frames: draws with a tinted palette (Port_ClutTint) */
+static unsigned sPalMade[2]; /* per 30 frames: palettes made for a native one from tex.pak, out of GS memory */
 static unsigned sNatLive, sNatSteal, sNatMiss[4]; /* per frame, draws of a 4/8-bit texture not native: no record at
                                                      its block, record not native, another size or format; uploads not native */
 
@@ -368,6 +370,16 @@ static int clip_edge(const ClipV *in, int n, ClipV *out, int axis, float edge, f
 }
 
 
+/* The game's tints of a fighter's palettes (src/sys/gfxm_d_c.c ObjDraw_AddClutPass: on the PS2, sprites blended over
+   them in GS memory), made the PVR's way: every colour of the palette becomes colour * k + o, which the texture's
+   draws get as their vertex colour times k and the offset (specular) colour o times the vertex colour; `alpha` >= 0:
+   the palette's alpha replaced (the texture's alpha off, the vertices' times it). Per frame. As the GS layer has
+   it (gGsTint): k (0..255 = 0..1) in bits 0..23, o in 24..47, the alpha in 48..55 with bit 56, bit 63 set. */
+typedef struct NatTint { float k[3], o[3]; int alpha; } NatTint;
+static NatTint sTintNow;
+static const NatTint *sTintCur; /* the draw being sent: &sTintNow, or NULL */
+static int sTintFlat;           /* and it is a decal (the vertex colour not taken): its vertices as white */
+
 static void put_vertex(const ClipV *c, int last) {
     pvr_vertex_t pv;
     pv.flags = last ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
@@ -378,6 +390,14 @@ static void put_vertex(const ClipV *c, int last) {
     pv.v = c->v;
     pv.argb = (uint32_t)(c->c[3] + 0.5f) << 24 | (uint32_t)(c->c[0] + 0.5f) << 16 | (uint32_t)(c->c[1] + 0.5f) << 8 | (uint32_t)(c->c[2] + 0.5f);
     pv.oargb = 0;
+    if (sTintCur != NULL) {
+        const NatTint *t = sTintCur;
+        float r = sTintFlat ? 255.0f : c->c[0], g = sTintFlat ? 255.0f : c->c[1], b = sTintFlat ? 255.0f : c->c[2];
+        float a = sTintFlat ? 255.0f : c->c[3];
+        if (t->alpha >= 0) { a = a * (float)t->alpha / 255.0f; }
+        pv.argb = (uint32_t)(a + 0.5f) << 24 | (uint32_t)(r * t->k[0] + 0.5f) << 16 | (uint32_t)(g * t->k[1] + 0.5f) << 8 | (uint32_t)(b * t->k[2] + 0.5f);
+        pv.oargb = (uint32_t)(t->o[0] * r / 255.0f + 0.5f) << 16 | (uint32_t)(t->o[1] * g / 255.0f + 0.5f) << 8 | (uint32_t)(t->o[2] * b / 255.0f + 0.5f);
+    }
     pvr_prim(&pv, sizeof(pv));
 }
 
@@ -657,6 +677,22 @@ static void draw_one(uint32_t n, const PvrTex *t) {
     } else {
         pvr_poly_cxt_col(&cxt, PVR_LIST_TR_POLY);
         t = NULL;
+    }
+    sTintCur = NULL;
+    sTintFlat = 0;
+    if (t != NULL && d->tint != 0) {
+        for (k = 0; k < 3; k++) {
+            sTintNow.k[k] = (float)((d->tint >> (k * 8)) & 0xFF) / 255.0f;
+            sTintNow.o[k] = (float)((d->tint >> (24 + k * 8)) & 0xFF);
+        }
+        sTintNow.alpha = ((d->tint >> 56) & 1) ? (int)((d->tint >> 48) & 0xFF) : -1;
+        sTintCur = &sTintNow;
+        sTintDraws++;
+    }
+    if (sTintCur != NULL) { /* (a tinted palette: above) */
+        cxt.gen.specular = PVR_SPECULAR_ENABLE;
+        if (cxt.txr.env != PVR_TXRENV_MODULATEALPHA) { cxt.txr.env = PVR_TXRENV_MODULATEALPHA; sTintFlat = 1; }
+        if (sTintCur->alpha >= 0) { cxt.txr.alpha = PVR_TXRALPHA_DISABLE; }
     }
     bkey = key & 0x1FF;
     cxt.gen.culling = PVR_CULLING_NONE;
@@ -1131,11 +1167,14 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full)\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws);
+        sTintDraws = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
+        memset(sPalMade, 0, sizeof(sPalMade));
     }
+    memset(gGsTint, 0, sizeof(gGsTint)); /* (the tints are the frame's: the game sets them again for the next) */
 
     /* the shown buffer: the one sceGsSwapDBuff set up for this frame, else the first target (as gs_gl.c) */
     shown = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
@@ -1196,6 +1235,7 @@ typedef struct NatTex {
     int palOk, bank;   /* bank: a 4-bit one's, -1 none */
     int none;          /* not among the converted ones: uploaded as before */
     uint16_t next;     /* the next record of its sNatHash chain + 1 */
+    uint32_t sample;   /* pkt_sample of its pixels' packet when it was made */
     uint16_t var;      /* 8-bit: the next copy for another palette + 1 (a record of its own, not in sNatHash) */
     int isVar, pak;    /* a copy; the converted one's number in the pack */
     unsigned palFrame; /* 8-bit: the last frame drawn with the codebook */
@@ -1213,6 +1253,16 @@ static uint16_t argb4444(uint32_t c) { /* (alpha as the GS has it: 0x80 = opaque
 }
 
 static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+
+/* What a record's packet holds, in brief: its size and 16 bytes from the middle and the end of it. The game can
+   put another file where one was without freeing it (a copy within its heap): an entry or a packet at the same
+   address is then another one. */
+static uint32_t pkt_sample(const uint8_t *p, uint32_t size) {
+    uint32_t h = 2166136261u ^ size, i;
+    if (size < 32) { return h; }
+    for (i = 0; i < 16; i++) { h = (h ^ p[size / 2 + i]) * 16777619u; h = (h ^ p[size - 16 + i]) * 16777619u; }
+    return h;
+}
 
 /* The hash the converted ones are keyed by (port/tools/dc_tex.c): the upload packet's image data, its first
    width x height pixels. 0 = not such a packet. */
@@ -1242,6 +1292,8 @@ static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key)
     return images != 0 && rw != 0;
 }
 
+void Port_TexFreed(uint32_t lo, uint32_t hi);
+
 /* The record of entry e (made the first time: its PVR memory filled from the converted one). */
 static NatTex *nat_get(uint8_t *e) {
     uint32_t addr = Port_Addr(e), i, w, h, bits, psm, tw, th, bytes;
@@ -1251,7 +1303,11 @@ static NatTex *nat_get(uint8_t *e) {
     uint8_t *data;
 
     for (i = sNatHash[NAT_HASH(addr)]; i != 0; i = sNat[i - 1].next) {
-        if (sNat[i - 1].e == addr) { return &sNat[i - 1]; }
+        if (sNat[i - 1].e == addr) {
+            if (sNat[i - 1].sample == pkt_sample(Port_Ptr(rd32(e + 0x38)), rd32(e + 8))) { return &sNat[i - 1]; }
+            Port_TexFreed(addr, addr + 1); /* (another entry there now) */
+            break;
+        }
     }
     for (i = 0; i < MAX_NAT && sNat[i].e != 0; i++) {}
     if (i == MAX_NAT) { sNatWhy[4]++; return NULL; }
@@ -1261,6 +1317,7 @@ static NatTex *nat_get(uint8_t *e) {
     n->bank = -1;
     n->next = sNatHash[NAT_HASH(addr)];
     sNatHash[NAT_HASH(addr)] = (uint16_t)(i + 1);
+    n->sample = pkt_sample(Port_Ptr(rd32(e + 0x38)), rd32(e + 8));
     memcpy(&t0, e + 0x30, 8);
     psm = (t0 >> 20) & 63;
     tw = 1u << ((t0 >> 26) & 15);
@@ -1305,9 +1362,103 @@ int Port_TexNative(void *e, int tbp) {
     if (!sNatOn) { return 0; }
     if ((n = nat_get(e)) == NULL || n->none) { sNatMiss[3]++; return 0; }
     pkt[8] = (uint32_t)tbp & 0x3FFF;
-    pkt[9] = (uint32_t)(n - sNat + 1);
+    pkt[9] = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
     Dma_AddData(pkt, sizeof(pkt));
     return 1;
+}
+
+/* The palettes of tex.pak, by the address of the upload packet the game sends (the ones it changes while it runs it
+   still sends: drawn over in GS memory, gGsPal forgets them there). */
+#define MAX_PAL 2048
+typedef struct NatPal {
+    uint32_t addr;   /* the packet's game address; 0 = a free record */
+    int pak;         /* its number in the pack; -1 = not a palette of it */
+    uint32_t n, gen; /* colours (16 / 256); gen: the record's use, for GsPvr_PalKey */
+    uint32_t *col;   /* as GS memory holds them, in the order the indices count */
+    uint32_t sample; /* pkt_sample of the packet when it was made */
+    uint16_t next;   /* the next record of its sPalHash chain + 1 */
+} NatPal;
+static NatPal sPal[MAX_PAL];
+static uint16_t sPalHash[MAX_PAL];
+static uint32_t sPalGen;
+#define PAL_HASH(addr) (((addr) >> 4) * 2654435761u >> 21 & (MAX_PAL - 1))
+
+/* The game has just queued the upload of pkt to block `block` (gfxm_b_b.c, gfxm_c.c, gfxm_d_c.c, hud_c_c.c,
+   eft_det_a.c): 1 = it is a palette of the pack, not to be sent; a write of register 0x7D in its place tells the GS
+   layer which it is. */
+int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
+    extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
+    uint32_t m[12] = {0x10000002, 0, 0, 0x50000002, 0x00008001, 0x10000000, 0xE, 0, 0, 0, 0x7D, 0};
+    uint32_t addr = Port_Addr(pkt), i, w, h, bits;
+    uint64_t key;
+    NatPal *p = NULL;
+    int k;
+
+    if (!sNatOn) { return 0; }
+    for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
+        if (sPal[i - 1].addr == addr) {
+            if (sPal[i - 1].sample == pkt_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
+            Port_TexFreed(addr, addr + 1); /* (another packet there now) */
+            break;
+        }
+    }
+    if (p == NULL) {
+        for (i = 0; i < MAX_PAL && sPal[i].addr != 0; i++) {}
+        if (i == MAX_PAL) { return 0; }
+        p = &sPal[i];
+        memset(p, 0, sizeof(*p));
+        p->addr = addr;
+        p->gen = ++sPalGen;
+        p->pak = -1;
+        p->sample = pkt_sample(pkt, (uint32_t)size);
+        p->next = sPalHash[PAL_HASH(addr)];
+        sPalHash[PAL_HASH(addr)] = (uint16_t)(i + 1);
+        if (pkt_key(pkt, (uint32_t)size, blt, &key) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
+            TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
+            p->pak = k;
+            p->n = w;
+        }
+    }
+    if (p->pak < 0) { return 0; }
+    m[8] = (uint32_t)block & 0x3FFF;
+    m[9] = (uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16; /* (the blocks it covers) */
+    Dma_AddData(m, sizeof(m));
+    return 1;
+}
+
+/* The palette of the pack at block cbp, if it has n colours: in the order the indices count, as GS memory would
+   hold them. NULL = none there (it is in GS memory). */
+const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) {
+    uint32_t i = gGsPal[cbp & 16383];
+    return i != 0 && sPal[i - 1].addr != 0 && sPal[i - 1].n == n ? sPal[i - 1].col : NULL;
+}
+
+/* src/sys/gfxm_d_c.c ObjDraw_AddClutPass: the palettes of the two pages from block cbp are tinted this frame (k, o:
+   per channel, colour * k + o in 0..255; alpha >= 0: their alpha replaced by it, 0x80 = opaque). 0 = not done so
+   (the game draws its passes over them in GS memory as before). cbp < 0: no pass this frame (1: none drawn). */
+int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
+    extern void Dma_AddData(void *src, int size); /* src/sys/dma.c */
+    uint32_t m[16] = {0x10000003, 0, 0, 0x50000003, 0x00008002, 0x10000000, 0xE, 0, 0, 0, 0x7B, 0, 0, 0, 0x7C, 0};
+    uint64_t v = 1ull << 63;
+    int i;
+    if (!sNatOn) { return 0; }
+    if (cbp < 0) { return 1; } /* (no pass this frame: nothing to tint) */
+    for (i = 0; i < 3; i++) {
+        float kk = k[i] < 0.0f ? 0.0f : k[i] > 1.0f ? 1.0f : k[i], oo = o[i] < 0.0f ? 0.0f : o[i] > 255.0f ? 255.0f : o[i];
+        v |= (uint64_t)(uint32_t)(kk * 255.0f + 0.5f) << (i * 8) | (uint64_t)(uint32_t)(oo + 0.5f) << (24 + i * 8);
+    }
+    if (alpha >= 0) { v |= (uint64_t)gs_unit((uint32_t)alpha & 0xFF) << 48 | 1ull << 56; }
+    m[8] = (uint32_t)v;
+    m[9] = (uint32_t)(v >> 32);
+    m[12] = ((uint32_t)cbp >> 5) & 511;
+    Dma_AddData(m, sizeof(m));
+    return 1;
+}
+
+/* The palette at block cbp as a key that changes with it (0: not one of the pack's; gs_draw.c hashes GS memory). */
+uint32_t GsPvr_PalKey(uint32_t cbp) {
+    uint32_t i = gGsPal[cbp & 16383];
+    return i != 0 && sPal[i - 1].addr != 0 ? 0x80000000u | sPal[i - 1].gen : 0;
 }
 
 /* The game's heap block [lo, hi) is freed: the entries in it are no longer textures. */
@@ -1326,6 +1477,18 @@ void Port_TexFreed(uint32_t lo, uint32_t hi) {
             *p = n->next;
         }
         n->e = 0;
+    }
+    for (i = 0; i < MAX_PAL; i++) { /* and the palettes' packets in it */
+        NatPal *q = &sPal[i];
+        if (q->addr == 0 || q->addr < lo || q->addr >= hi) { continue; }
+        for (b = 0; b < 16384; b++) {
+            if (gGsPal[b] == i + 1) { gGsPal[b] = 0; }
+        }
+        for (p = &sPalHash[PAL_HASH(q->addr)]; *p != i + 1; p = &sPal[*p - 1].next) {}
+        *p = q->next;
+        free(q->col);
+        q->col = NULL;
+        q->addr = 0;
     }
 }
 
@@ -1362,6 +1525,7 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
     uint32_t idx = gGsNat[tbp & 16383], i, b;
     NatTex *n;
     uint16_t col[256];
+    const NatPal *pal;
 
     if (idx == 0) { sNatMiss[0]++; return 0; }
     n = &sNat[idx - 1];
@@ -1381,9 +1545,13 @@ GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_
         if (w == NULL && (w = nat_copy(n)) == NULL) { w = n; sNatSteal++; }
         n = w;
     }
-    for (i = 0; i < (n->bits == 8 ? 256u : 16u); i++) { /* the palette, in the order the indices count (as gs_draw.c) */
+    pal = gGsPal[cbp & 16383] != 0 ? &sPal[gGsPal[cbp & 16383] - 1] : NULL;
+    if (pal != NULL && (pal->addr == 0 || pal->n != (n->bits == 8 ? 256u : 16u))) { pal = NULL; }
+    sPalMade[pal == NULL]++;
+    for (i = 0; i < (n->bits == 8 ? 256u : 16u); i++) { /* the palette, in the order the indices count: the pack's, or
+                                                         read out of GS memory (as gs_draw.c) */
         uint32_t c = n->bits == 8 ? (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1) : i;
-        col[i] = argb4444(Gs_Expand(n->bits == 8 ? Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4) : Gs_VramRead(cbp, 1, cpsm, c & 7, c >> 3), cpsm));
+        col[i] = argb4444(Gs_Expand(pal != NULL ? pal->col[i] : n->bits == 8 ? Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4) : Gs_VramRead(cbp, 1, cpsm, c & 7, c >> 3), cpsm));
     }
     n->palKey = palKey;
     n->palOk = 1;

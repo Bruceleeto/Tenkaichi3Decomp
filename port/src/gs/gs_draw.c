@@ -126,11 +126,26 @@ static uint32_t tex_bucket(uint64_t t0, uint64_t texa, uint32_t gen) {
    written again. The page hashes are too coarse here: a page holds up to 32 palettes, and the game rewrites some
    of them every frame (lit palettes, the fighters' palettes painted for the see-through pass), which made every
    texture with a palette in the same page count as new and be decoded again, hundreds per frame on some stages. */
+#ifdef BT3_PVR
+GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey); /* gs_pvr.c */
+uint32_t GsPvr_PalKey(uint32_t cbp);
+const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n); /* (a palette of tex.pak, which GS memory does not have) */
+#else
+int Port_TexNative(void *e, int tbp) { (void)e; (void)tbp; return 0; } /* (gs_pvr.c's, without it: every upload as on the PS2) */
+int Port_PalNative(void *pkt, int size, uint32_t blt, int block) { (void)pkt; (void)size; (void)blt; (void)block; return 0; }
+static const uint32_t *GsPvr_Pal(uint32_t cbp, uint32_t n) { (void)cbp; (void)n; return NULL; }
+static uint32_t GsPvr_PalKey(uint32_t cbp) { (void)cbp; return 0; }
+int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) { (void)cbp; (void)k; (void)o; (void)alpha; return 0; }
+void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
+#endif
+
 static uint32_t clut_hash(uint32_t cbp, uint32_t cpsm, uint32_t count) {
     static struct { uint32_t key, gen0, gen1, hash; } memo[1024];
     uint32_t key = cbp << 5 | cpsm << 1 | (count == 256), slot = (key * 2654435761u) >> 22, h = 2166136261u, i;
     uint32_t g0 = gGsPageGen[(cbp / 32) & 511], g1 = gGsPageGen[(cbp / 32 + 1) & 511];
 
+    if ((h = GsPvr_PalKey(cbp)) != 0) { return h; } /* (a palette of tex.pak) */
+    h = 2166136261u;
     if (memo[slot].key == key + 1 && memo[slot].gen0 == g0 && memo[slot].gen1 == g1) {
         return memo[slot].hash;
     }
@@ -170,12 +185,6 @@ static void tex_sweep(unsigned keep) {
 
 /* GS memory -> an RGBA texture for the current TEX0 (alpha as stored: 0x80 is opaque). The back end makes
    the texture and takes the decoded pixels (freed after it has uploaded them). */
-#ifdef BT3_PVR
-GsTex GsPvr_Native(uint32_t tbp, uint32_t psm, uint32_t tw, uint32_t th, uint32_t cbp, uint32_t cpsm, uint32_t palKey); /* gs_pvr.c */
-#else
-int Port_TexNative(void *e, int tbp) { (void)e; (void)tbp; return 0; } /* (gs_pvr.c's, without it: every upload as on the PS2) */
-void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
-#endif
 
 static GsTex texture_get(int ctx) {
     uint64_t t0 = gGs.tex0[ctx] & 0x1FFFFFFFFFFFFFFFull, texa = gGs.texa;
@@ -183,6 +192,7 @@ static GsTex texture_get(int ctx) {
     uint32_t cbp = (t0 >> 37) & 0x3FFF, cpsm = (t0 >> 51) & 15;
     uint32_t bits = (uint32_t)Gs_PsmBits(psm), gen = 0, pages, i, x, y, *px;
     Tex *t;
+    const uint32_t *pal;
     uint64_t tex_t0;
     TexPackImage pack;
     uint32_t packMaxAlpha = 255, rw = tw, rh = th;
@@ -193,7 +203,8 @@ static GsTex texture_get(int ctx) {
     rw = tw; rh = th;
 #ifdef BT3_PVR
     if (bits <= 8 && sBackend == &sPvrBackend) { /* the game's texture entry, a PVR texture of its own */
-        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
+        uint32_t palKey = GsPvr_PalKey(cbp); /* (a palette of tex.pak: nothing read out of GS memory) */
+        GsTex nat = GsPvr_Native(tbp, psm, tw, th, cbp, cpsm, palKey != 0 ? palKey : clut_hash(cbp, cpsm, bits == 8 ? 256 : 16));
         if (nat != 0) { return nat; }
     }
 #endif
@@ -257,11 +268,14 @@ static GsTex texture_get(int ctx) {
         }
     }
     px = replaced ? NULL : malloc((size_t)tw * th * 4);
+    pal = bits <= 8 ? GsPvr_Pal(cbp, bits == 8 ? 256 : 16) : NULL; /* (a palette of tex.pak, not in GS memory) */
     for (y = 0; !replaced && y < th; y++) {
         for (x = 0; x < tw; x++) {
             uint32_t c = Gs_VramRead(tbp, tbw, psm, x, y), a;
             if (bits > 8) {
                 c = Gs_Expand(c, psm);
+            } else if (pal != NULL) {
+                c = Gs_Expand(pal[c], cpsm);
             } else if (bits == 8) {
                 c = (c & 0xE7) | ((c & 8) << 1) | ((c & 0x10) >> 1);
                 c = Gs_Expand(Gs_VramRead(cbp, 1, cpsm, c & 15, c >> 4), cpsm);
@@ -328,6 +342,10 @@ static GsTex texture_get(int ctx) {
         }
     }
     gGpuTexNs += gpu_now() - tex_t0;
+    if (getenv("BT3_TEX_LOG") != NULL) { /* every texture made here, not a native one: which are left */
+        fprintf(stderr, "tex: frame %u: block %x psm %x %ux%u palette %x/%x\n", gGsFrame, (unsigned)tbp, (unsigned)psm, (unsigned)tw,
+                (unsigned)th, (unsigned)cbp, (unsigned)cpsm);
+    }
     t = &sTex[gsTexCount];
     t->tex = replaced ? sBackend->texCreate(rw, rh, packFormat, pack.levels) : sBackend->texCreate(rw, rh, GS_TEXFMT_RGBA8, 1);
     /* The back end's memory is full (the Dreamcast's: the PS2 itself never holds more than a frame's textures, it
@@ -403,9 +421,11 @@ static GsTex clut_texture(uint32_t cbp) {
     uint32_t *upload;
     int k, old = 0;
 
+    const uint32_t *pal = GsPvr_Pal(cbp, 256);
+
     for (i = 0; i < 256; i++) {
         uint32_t n = (i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1);
-        px[i] = Gs_VramRead(cbp, 1, 0, n & 15, n >> 4);
+        px[i] = pal != NULL ? pal[i] : Gs_VramRead(cbp, 1, 0, n & 15, n >> 4);
         hash = (hash ^ px[i]) * 16777619u;
     }
     for (k = 0; k < MAX_CLUTS; k++) {
@@ -731,6 +751,11 @@ static int draw_state(int ctx, int topo, int sprite, int vu, GsDraw *d, float *u
         }
     }
     d->sampler = (int)((gGs.tex1[ctx] >> 5) & 1) | ((cl & 3) ? 2 : 0) | (((cl >> 2) & 3) ? 4 : 0);
+    {   /* a palette texture: its palette's tint, if the game tints the palettes there (gs_pvr.c Port_ClutTint) */
+        uint64_t t0 = gGs.tex0[ctx];
+        uint32_t psm = (uint32_t)(t0 >> 20) & 0x3F;
+        if (psm == 0x13 || psm == 0x14 || psm == 0x1B || psm == 0x24 || psm == 0x2C) { d->tint = gGsTint[(uint32_t)(t0 >> 42) & 511]; }
+    }
     /* A replacement is several times the original's size: with the nearest-texel sampling the game asks for on
        its text and 2D art (right for a texture drawn 1:1) it is shown smaller than it is, and its edges come out
        jagged. Replacements are always sampled with filtering. */

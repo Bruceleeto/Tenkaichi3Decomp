@@ -291,10 +291,12 @@ void ObjDraw_UploadTextures(ObjDrawObj *obj) {
                 Dma_AddData(pkt, 0x30);
                 Dma_AddRef(e->pix, e->pixSize);
             }
-            pkt[8] = 0;
-            pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
-            Dma_AddData(pkt, 0x30);
-            Dma_AddRef(e->clut, e->clutSize);
+            if (!Port_PalNative(e->clut, e->clutSize, e->clutBlt, cbp)) {
+                pkt[8] = 0;
+                pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
+                Dma_AddData(pkt, 0x30);
+                Dma_AddRef(e->clut, e->clutSize);
+            }
         } else if (i >= first && i < first + count && i == obj->mdl.model->faceTex) {
             face = BtlObj_GetFaceTexture(obj);
             tbp = e->tbpOfs + mdl->model->tbp;
@@ -307,10 +309,12 @@ void ObjDraw_UploadTextures(ObjDrawObj *obj) {
                     Dma_AddData(pkt, 0x30);
                     Dma_AddRef(e->pix, e->pixSize);
                 }
-                pkt[8] = 0;
-                pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
-                Dma_AddData(pkt, 0x30);
-                Dma_AddRef(e->clut, e->clutSize);
+                if (!Port_PalNative(e->clut, e->clutSize, e->clutBlt, cbp)) {
+                    pkt[8] = 0;
+                    pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
+                    Dma_AddData(pkt, 0x30);
+                    Dma_AddRef(e->clut, e->clutSize);
+                }
             } else {
                 if (!Port_TexNative(e, tbp)) {
                     pkt[8] = 0;
@@ -318,10 +322,12 @@ void ObjDraw_UploadTextures(ObjDrawObj *obj) {
                     Dma_AddData(pkt, 0x30);
                     Dma_AddRef(e->pix, e->pixSize);
                 }
-                pkt[8] = 0;
-                pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
-                Dma_AddData(pkt, 0x30);
-                Dma_AddRef(e->clut, e->clutSize);
+                if (!Port_PalNative(e->clut, e->clutSize, e->clutBlt, cbp)) {
+                    pkt[8] = 0;
+                    pkt[9] = (((u64)cbp << 32) | ((u64)e->clutBlt << 48)) >> 32;
+                    Dma_AddData(pkt, 0x30);
+                    Dma_AddRef(e->clut, e->clutSize);
+                }
             }
         }
     }
@@ -361,6 +367,52 @@ void ObjDraw_AddClutPass(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view
     u64 *p;
     ObjDrawMdl *mdl;
 
+#ifdef PORT
+    {   /* The passes below as one tint (port/src/gs/gs_pvr.c Port_ClutTint): each blends every colour of the palette
+           toward a colour (ALPHA 0x44 by the colour's alpha, 0x64 by FIX) or adds one (0x68), so all of them together
+           are colour * k + o per channel. The dimming pass's alpha also replaces the palette's. */
+        extern int Port_ClutTint(int cbp, const float *k, const float *o, int alpha);
+        float k[3] = {1.0f, 1.0f, 1.0f}, o[3] = {0.0f, 0.0f, 0.0f}, to[3], t;
+        int alpha = -1, any = 0, i;
+
+        mdl = &obj->mdl;
+        if (dim) { /* toward (FF, 0, 0) by the alpha (0x80 = all the way; more: still all the way, clamped) */
+            alpha = ObjDraw_GetDimAlpha(mdl);
+            t = alpha / 128.0f;
+            to[0] = 255.0f; to[1] = 0.0f; to[2] = 0.0f;
+            for (i = 0; i < 3; i++) {
+                if (t >= 1.0f) { k[i] = 0.0f; o[i] = to[i]; }
+                else { k[i] *= 1.0f - t; o[i] = o[i] * (1.0f - t) + to[i] * t; }
+            }
+            any = 1;
+        }
+        if (BtlObjFade_Get(obj, &f)) { /* toward (FF, 44, 66) by f * 70 / 128 */
+            t = (s32)(f * 70.0f) / 128.0f;
+            to[0] = 255.0f; to[1] = 68.0f; to[2] = 102.0f;
+            for (i = 0; i < 3; i++) { k[i] *= 1.0f - t; o[i] = o[i] * (1.0f - t) + to[i] * t; }
+            any = 1;
+        }
+        if (obj->state.flags & 0x400000) { /* the tint added, by its alpha */
+            t = (u8)(u32)state->tint.w / 128.0f;
+            o[0] += (u8)(u32)state->tint.x * t;
+            o[1] += (u8)(u32)state->tint.y * t;
+            o[2] += (u8)(u32)state->tint.z * t;
+            any = 1;
+        }
+        if (BtlObjFlash_GetColor(obj, &color, &f)) { /* the flash added, by f (at most all of it) */
+            s32 a = f * 128.0f;
+            if (a > 0x80) { a = 0x80; }
+            t = a / 128.0f;
+            o[0] += (u8)(u32)color.x * t;
+            o[1] += (u8)(u32)color.y * t;
+            o[2] += (u8)(u32)color.z * t;
+            any = 1;
+        }
+        if (Port_ClutTint(any ? mdl->model->cbp : -1, k, o, alpha)) {
+            return;
+        }
+    }
+#endif
     p = Dma_BeginDirect();
     p[0] = GIF_TAG(11, 0, 1);
     p[1] = GIF_REG_AD;

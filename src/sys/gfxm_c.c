@@ -687,9 +687,11 @@ u64 FlashDraw_UploadTex(FlashTex *tex, s32 index, s32 tbp) {
     }
     tbp += pix->tbpStep;
     tbp += 0x40;
-    pkt.bitbltbuf = ((s64)tbp << 32) | ((u64)clut->clutBlt << 48);
-    Dma_AddData(&pkt, sizeof(pkt));
-    Dma_AddRef(clut->clut, clut->clutSize);
+    if (!Port_PalNative(clut->clut, clut->clutSize, clut->clutBlt, tbp)) {
+        pkt.bitbltbuf = ((s64)tbp << 32) | ((u64)clut->clutBlt << 48);
+        Dma_AddData(&pkt, sizeof(pkt));
+        Dma_AddRef(clut->clut, clut->clutSize);
+    }
     tex0 = pix->tex0;
     tex0 |= (s64)tbp << 37;
     tex0 |= base;

@@ -182,10 +182,12 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
         if (t->clutSize != 0) {
             s32 block = t->clutBlock + cbp;
 
-            pkt[8] = HUDC_BITBLTBUF(block, clutWidth);
-            pkt[9] = HUDC_BITBLTBUF(block, clutWidth) >> 32;
-            Dma_AddData(pkt, sizeof(pkt));
-            Dma_AddRef(t->clut, t->clutSize);
+            if (!Port_PalNative(t->clut, t->clutSize, clutWidth, block)) {
+                pkt[8] = HUDC_BITBLTBUF(block, clutWidth);
+                pkt[9] = HUDC_BITBLTBUF(block, clutWidth) >> 32;
+                Dma_AddData(pkt, sizeof(pkt));
+                Dma_AddRef(t->clut, t->clutSize);
+            }
         }
     }
     t = &res->tex[tex + sub];
@@ -194,10 +196,12 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
         if (t->clutSize != 0) {
             s32 block = t->clutBlock + cbp;
 
-            pkt[8] = HUDC_BITBLTBUF(block, clutWidth);
-            pkt[9] = HUDC_BITBLTBUF(block, clutWidth) >> 32;
-            Dma_AddData(pkt, sizeof(pkt));
-            Dma_AddRef(t->clut, t->clutSize);
+            if (!Port_PalNative(t->clut, t->clutSize, clutWidth, block)) {
+                pkt[8] = HUDC_BITBLTBUF(block, clutWidth);
+                pkt[9] = HUDC_BITBLTBUF(block, clutWidth) >> 32;
+                Dma_AddData(pkt, sizeof(pkt));
+                Dma_AddRef(t->clut, t->clutSize);
+            }
         }
     }
 }

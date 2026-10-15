@@ -66,8 +66,10 @@ void Res_RelocateOffsets(TexFile **out, u8 *base, TexFile *hdr);
 void Tex_UploadPixels(TexEntry *e, s32 tbp);
 #ifdef PORT
 int Port_TexNative(void *e, s32 tbp); /* port/src/gs/gs_pvr.c: 1 = the entry is a PVR texture of its own, not uploaded */
+int Port_PalNative(void *pkt, s32 size, u32 blt, s32 block); /* gs_pvr.c: 1 = a palette of tex.pak, not uploaded */
 #else
 #define Port_TexNative(e, tbp) 0
+#define Port_PalNative(pkt, size, blt, block) 0
 #endif
 void Tex_UploadClut(TexEntry *e, s32 cbp);
 void TexFile_UploadPacked(TexFile *file, s32 tbp, s32 cbp);

@@ -12,7 +12,7 @@ typedef struct PakEnt {
     uint64_t key;
     uint32_t offset;
     uint16_t w, h;
-    uint8_t bits;
+    uint8_t bits, psm;
 } PakEnt;
 
 static FILE *sFile;
@@ -43,6 +43,7 @@ static void pak_open(void) {
         memcpy(&sEnt[i].w, rec + 12, 2);
         memcpy(&sEnt[i].h, rec + 14, 2);
         sEnt[i].bits = rec[16];
+        sEnt[i].psm = rec[17];
     }
     fprintf(stderr, "bt3: %u converted textures (%s)\n", (unsigned)sCount, path);
     return;
@@ -71,6 +72,8 @@ int TexPak_Find(uint64_t key, uint32_t *w, uint32_t *h, uint32_t *bits) {
     *bits = sEnt[lo].bits;
     return (int)lo;
 }
+
+uint32_t TexPak_Psm(int index) { return sEnt[index].psm; }
 
 void *TexPak_Read(int index) {
     const PakEnt *e = &sEnt[index];

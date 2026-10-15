@@ -31,8 +31,10 @@ extern void Dma_AddData(void *src, s32 size);
 extern void Dma_AddRef(void *addr, s32 size);
 #ifdef PORT
 int Port_TexNative(void *e, s32 tbp); /* port/src/gs/gs_pvr.c (sys/gfxm_b_b.h) */
+int Port_PalNative(void *pkt, s32 size, u32 blt, s32 block);
 #else
 #define Port_TexNative(e, tbp) 0
+#define Port_PalNative(pkt, size, blt, block) 0
 #endif
 /* Empty (a stripped assert: count <= max). It is defined right before the loaders in the original file (0x1AE140),
    so the compiler knew it touches no memory and kept the pack header and the count in registers across the call;
@@ -256,10 +258,12 @@ void EftVram_Upload(EftVramTex *tex, s32 imageBlock, s32 clutBlock) {
         Dma_AddRef(img->image, img->imageSize);
     }
     if (clutBlock >= 0 && img->clutSize != 0) {
-        pkt[8] = EFT_VRAM_BITBLTBUF(clutBlock, img->clutWidth);
-        pkt[9] = EFT_VRAM_BITBLTBUF(clutBlock, img->clutWidth) >> 32;
-        Dma_AddData(pkt, sizeof(pkt));
-        Dma_AddRef(img->clut, img->clutSize);
+        if (!Port_PalNative(img->clut, img->clutSize, img->clutWidth, clutBlock)) {
+            pkt[8] = EFT_VRAM_BITBLTBUF(clutBlock, img->clutWidth);
+            pkt[9] = EFT_VRAM_BITBLTBUF(clutBlock, img->clutWidth) >> 32;
+            Dma_AddData(pkt, sizeof(pkt));
+            Dma_AddRef(img->clut, img->clutSize);
+        }
     }
 }
 

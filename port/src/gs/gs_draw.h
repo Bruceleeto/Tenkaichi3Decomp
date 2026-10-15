@@ -83,6 +83,7 @@ typedef struct GsDraw {
     float blendc;
     int scissor[4]; /* x, y, width, height, at SCALE */
     int wall;       /* triangles of the wall at the edge of the map (gs_draw.c, Port_WallMesh): in-between pictures draw it anew */
+    uint64_t tint;  /* its palette's tint this frame (gGsTint: gs_pvr.c Port_ClutTint); 0 = none */
 } GsDraw;
 
 /* The formats a texture pack's replacement can be in (matches gs_texpack.h's TexPackImage.format). */
