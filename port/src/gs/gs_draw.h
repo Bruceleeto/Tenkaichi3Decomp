@@ -16,10 +16,19 @@ extern int gsScale;
 #define GS_W 1024
 #define GS_H 1024
 
-#ifdef __DREAMCAST__
-/* The Dreamcast: a frame's lists sized by what one holds (BT3_GS_PEAKS: the attract demo's 1 v 1 fight peaks at
-   102,717 vertices and 2,818 draws), 3.5 MB and 1.2 MB; a frame that needs more says so (lists_full). The vertex
-   programs' lists are not filled there (gs_vu1.c, the PS2 reference that fills them, is the PC's): none. */
+#if defined(__DREAMCAST__) && defined(BT3_NO_RTT)
+/* The Dreamcast without its renders to textures (Makefile.dc DC_RTT=0): the PVR draws the lists' draws whenever
+   they are full (gs_pvr.c spill), so they hold a part of a frame: 448 KB and 144 KB. The vertex programs' lists are
+   not filled there (gs_vu1.c, the PS2 reference that fills them, is the PC's): none. */
+#define MAX_VERTS (1 << 14)
+#define MAX_DRAWS (1 << 10)
+#define MAX_VU_VERTS 16
+#define MAX_VU_IDX 16
+#define MAX_VU_UNIFORMS 16
+#elif defined(__DREAMCAST__)
+/* The Dreamcast with them (DC_RTT=1): a frame's lists sized by what one holds (BT3_GS_PEAKS: the attract demo's
+   1 v 1 fight peaks at 102,717 vertices and 2,818 draws), 3.5 MB and 1.2 MB; a frame that needs more says so
+   (lists_full). */
 #define MAX_VERTS (1 << 17)
 #define MAX_DRAWS (1 << 13)
 #define MAX_VU_VERTS 16
@@ -169,6 +178,9 @@ typedef struct GsBackend {
     /* A texture the game named by handle (include/port/rnd.h), read as TEX0 t0 reads it (0: as it was uploaded),
        and its size; 0 = none (NULL: the back end has none) */
     GsTex (*texHandle)(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th);
+    /* The lists are full in the middle of a frame: their draws drawn now, and they start again (gs_draw.c
+       lists_room); 0 = not taken (NULL: the back end draws a frame only whole) */
+    int (*spill)(void);
 } GsBackend;
 
 extern GsBackend sVulkanBackend; /* gs_gpu.c */

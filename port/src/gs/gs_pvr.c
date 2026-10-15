@@ -80,6 +80,32 @@ typedef struct PvrTex {
 
 static PvrTex sWhiteRec = {8, 8, GS_TEXFMT_RGBA8, NULL, 0, 8, 8, 0, NULL};
 static uint32_t sTexBytes, sTexPeak, sTexLive; /* in PVR memory now, the most so far; textures there */
+
+/* PVR memory of a texture the game is done with, given back two frames later (late_free): draws already sent may
+   still read it. A frame's draws are sent when the lists are full (spill) and the render runs while the next frame
+   is made; a texture made in the freed memory the same frame showed in the earlier draws. KOS's pvr_wait_ready
+   returns once the scene before has begun rendering, so at the end of frame N the render of N - 2 has finished. */
+#define LATE_MAX 1024
+static pvr_ptr_t sLate[3][LATE_MAX];
+static unsigned sLateCount[3], sLateCur;
+
+static void late_free(pvr_ptr_t p) {
+    if (sLateCount[sLateCur] == LATE_MAX) { /* (more than a scene's textures at once) */
+        static int told;
+        if (!told++) { fprintf(stderr, "bt3: pvr: more than %d textures freed in a frame: the rest at once\n", LATE_MAX); }
+        pvr_mem_free(p);
+        return;
+    }
+    sLate[sLateCur][sLateCount[sLateCur]++] = p;
+}
+
+/* At a frame's end: what frame N - 2 freed. */
+static void late_release(void) {
+    unsigned i, old = (sLateCur + 1) % 3;
+    for (i = 0; i < sLateCount[old]; i++) { pvr_mem_free(sLate[old][i]); }
+    sLateCount[old] = 0;
+    sLateCur = old;
+}
 static int sNatOn; /* the game's texture entries are PVR textures of their own (below: NatTex); BT3_TEXPAK= none */
 static unsigned sNatWhy[5]; /* records not native: not 4/8-bit, packet not read, not in the pack, another size; no record free */
 static unsigned sNatEvicted; /* native textures that let go of their PVR memory (nat_evict) */
@@ -276,7 +302,7 @@ static int tex_upload(GsTex tex, int level, uint32_t w, uint32_t h, int format, 
 static void tex_destroy(GsTex tex) {
     PvrTex *t = (PvrTex *)tex;
     if (t == NULL || t == &sWhiteRec) { return; }
-    if (t->mem != NULL) { pvr_mem_free(t->mem); sTexBytes -= t->bytes; sTexLive--; }
+    if (t->mem != NULL) { late_free(t->mem); sTexBytes -= t->bytes; sTexLive--; }
     free(t);
 }
 
@@ -888,6 +914,10 @@ static int sRunTarget = -1;
 static uint32_t sRunW, sRunH;          /* the run's extent in GS pixels */
 static int sRunBad;                    /* the run samples a version with alphaBad */
 static unsigned sRenders;              /* this frame */
+/* The screen's render open since the lists were full in the middle of the frame (spill): the draws sent so far,
+   for the shown buffer sStreamShown; sStreamTA the table passes' state (frame_render) after them. */
+static int sStreamOpen, sStreamShown, sStreamTA;
+static unsigned sSpills;               /* this frame (BT3_GS_VERBOSE) */
 
 static TgVer *ver_new(uint32_t w, uint32_t h) {
     TgVer *v = calloc(1, sizeof(TgVer));
@@ -925,14 +955,8 @@ static uint32_t pow2_rt(uint32_t n) {
     return p;
 }
 
-/* One render of draws `idx` (n of them): into `dst` (NULL: the screen), over `bg` drawn first (NULL: cleared). */
-static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer *bg) {
-    uint32_t i;
-
-    if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) {
-        fprintf(stderr, "pvr: render %u: %u draws (%u..%u) into %s %ux%u%s\n", sRenders, n, n ? idx[0] : 0, n ? idx[n - 1] : 0,
-                dst == NULL ? "the screen" : dst == sCap ? "the capture" : "a buffer", dst ? dst->t.w : 640, dst ? dst->t.h : 480, bg ? " over what it held" : "");
-    }
+/* A render begun: into `dst` (NULL: the screen), over `bg` drawn first (NULL: cleared). */
+static void scene_begin(TgVer *dst, const TgVer *bg) {
     pvr_wait_ready();
     sSent = 0;
     sSecAlpha = 0;
@@ -978,6 +1002,18 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
         }
         emit_poly(a, 4, 0.0f, 0.0f, sRw, sRh);
     }
+}
+
+/* One render of draws `idx` (n of them): into `dst` (NULL: the screen), over `bg` drawn first (NULL: cleared). */
+static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer *bg) {
+    uint32_t i;
+
+    if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) {
+        fprintf(stderr, "pvr: render %u: %u draws (%u..%u) into %s %ux%u%s\n", sRenders, n, n ? idx[0] : 0, n ? idx[n - 1] : 0,
+                dst == NULL ? "the screen" : dst == sCap ? "the capture" : "a buffer", dst ? dst->t.w : 640, dst ? dst->t.h : 480, bg ? " over what it held" : "");
+    }
+    if (dst != NULL || !sStreamOpen) { scene_begin(dst, bg); } /* (else the screen's, open since a spill) */
+    if (dst == NULL) { sStreamOpen = 0; }
     for (i = 0; i < n; i++) { draw_one(idx[i], sDrawSrc[idx[i]]); }
     sFixA = -1.0f;
     pvr_list_finish();
@@ -1090,9 +1126,55 @@ static void target_drop(int i) {
     sTgVer[i] = NULL;
 }
 
+/* The shown buffer: the one sceGsSwapDBuff set up for this frame, else the first target (as gs_gl.c). */
+static int shown_target(void) {
+    int shown = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
+    if (shown < 0 && gsTargetCount > 0) { shown = 0; }
+    return shown;
+}
+
+/* What of a frame's draws goes on is decided at the shown buffer the first spill found; a frame that changes it
+   after (the buffers swapped in between) has drawn its first part for another. */
+static void stream_moved(int shown) {
+    if (sStreamOpen && shown != sStreamShown) {
+        Port_Lost("the shown buffer changed after the PVR had drawn part of the frame (gs_pvr.c spill)", (uint32_t)shown, __builtin_return_address(0));
+    }
+}
+
+/* The lists full in the middle of a frame (gs_draw.c lists_room): without renders to textures every draw kept goes
+   to the screen's render in the order made, so they are drawn now, the render begun if it is not (it is finished at
+   the frame's end, frame_render). What is left out is as frame_render leaves it out. With renders to textures the
+   frame is needed whole: not taken. */
+static int spill(void) {
+    uint32_t n;
+    int shown;
+
+    if (!no_rtt()) { return 0; }
+    shown = shown_target();
+    stream_moved(shown);
+    if (!sStreamOpen) {
+        scene_begin(NULL, NULL);
+        sStreamOpen = 1;
+        sStreamShown = shown;
+        sStreamTA = 0;
+    }
+    for (n = 0; n < gsDrawCount; n++) {
+        const GsDraw *d = &gsDraws[n];
+        uint32_t key;
+        if (d->native == 3 && d->target == sStreamShown && d->pipeline >= 0 && d->pipeline < sPipeCount && (sPipeKey[d->pipeline] >> 16 & 8)) { sStreamTA = 1; }
+        if (!draw_kept(d, n) || d->mode[0] == 2 || d->target != sStreamShown) { continue; }
+        key = sPipeKey[d->pipeline];
+        if ((key >> 16 & 7) == 0) { sStreamTA = 0; }
+        if (sStreamTA && (key & 1) && ((key >> 7) & 3) == 1) { continue; }
+        draw_one(n, d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL);
+    }
+    sSpills++;
+    return 1;
+}
+
 static void frame_render(int shown) {
     uint32_t n;
-    int i, tableAlpha = 0;
+    int i, tableAlpha = sStreamOpen ? sStreamTA : 0; /* (after a spill: as its draws left it) */
 
     if (sListCap < gsDrawCount) {
         sListCap = gsDrawCount + 1024;
@@ -1101,6 +1183,7 @@ static void frame_render(int shown) {
         sRun = realloc(sRun, sListCap * sizeof(*sRun));
         if (sDrawSrc == NULL || sShownList == NULL || sRun == NULL) { abort(); }
     }
+    stream_moved(shown);
     sShownCount = sShownCapped = sRunCount = 0;
     sCapValid = 0;
     sRunTarget = -1;
@@ -1193,8 +1276,9 @@ static void frame_render(int shown) {
     }
     if (sCap != NULL) { sCap->final = 0; }
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u renders\n", gGsFrame, sRenders);
+        fprintf(stderr, "pvr: frame %u: %u renders, %u spills\n", gGsFrame, sRenders, sSpills);
     }
+    sSpills = 0;
 }
 
 /* every draw of one frame (BT3_PVR_LOG=<frame>; BT3_PVR_LOGV=<draw> its vertices) */
@@ -1257,12 +1341,11 @@ static void frame_end(void) {
     }
     memset(gGsTint, 0, sizeof(gGsTint)); /* (the tints are the frame's: the game sets them again for the next) */
 
-    /* the shown buffer: the one sceGsSwapDBuff set up for this frame, else the first target (as gs_gl.c) */
-    shown = gGsMainFbp >= 0 ? GsDraw_TargetGet((uint32_t)gGsMainFbp, 0) : -1;
-    if (shown < 0 && gsTargetCount > 0) { shown = 0; }
+    shown = shown_target();
 
     if (getenv("BT3_PVR_LOG") != NULL && (int)gGsFrame == atoi(getenv("BT3_PVR_LOG"))) { draw_log(shown); }
     frame_render(shown);
+    late_release();
     {   /* BT3_SHOT=<n>: every n-th frame of the game to port/build/shots/pvr_NNNNN.ppm (the other back ends' gpu_*),
            BT3_SHOT_FROM / BT3_SHOT_TO limit the frames */
         static int every = -1;
@@ -1683,7 +1766,7 @@ void Port_TexFreed(uint32_t lo, uint32_t hi) {
     for (i = 0; i < MAX_NAT; i++) {
         NatTex *n = &sNat[i];
         if (n->e == 0 || n->e < lo || n->e >= hi) { continue; }
-        if (n->t.mem != NULL) { pvr_mem_free(n->t.mem); sTexBytes -= n->t.bytes; sNatLive--; }
+        if (n->t.mem != NULL) { late_free(n->t.mem); sTexBytes -= n->t.bytes; sNatLive--; }
         for (b = 0; b < 16384; b++) {
             if (gGsNat[b] == i + 1) { gGsNat[b] = 0; }
         }
@@ -2109,5 +2192,6 @@ GsBackend sPvrBackend = {
     target_read,
     target_copy,
     tex_handle,
+    spill,
 };
 #endif

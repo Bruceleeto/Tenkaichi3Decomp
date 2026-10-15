@@ -26,6 +26,8 @@
 #include "menu_text.h"  /* editable labels in the original menu texture slots */
 #include "../../../include/port/rnd.h" /* quads the game hands over (GsGpu_Quad) */
 static void lists_full(const void *from);
+static int lists_room(uint32_t verts, uint32_t draws, const void *from);
+extern int gsInterp;
 #include <math.h>
 
 /* Stage-name overlay: defined here (C) so both the renderer (gs_gpu.c) and the game's menu (menu_c_e.c) can
@@ -628,12 +630,12 @@ static int pipeline_get(const GsRegs *r, int topo, int vu);
 static void depth_clut(const GsRegs *r) {
     uint64_t sc = r->scissor;
     uint32_t wm = (uint32_t)(r->frame >> 32);
-    GsDraw d, *last = gsDrawCount ? &gsDraws[gsDrawCount - 1] : NULL;
+    GsDraw d, *last;
 
-    if (gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (!lists_room(0, 1, __builtin_return_address(0))) {
         return;
     }
+    last = gsDrawCount ? &gsDraws[gsDrawCount - 1] : NULL;
     memset(&d, 0, sizeof(d));
     d.native = 3;
     d.src = gsDepthByteIsFog ? 0 : 1;
@@ -852,6 +854,34 @@ float gsZMax = 16777215.0f; /* the depth buffer's largest value, as the frame's 
    records are all there is (Port_Lost: the Dreamcast, BT3_WALK=3). */
 static void lists_full(const void *from) {
     Port_Lost("the frame's lists are full (MAX_VERTS / MAX_DRAWS, gs_draw.h)", (gsVertCount + 6 > MAX_VERTS ? 1u : 0u) | (gsDrawCount >= MAX_DRAWS - 1 ? 2u : 0u), from);
+}
+
+/* Room in the lists for a primitive of `verts` vertices and `draws` draws (the draw markers it may add with it),
+   at its start, before anything of it is recorded. When they are full, a back end that draws as it goes (the PVR
+   without its renders to textures: spill) takes what they hold and they start again, whatever the size of the
+   frame; the next primitive is not merged into the last one sent, and the look-backs (date_snapshot, depth_clut)
+   find no draw before it. Not with the in-between pictures, which keep a whole frame. */
+static int lists_room(uint32_t verts, uint32_t draws, const void *from) {
+    static uint32_t capV, capD; /* BT3_GS_LISTS=<vertices>,<draws>: lists smaller than they are (the spills tried) */
+    if (capV == 0) {
+        unsigned v = 0, d = 0;
+        capV = MAX_VERTS;
+        capD = MAX_DRAWS;
+        if (getenv("BT3_GS_LISTS") != NULL && sscanf(getenv("BT3_GS_LISTS"), "%u,%u", &v, &d) == 2 && v >= 64 && d >= 8) {
+            capV = v < MAX_VERTS ? v : MAX_VERTS;
+            capD = d < MAX_DRAWS ? d : MAX_DRAWS;
+        }
+    }
+    if (gsVertCount + verts <= capV && gsDrawCount + draws <= capD) {
+        return 1;
+    }
+    if (sBackend != NULL && sBackend->spill != NULL && gsInterp <= 0 && sBackend->spill()) {
+        gsVertCount = 0;
+        gsDrawCount = 0;
+        return 1;
+    }
+    lists_full(from);
+    return 0;
 }
 
 static void put(const GsVertex *v, float x, float y, float s, float t, float q, uint8_t r, uint8_t g, uint8_t b, uint8_t a, float zmax) {
@@ -1084,8 +1114,7 @@ static void draw_prim(int type, const GsRegs *r, const GsVertex *v) {
     GsDraw d;
     int i, packed2d = 0;
 
-    if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (!lists_room(6, 3, __builtin_return_address(0))) {
         return;
     }
     if (!draw_state(r, type == 1 ? 1 : type == 0 ? 2 : 0, type == 6, 0, &d, &us, &vs)) {
@@ -1550,8 +1579,7 @@ void GsGpu_Quad(const RndQuad *q) {
     if (GS_NO_PICTURE) { /* a frame that is only being re-run, or one that is skipped: nothing is drawn */
         return;
     }
-    if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (!lists_room(6, 3, __builtin_return_address(0))) {
         return;
     }
     rnd_check(&q->st, q->gsCtx, q->tex != 0 || q->gsTex0 != 0);
@@ -1614,8 +1642,7 @@ void GsGpu_Poly(const RndPoly *p) {
     if (GS_NO_PICTURE) {
         return;
     }
-    if (gsVertCount + 6 > MAX_VERTS || gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (!lists_room(6, 3, __builtin_return_address(0))) {
         return;
     }
     rnd_check(&p->st, p->gsCtx, p->tex != 0 || p->gsTex0 != 0);
@@ -1881,8 +1908,7 @@ void GsGpu_FbUpload(int second) {
     }
     GsDraw d;
 
-    if (gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (!lists_room(0, 1, __builtin_return_address(0))) {
         return;
     }
     memset(&d, 0, sizeof(d));
@@ -1911,8 +1937,8 @@ void GsGpu_Native(int effect) {
         gsAnchor = effect == 0x13 ? 0 : effect == 0x14 ? 4 : effect - 0x0F; /* 1 left, 2 right, 3 centre, 4 by position */
         return;
     }
-    if (effect == 1 && gsDrawCount == MAX_DRAWS) {
-        lists_full(__builtin_return_address(0));
+    if (effect == 1 && !lists_room(0, 1, __builtin_return_address(0))) {
+        return;
     }
     if (effect != 1 || gsDrawCount == MAX_DRAWS || (gsFxOff & 1)) {
         return;

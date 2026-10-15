@@ -97,16 +97,17 @@ $(OBJ)/gs_%.o: port/src/gs/%.c | $(OBJ)
 $(OBJ)/gs_gs_pvr.o: GS_CFLAGS += -DBT3_PVR
 $(OBJ)/gs_gs_draw.o: GS_CFLAGS += -DBT3_PVR
 # DC_RTT=1: drawing into frame buffers and reading them (the screen effects, the cross-fade); off, they are left out
-# (BT3_NO_RTT: port/src/rnd_fx.c Rnd_FxOn, gs/gs_pvr.c no_rtt, gs/gs_walk.c Gs_StoreImage)
+# (BT3_NO_RTT: port/src/rnd_fx.c Rnd_FxOn, gs/gs_pvr.c no_rtt, gs/gs_walk.c Gs_StoreImage; gs/gs_draw.h: lists for a
+# part of a frame, which the PVR draws as they fill)
 DC_RTT ?= 0
 RTT_STAMP := $(BUILD)/rtt_$(DC_RTT).stamp
-RTT_OBJS := $(OBJ)/pc_rnd_fx.o $(OBJ)/gs_gs_pvr.o $(OBJ)/gs_gs_walk.o
+RTT_OBJS := $(OBJ)/pc_rnd_fx.o $(OBJ)/gs_gs_pvr.o $(OBJ)/gs_gs_walk.o $(OBJ)/gs_gs_draw.o
 $(RTT_STAMP): | $(OBJ)
 	rm -f $(BUILD)/rtt_*.stamp
 	touch $@
 $(RTT_OBJS): $(RTT_STAMP)
 $(OBJ)/pc_rnd_fx.o: PC_CFLAGS += $(if $(filter 1,$(DC_RTT)),,-DBT3_NO_RTT)
-$(OBJ)/gs_gs_pvr.o $(OBJ)/gs_gs_walk.o: GS_CFLAGS += $(if $(filter 1,$(DC_RTT)),,-DBT3_NO_RTT)
+$(OBJ)/gs_gs_pvr.o $(OBJ)/gs_gs_walk.o $(OBJ)/gs_gs_draw.o: GS_CFLAGS += $(if $(filter 1,$(DC_RTT)),,-DBT3_NO_RTT)
 # DC_MOVIE=1: the movies played (pl_mpeg, port/src/plat_movie.c; dc-assets converts them); off, they end at once
 DC_MOVIE ?= 0
 MOVIE_STAMP := $(BUILD)/movie_$(DC_MOVIE).stamp
