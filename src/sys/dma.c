@@ -636,18 +636,23 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     p += 2;
     p[0] = 0x44;
     p[1] = GS_ALPHA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x30000;
     p[1] = GS_TEST_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = GS_FBA_1;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x46;
     p[1] = GS_PRIM;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = (u64)rgba | (0x3F800000ULL << 32);
     p[1] = GS_RGBAQ;
+    PORT_AD(p, 0);
     p += 2;
 #ifdef PORT
 sprites:
@@ -678,9 +683,11 @@ void Dma_PutTexStrips(GsQword **pp, s32 x0, s32 y0, s32 x1, s32 y1, s32 xFrac, s
     (*pp)++;
     (*pp)->d[0] = blend ? 0x156 : 0x116;
     (*pp)->d[1] = GS_PRIM;
+    PORT_AD((*pp)->d, 0);
     (*pp)++;
     (*pp)->d[0] = (u64)rgba | (0x3F800000ULL << 32);
     (*pp)->d[1] = GS_RGBAQ;
+    PORT_AD((*pp)->d, 0);
     (*pp)++;
     (*pp)->d[0] = GIF_TAG_EX(n, 1, GIF_FLG_REGLIST, 4);
     (*pp)->d[1] = 0x5353;

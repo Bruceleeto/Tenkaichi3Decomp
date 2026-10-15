@@ -149,6 +149,12 @@ s32 Dma_Stub101870(void);
 void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba);
 #ifdef PORT
 void Dma_AddFillState(u32 rgba);
+#include "port/rnd.h"
+/* An A+D write just put in a packet, the value at d[i] and the register at d[i + 1]: into the renderer's state as
+   well (port/src/rnd_gs.c Rnd_GsReg), where the display list is not read for it. */
+#define PORT_AD(d, i) Rnd_GsReg((u32)(d)[(i) + 1], (u64)(d)[i])
+#else
+#define PORT_AD(d, i) ((void)0)
 #endif
 void Dma_PutTexStrips(GsQword **pp, s32 x0, s32 y0, s32 x1, s32 y1, s32 xFrac, s32 yFrac, s32 u0, s32 v0, s32 u1, s32 v1,
                       s32 uFrac, s32 vFrac, u32 rgba, s32 blend);
