@@ -22,13 +22,15 @@
 
 /* An overflowed float: the largest of its sign, as the unit gives it, instead of an infinity. */
 static float vu_clamp(float v) {
-    uint32_t u;
-    memcpy(&u, &v, 4);
-    if ((u & 0x7F800000u) == 0x7F800000u) {
-        u = (u & 0x80000000u) | 0x7F7FFFFFu;
-        memcpy(&v, &u, 4);
+    union {
+        float f;
+        uint32_t u;
+    } x;
+    x.f = v;
+    if ((x.u & 0x7F800000u) == 0x7F800000u) {
+        x.u = (x.u & 0x80000000u) | 0x7F7FFFFFu;
     }
-    return v;
+    return x.f;
 }
 
 /* DIV: n / d; by zero the largest float of n's sign. */
@@ -83,14 +85,14 @@ static void put_vtx(RndVtx *o, int ctx, const float scr[4], float s, float t, fl
 /* ---------------------------------------------------------------------------------------------- the chains */
 
 /* A GIF tag of a strip or fan as the programs send them: PRIM from the tag (PRE), packed, the registers ST, RGBAQ,
-   XYZF2, the end of the packet (EOP), the type asked for, texture coordinates as s t q and no fog (what a record
-   can draw). */
-static int tag_ok(const uint32_t *tag, unsigned type) {
+   XYZF2, the end of the packet (EOP) where eop asks for it, the type asked for, texture coordinates as s t q and
+   no fog (what a record can draw). */
+static int tag_ok(const uint32_t *tag, unsigned type, int eop) {
     uint64_t lo, hi, prim;
     memcpy(&lo, tag, 8);
     memcpy(&hi, tag + 2, 8);
     prim = (lo >> 47) & 0x7FF;
-    return ((lo >> 15) & 1) && ((lo >> 46) & 1) && ((lo >> 58) & 3) == 0 && ((lo >> 60) & 15) == 3 && (hi & 0xFFF) == 0x412 &&
+    return (!eop || ((lo >> 15) & 1)) && ((lo >> 46) & 1) && ((lo >> 58) & 3) == 0 && ((lo >> 60) & 15) == 3 && (hi & 0xFFF) == 0x412 &&
            (prim & 7) == type && !((prim >> 5) & 1) && !((prim >> 8) & 1) && (lo & 0x7FFF) != 0;
 }
 
@@ -331,7 +333,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     int ctx;
 
     if (!wk->header) { /* the first MSCNT: the object header, one quadword (the fans' tag) */
-        if (nh != 1 || vtx != NULL || !tag_ok(hdr, 5)) {
+        if (nh != 1 || vtx != NULL || !tag_ok(hdr, 5, 1)) {
             return 0;
         }
         wk->fanPrim = tag_prim(hdr);
@@ -342,7 +344,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     memcpy(&lo, hdr, 8);
     /* +0 a tag of one NOP register (its quadword +1 is thrown away by the GIF), +2 the strip's tag */
     if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 || (hdr[2] & 15) != 15 ||
-        !tag_ok(hdr + 8, 4)) {
+        !tag_ok(hdr + 8, 4, 1)) {
         return 0;
     }
     prim = tag_prim(hdr + 8);
@@ -402,4 +404,149 @@ int Vu1Native_Prog4(const void *chain) {
     wk.draw = 1;
     walk(chain, p4_batch, &wk);
     return 1;
+}
+
+/* ---------------------------------------------------------------------------------------------- programs 0 and 1 */
+
+/* Programs 0 and 1 draw the fighters' model parts (ObjDraw_DrawParts): strips of corners skinned between two bones
+   by a weight, in two layers at the same corners, the model's texture through one context and a second texture
+   through the other. Program 0's second layer is the shading ramp, looked up by the light on the blended normal;
+   program 1's (the fade pass) a texture looked up by the normal turned to face the camera, bound by the constants
+   (26) instead of the batch, and a batch is left out when its first normal's w says so. Nothing is clipped: a
+   triangle with a corner outside the clip volume is left out (ADC). Constants (ObjDrawPkt from mtxA): bone
+   matrices A, B (0..7), their pivots (8, 9), light (10..13), screen (14..17), clip (18..21), the two layers'
+   colours (22, 23), program 1's TEX0 (26). A batch: a tag of one A+D register, TEX0 of each layer, the two strips'
+   tags, then the corners (position with bone A's weight in w, normal, s t q). */
+#define FIG_MAXV 38 /* the corners the program has room for (its output, 6 + 6n quadwords, in 238) */
+
+typedef struct FigWalk {
+    int prog, draw;
+    const float *k; /* the constants, when drawing */
+} FigWalk;
+
+/* The A+D tag of one register the batch starts with (no EOP: the strip's tag follows in the same kick). */
+static int ad_tag_ok(const uint32_t *tag) {
+    uint64_t lo, hi;
+    memcpy(&lo, tag, 8);
+    memcpy(&hi, tag + 2, 8);
+    return (lo & 0x7FFF) == 1 && ((lo >> 58) & 3) == 0 && ((lo >> 60) & 15) == 1 && (hi & 15) == 14;
+}
+
+/* An A+D quadword's value, when it writes TEX0 of context ctx (TEX0_1 0x06, TEX0_2 0x07). */
+static int ad_tex0(const uint32_t *ad, int ctx, uint64_t *tex0) {
+    memcpy(tex0, ad, 8);
+    return (ad[2] & 0xFF) == (uint32_t)(6 + ctx);
+}
+
+static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    static RndVtx out[2][FIG_MAXV];
+    static uint8_t adc[FIG_MAXV];
+    FigWalk *wk = (FigWalk *)arg;
+    const float *k = wk->k;
+    uint32_t prim[2], n, i, c, flags[3] = {0, 0, 0};
+    uint64_t tex0[2] = {0, 0};
+    int ctx[2];
+    float lightA[16], lightB[16];
+    int32_t col[2][4];
+
+    split(hdr, &nh, &vtx, &nv, 5);
+    if (nh != 5 || vtx == NULL) {
+        return 0;
+    }
+    if (wk->prog == 1 && (vtx[7] & 0xFFFF) == 0) {
+        return 1; /* a batch without the fade layer: the program draws nothing */
+    }
+    if (!ad_tag_ok(hdr) || !tag_ok(hdr + 12, 4, 0) || !tag_ok(hdr + 16, 4, 1)) {
+        return 0;
+    }
+    prim[0] = tag_prim(hdr + 12);
+    prim[1] = tag_prim(hdr + 16);
+    ctx[0] = (int)(prim[0] >> 9) & 1;
+    ctx[1] = (int)(prim[1] >> 9) & 1;
+    n = hdr[12] & 0x7FFF;
+    /* (layer 1's strip has layer 0's corners: its tag must say as many) */
+    if (n > FIG_MAXV || n * 3 > nv || (hdr[16] & 0x7FFF) != n || !ad_tex0(hdr + 4, ctx[0], &tex0[0]) ||
+        (wk->prog == 0 && !ad_tex0(hdr + 8, ctx[1], &tex0[1]))) {
+        return 0;
+    }
+    if (!wk->draw) {
+        return gRndCtxBad[ctx[0]] == 0 && gRndCtxBad[ctx[1]] == 0;
+    }
+    if (wk->prog == 1) {
+        memcpy(&tex0[1], k + 104, 8); /* constant 26: TEX0_2 of the fade texture, as ObjDraw_DrawParts writes it */
+    }
+    for (c = 0; c < 4; c++) {
+        col[0][c] = vu_ftoi(k[88 + c], 1.0f);
+        col[1][c] = vu_ftoi(k[92 + c], 1.0f);
+    }
+    if (wk->prog == 0) { /* the setup's light * A and light * B: columns 0..2 the product, 3 the light's own */
+        for (c = 0; c < 3; c++) {
+            mtx_apply(lightA + c * 4, k + 40, k[c * 4], k[c * 4 + 1], k[c * 4 + 2], k[c * 4 + 3]);
+            mtx_apply(lightB + c * 4, k + 40, k[16 + c * 4], k[16 + c * 4 + 1], k[16 + c * 4 + 2], k[16 + c * 4 + 3]);
+        }
+        memcpy(lightA + 12, k + 52, 16);
+        memcpy(lightB + 12, k + 52, 16);
+    }
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12); /* position (w: bone A's weight), normal, s t q */
+        float pa[4], pb[4], p[4], s[4], cl[4], l[4], q, u, t;
+
+        mtx_apply(pa, k, vu_clamp(v[0] - k[32]), vu_clamp(v[1] - k[33]), vu_clamp(v[2] - k[34]), 1.0f);
+        mtx_apply(pb, k + 16, vu_clamp(v[0] - k[36]), vu_clamp(v[1] - k[37]), vu_clamp(v[2] - k[38]), 1.0f);
+        for (c = 0; c < 4; c++) {
+            p[c] = vu_clamp(pb[c] + vu_clamp(vu_clamp(pa[c] - pb[c]) * v[3]));
+        }
+        mtx_apply(s, k + 56, p[0], p[1], p[2], 1.0f);
+        mtx_apply(cl, k + 72, p[0], p[1], p[2], 1.0f);
+        q = vu_div(1.0f, s[3]);
+        if (wk->prog == 0) { /* u = 0.5 + 0.5 * (light * the normal blended by the weight).x */
+            float la[4], lb[4];
+            mtx_apply(la, lightA, v[4], v[5], v[6], 1.0f);
+            mtx_apply(lb, lightB, v[4], v[5], v[6], 1.0f);
+            l[0] = vu_clamp(lb[0] + vu_clamp(vu_clamp(la[0] - lb[0]) * v[3]));
+            u = vu_clamp(vu_clamp(l[0] * 0.5f) + 0.5f);
+            t = 0.0f;
+        } else { /* (u, v) = 0.5 * (1 + (light * normal).xy) */
+            mtx_apply(l, k + 40, v[4], v[5], v[6], 1.0f);
+            u = vu_clamp(vu_clamp(1.0f + l[0]) * 0.5f);
+            t = vu_clamp(vu_clamp(1.0f + l[1]) * 0.5f);
+        }
+        for (c = 0; c < 4; c++) {
+            s[c] = vu_clamp(s[c] * q);
+        }
+        put_vtx(&out[0][i], ctx[0], s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col[0]);
+        put_vtx(&out[1][i], ctx[1], s, vu_clamp(u * q), vu_clamp(t * q), q, col[1]);
+        flags[0] = flags[1];
+        flags[1] = flags[2];
+        flags[2] = clip_flags(cl);
+        adc[i] = (flags[0] | flags[1] | flags[2]) != 0; /* (the first two complete no triangle) */
+    }
+    put_strip(out[0], adc, n, prim[0], tex0[0]);
+    put_strip(out[1], adc, n, prim[1], tex0[1]);
+    return 1;
+}
+
+int Vu1Native_Takes(int prog, const void *chain) {
+    FigWalk wk;
+
+    if (!Port_TakesRecords() || (prog != 0 && prog != 1)) {
+        return 0;
+    }
+    memset(&wk, 0, sizeof(wk));
+    wk.prog = prog;
+    return walk(chain, fig_batch, &wk);
+}
+
+static void fig_draw(int prog, const void *chain, const void *consts) {
+    FigWalk wk;
+
+    memset(&wk, 0, sizeof(wk));
+    wk.prog = prog;
+    wk.draw = 1;
+    wk.k = (const float *)consts;
+    walk(chain, fig_batch, &wk);
+}
+
+void Vu1Native_Prog0(const void *chain, const void *consts) {
+    fig_draw(0, chain, consts);
 }

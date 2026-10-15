@@ -8,9 +8,11 @@
  *   gcc -m32 -O2 -msse2 -mfpmath=sse -ffp-contract=off -Iinclude -Iport/include -Iport/src/gs port/tests/work/vu1_check.c \
  *       port/src/vu1_native.c port/src/gs/gs_vu1.c -lm -o /tmp/vu1_check
  *   /tmp/vu1_check 4 gamedata/pzs3us1/00424.bin 1          (program, file, part of its offset table)
+ *   /tmp/vu1_check 0 gamedata/pzs3us1/02877.bin 3          (a fighter's model parts)
  *
  * Constants: cameras made here (inside the mesh's bounds looking along each axis, and from outside seeing all of
- * it), so that triangles cross every plane of the clip volume. What it does not check: the state a record is drawn
+ * it), so that triangles cross every plane of the clip volume; for the fighters two bones a little apart, a light,
+ * colours above 0x80. What it does not check: the state a record is drawn
  * with (gRndCtx, followed from the env packets) and the textures (only that TEX0 is the one the GS would have had).
  */
 #include <math.h>
@@ -68,6 +70,7 @@ typedef struct List {
 } List;
 static List sRef, sNat;
 static size_t sFanTris; /* of the microcode's: from the clipper */
+static size_t sAdc;     /* its triangles left out (ADC) */
 
 static void add(List *l, const Tri *t) {
     if (l->n == l->cap) {
@@ -146,6 +149,7 @@ static void gs_vertex(uint32_t x, uint32_t y, uint32_t z, int kick) {
         add(&sRef, &t);
         sFanTris += type == 5;
     }
+    sAdc += gs.n == 3 && !kick;
     if (gs.n == 3 && type == 5) {
         gs.v[1] = gs.v[2];
         gs.n = 2;
@@ -250,7 +254,7 @@ static int is_chain(const uint32_t *t, const uint32_t *limit, int hdrFirst) {
         if (cmd == 0x6C) {
             uint32_t num = (code >> 16) & 0xFF;
             num = num ? num : 256;
-            if (first && ((code & 0x3FF) != 0 || num != (uint32_t)hdrFirst)) {
+            if (first && ((code & 0x3FF) != 0 || (hdrFirst == 1 ? num != 1 : num < (uint32_t)hdrFirst))) {
                 return 0;
             }
             first = 0;
@@ -398,20 +402,56 @@ static void compare(const char *what) {
     }
 }
 
+/* the positions of a chain's corners (three quadwords each, after a header of h) into the bounds */
+static void bounds(const uint32_t *t, uint32_t h, float *lo, float *hi) {
+    const uint32_t *w = t + 2, *end = t + 4 + (t[0] & 0xFFFF) * 4;
+    while (w < end) {
+        uint32_t code = *w++, num = (code >> 16) & 0xFF, a, k, i;
+        if (((code >> 24) & 0x7F) != 0x6C) { continue; }
+        num = num ? num : 256;
+        a = code & 0x3FF;
+        for (k = a < h ? h - a : (a - h) % 3 == 0 ? 0 : num; k + 3 <= num; k += 3) {
+            for (i = 0; i < 3; i++) {
+                float v;
+                memcpy(&v, w + k * 4 + i, 4);
+                if (v < lo[i]) { lo[i] = v; }
+                if (v > hi[i]) { hi[i] = v; }
+            }
+        }
+        w += num * 4;
+    }
+}
+
+/* a column-major rotation about an axis (x, y, z unit) by angle, with a translation */
+static void rot_mtx(float *m, double x, double y, double z, double a, double tx, double ty, double tz) {
+    double c = cos(a), sn = sin(a), t = 1 - c;
+    float r[16] = {(float)(t * x * x + c), (float)(t * x * y + sn * z), (float)(t * x * z - sn * y), 0,
+                   (float)(t * x * y - sn * z), (float)(t * y * y + c), (float)(t * y * z + sn * x), 0,
+                   (float)(t * x * z + sn * y), (float)(t * y * z - sn * x), (float)(t * z * z + c), 0,
+                   (float)tx, (float)ty, (float)tz, 1};
+    memcpy(m, r, sizeof(r));
+}
+
 int main(int argc, char **argv) {
     const char *blobPath = getenv("VU1_BLOB") ? getenv("VU1_BLOB") : "assets/cod/1BF6B0.textbin.bin";
     int prog, part, cam;
+    uint32_t hdrSize;
     uint8_t *b;
     size_t size, off, chains = 0, tris = 0, recs = 0;
     float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
     FILE *f;
 
     if (argc < 4) {
-        fprintf(stderr, "usage: vu1_check <program 4> <file> <part>\n");
+        fprintf(stderr, "usage: vu1_check <program 0, 1 or 4> <file> <part>\n");
         return 2;
     }
     prog = atoi(argv[1]);
     part = atoi(argv[3]);
+    if (prog != 0 && prog != 4) {
+        fprintf(stderr, "program %d: not here\n", prog);
+        return 2;
+    }
+    hdrSize = prog == 4 ? 1 : 5;
     f = fopen(blobPath, "rb");
     if (f == NULL) { perror(blobPath); return 2; }
     fseek(f, 0, SEEK_END);
@@ -421,40 +461,19 @@ int main(int argc, char **argv) {
     if (fread(sBlob, 1, sBlobSize, f) != sBlobSize) { return 2; }
     fclose(f);
     b = read_part(argv[2], part, &size);
-    if (prog != 4) {
-        fprintf(stderr, "program %d: not here yet\n", prog);
-        return 2;
-    }
-    /* the bounds of every position in the part's chains */
     for (off = 0; off + 16 <= size; off += 16) {
         const uint32_t *t = (const uint32_t *)(b + off);
-        if (is_chain(t, (const uint32_t *)(b + size), 1)) {
-            const uint32_t *w = t + 2, *end = t + 4 + (t[0] & 0xFFFF) * 4;
-            while (w < end) {
-                uint32_t code = *w++, num = (code >> 16) & 0xFF, k, i;
-                if (((code >> 24) & 0x7F) != 0x6C) { continue; }
-                num = num ? num : 256;
-                if ((code & 0x3FF) == 3) {
-                    for (k = 0; k < num; k += 3) {
-                        for (i = 0; i < 3; i++) {
-                            float v;
-                            memcpy(&v, w + k * 4 + i, 4);
-                            if (v < lo[i]) { lo[i] = v; }
-                            if (v > hi[i]) { hi[i] = v; }
-                        }
-                    }
-                }
-                w += num * 4;
-            }
+        if (is_chain(t, (const uint32_t *)(b + size), (int)hdrSize)) {
+            bounds(t, prog == 4 ? 3 : 5, lo, hi);
             chains++;
             off += (t[0] & 0xFFFF) * 16;
         }
     }
-    printf("program 4: %zu chains, positions %.1f..%.1f %.1f..%.1f %.1f..%.1f\n", chains, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+    printf("program %d: %zu chains, positions %.1f..%.1f %.1f..%.1f %.1f..%.1f\n", prog, chains, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
     for (cam = 0; cam < 7; cam++) {
         static const double dirs[7][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {0.6, -0.3, 0.74}, {-0.5, 0.2, -0.84}, {0, 0, 1}};
         double eye[3], fwd[3], up[3] = {0, 1, 0}, span = 0, len = 0;
-        float consts[48];
+        float consts[48], k[0x22 * 4];
         int i;
         for (i = 0; i < 3; i++) {
             eye[i] = (lo[i] + hi[i]) / 2;
@@ -466,29 +485,64 @@ int main(int argc, char **argv) {
         }
         if (cam == 6) { /* from outside, all of it in view */
             eye[2] -= span * 1.5;
+        } else if (prog != 4) { /* a model: from just outside it, so that some of it is out of view */
+            for (i = 0; i < 3; i++) { eye[i] -= fwd[i] * span * 0.6; }
         }
         camera(consts, eye, fwd, up, span * 0.002, span * 4);
+        /* programs 0, 1: ObjDrawPkt from mtxA (bones A, B moving the model a little apart, so the weights count) */
+        memset(k, 0, sizeof(k));
+        rot_mtx(k, 0, 1, 0, 0.1 * cam, span * 0.01, 0, 0);
+        rot_mtx(k + 16, 0.6, 0.8, 0, -0.2, 0, span * 0.02, 0);
+        k[32] = (float)(span * 0.003); k[33] = 0; k[34] = 0; k[35] = 1;
+        k[36] = 0; k[37] = (float)(-span * 0.002); k[38] = 0; k[39] = 1;
+        rot_mtx(k + 40, 0.36, 0.48, 0.8, 0.7 + cam, 0, 0, 0);
+        k[40] = -0.3f; k[44] = 0.5f; k[48] = -0.81f; /* x of the light's columns: -L */
+        memcpy(k + 56, consts, 32 * sizeof(float)); /* screen, clip */
+        k[88] = 128; k[89] = 96; k[90] = 200.5f; k[91] = 128 - cam;
+        k[92] = 128; k[93] = 128; k[94] = 128; k[95] = 128;
+        k[104] = 0; k[105] = 0; /* constant 26: A+D of TEX0_2 (program 1) */
+        {
+            uint32_t ad[4] = {0x12345678u, 0x00000ABCu, 7, 0};
+            memcpy(k + 104, ad, 16);
+        }
         for (off = 0; off + 16 <= size; off += 16) {
             const uint32_t *t = (const uint32_t *)(b + off);
-            if (!is_chain(t, (const uint32_t *)(b + size), 1)) {
+            if (!is_chain(t, (const uint32_t *)(b + size), (int)hdrSize)) {
                 continue;
             }
             sRef.n = sNat.n = 0;
-            /* the reference: Vu1Pkt_LoadProg4, then Vu1Pkt_CallProg4 and the chain */
-            load_program(0x2C04F0 - 0x2BF6B0, 0x2C1180 - 0x2C04F0);
-            GsVu1_SetCycle(1, 1);
-            GsVu1_Unpack(0x6C, 12, 0, (const uint32_t *)consts);
-            GsVu1_SetBase(0x8D);
-            GsVu1_SetOffset(0x1B4);
-            GsVu1_Call(0);
-            GsVu1_SetBase(0x8D);
-            GsVu1_SetOffset(0x1B4);
-            gs.tex0[0] = STAGE_TEX0;
-            run_chain(t);
-            Vu1Native_SetProg4(consts);
-            if (!Vu1Native_Prog4(t)) {
-                printf("chain at +0x%zX: not taken\n", off);
-                sBad++;
+            if (prog == 4) {
+                /* the reference: Vu1Pkt_LoadProg4, then Vu1Pkt_CallProg4 and the chain */
+                load_program(0x2C04F0 - 0x2BF6B0, 0x2C1180 - 0x2C04F0);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 12, 0, (const uint32_t *)consts);
+                GsVu1_SetBase(0x8D);
+                GsVu1_SetOffset(0x1B4);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0x8D);
+                GsVu1_SetOffset(0x1B4);
+                gs.tex0[0] = STAGE_TEX0;
+                run_chain(t);
+                Vu1Native_SetProg4(consts);
+                if (!Vu1Native_Prog4(t)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                }
+            } else {
+                /* Vu1Pkt_LoadProg0 / 1, then Vu1Pkt_CallProg0 / 1 and the chain */
+                load_program(prog == 0 ? 0 : 0x400, prog == 0 ? 0x400 : 0x3F0);
+                GsVu1_SetCycle(1, 1);
+                GsVu1_Unpack(0x6C, 0x22, 0, (const uint32_t *)k);
+                GsVu1_Call(0);
+                GsVu1_SetBase(0x22);
+                GsVu1_SetOffset(0x1EF);
+                run_chain(t);
+                if (!Vu1Native_Takes(prog, t)) {
+                    printf("chain at +0x%zX: not taken\n", off);
+                    sBad++;
+                } else {
+                    Vu1Native_Prog0(t, k);
+                }
             }
             {
                 char what[64];
@@ -500,7 +554,7 @@ int main(int argc, char **argv) {
             off += (t[0] & 0xFFFF) * 16;
         }
     }
-    printf("%zu triangles from the microcode (%zu of them clipped), %zu from records; worst corner %.4f px, depth %.0f, s t q %.3g relative; %zu differences\n",
-           tris, sFanTris, recs, sWorstXY, sWorstZ, sWorstSTQ, sBad);
+    printf("%zu triangles from the microcode (%zu of them clipped; %zu left out), %zu from records; worst corner %.4f px, depth %.0f, s t q %.3g relative; %zu differences\n",
+           tris, sFanTris, sAdc, recs, sWorstXY, sWorstZ, sWorstSTQ, sBad);
     return sBad != 0;
 }

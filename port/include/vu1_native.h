@@ -18,4 +18,10 @@ void Vu1Native_SetProg4(const void *consts);
 /* A mesh's chain drawn by program 4 with them; 1 = taken. */
 int Vu1Native_Prog4(const void *chain);
 
+/* Programs 0 (a fighter's part, lit) and 1 (its fade pass): whether the part's chain (part->chain; the part record
+   + 0x60 for program 1) can be drawn so, before its constants are made; then the draw with them (the 0x22
+   quadwords of ObjDrawPkt from mtxA, as they would have gone to VU address 0). */
+int Vu1Native_Takes(int prog, const void *chain);
+void Vu1Native_Prog0(const void *chain, const void *consts);
+
 #endif

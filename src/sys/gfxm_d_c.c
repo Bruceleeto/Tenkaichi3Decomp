@@ -27,6 +27,7 @@
 #include "sys/gfxm_d_c.h"
 #ifdef PORT
 #include "port/rnd.h"
+#include "vu1_native.h"
 #endif
 #include "battle/btl_cam.h"
 
@@ -599,6 +600,12 @@ void ObjDraw_AddClutPass(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view
     Dma_EndDirect(p);
 }
 
+#ifdef PORT
+/* A part that programs 0 and 1 draw as records (port/include/vu1_native.h, when Vu1Native_Takes its chain): its
+   constants are made here instead of in a packet, and drawn with once they are in. */
+static ObjDrawPkt sPortPkt;
+#endif
+
 /* Queues the VU1 packets of the model's parts. mode 0: lit draw (program 0; the head, node 0x33, last and
    between two frame-mask packets unless `noMask`), 1: fade pass (program 1, parts with flag 1, texture `tex0`),
    2: flat draw (program 2). */
@@ -640,9 +647,15 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                         headNode = node;
                         headPart = part;
                     } else {
+#ifdef PORT
+                        u8 *chain = (part->node == 0x30 && BtlObj_GetSubState(obj) != -1) ? mdl->chains[BtlObj_GetSubState(obj)]
+                                                                                          : part->chain;
+                        ObjDrawPkt *pkt = Vu1Native_Takes(0, chain) ? &sPortPkt : Vu1Pkt_CallProg0(chain);
+#else
                         ObjDrawPkt *pkt = Vu1Pkt_CallProg0((part->node == 0x30 && BtlObj_GetSubState(obj) != -1)
                                                                ? mdl->chains[BtlObj_GetSubState(obj)]
                                                                : part->chain);
+#endif
 
                         Mtx_Copy(&pkt->mtxB, &node->mtxB);
                         Mtx_Copy(&pkt->mtxA, &node->mtxA);
@@ -653,6 +666,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                         Vec4_Copy(&pkt->k, &D_002C3440);
                         Vu0Screen_StoreMtx(&pkt->screen);
                         Vu0Clip_StoreMtx(&pkt->clip);
+#ifdef PORT
+                        if (pkt == &sPortPkt) {
+                            Vu1Native_Prog0(chain, &pkt->mtxA);
+                        }
+#endif
                     }
                 } else if (mode == 1) {
                     if (part->flags & 1) {
@@ -709,7 +727,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
         if (!noMask) {
             ObjGs_AddFrameMaskOpaque(fbmsk);
         }
+#ifdef PORT
+        pkt = Vu1Native_Takes(0, headPart->chain) ? &sPortPkt : Vu1Pkt_CallProg0(headPart->chain);
+#else
         pkt = Vu1Pkt_CallProg0(headPart->chain);
+#endif
         Mtx_Copy(&pkt->mtxB, &headNode->mtxB);
         Mtx_Copy(&pkt->mtxA, &headNode->mtxA);
         Vec4_Copy(&pkt->ofsA, &headPart->ofsA);
@@ -719,6 +741,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
         Vec4_Copy(&pkt->k, &D_002C3440);
         Vu0Screen_StoreMtx(&pkt->screen);
         Vu0Clip_StoreMtx(&pkt->clip);
+#ifdef PORT
+        if (pkt == &sPortPkt) {
+            Vu1Native_Prog0(headPart->chain, &pkt->mtxA);
+        }
+#endif
         if (!noMask) {
             ObjGs_AddFrameMaskBlend(fbmsk);
         }
