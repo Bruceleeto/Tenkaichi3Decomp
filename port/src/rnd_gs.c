@@ -24,7 +24,7 @@
 #include <string.h>
 #include "../../include/port/rnd.h"
 
-unsigned gRndOtStat[3];
+unsigned gRndOtStat[4];
 uint32_t gRndCtxBad[2];       /* RND_BAD_: what of a context's state a record cannot say */
 
 static uint64_t sTex0[2];     /* TEX0 of each context */
@@ -426,6 +426,7 @@ int Rnd_OtTake(const uint64_t *pkt, unsigned qwc) {
     uint64_t tex0[2], xy[2], prim = sPrim, dv[2][D_N], dp = sDirtyPrim, prc = sPrmodeCont, prm = sPrmode;
     int n;
 
+    gRndOtStat[3]++; /* (a node read as a GS packet) */
     if (!Port_TakesRecords()) {
         walk(pkt, qwc, FOLLOW);
         return 0;

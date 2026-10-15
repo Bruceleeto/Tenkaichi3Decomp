@@ -186,7 +186,7 @@ typedef struct RndOtRec {
 int Rnd_OtRecTakes(const RndOtRec *r);
 void Rnd_OtRec(const RndOtRec *r);
 uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst);
-extern unsigned gRndOtStat[3]; /* the ordering table's draws sent as packets, as polygons, as records (BT3_GS_VERBOSE) */
+extern unsigned gRndOtStat[4]; /* the ordering table's draws sent as packets, as polygons, as records; nodes read as GS packets (BT3_GS_VERBOSE) */
 void Rnd_StateInit(RndState *s, uint32_t fbp); /* the whole picture, blended normally, no test, nothing else */
 int Rnd_Fill(const RndState *st, uint32_t rgba); /* the whole picture in one colour, as Port_Quad */
 

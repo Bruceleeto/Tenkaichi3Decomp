@@ -423,6 +423,23 @@ OtPrim *Ot_NewHead(s32 layer) {
     u32 *p = gOtCur;
 
     gOtCur = p + OT_HEAD_SIZE / 4;
+#ifdef PORT
+    { /* a register node (port/ot_rec.h): Ot_Send writes the two into the renderer's state, nothing parsed */
+        OtPrim *node = (OtPrim *)p;
+        OtAd *a = OT_AD(node);
+
+        node->qwc = 0;
+        node->tagId = OT_AD_TAG;
+        node->next = NULL;
+        node->vif[0] = node->vif[1] = 0;
+        a->n = 2;
+        a->addr[0] = GS_ALPHA_1;
+        a->data[0] = gOt->alpha1[layer];
+        a->addr[1] = GS_ALPHA_2;
+        a->data[1] = gOt->alpha2[layer];
+        return node;
+    }
+#endif
     p[0] = DMA_TAG_NEXT | 3;
     p[2] = VIF_FLUSHE;
     p[3] = VIF_DIRECT | 3;
