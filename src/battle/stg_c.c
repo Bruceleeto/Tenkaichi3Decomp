@@ -300,6 +300,12 @@ void StgHaze_BuildClut(StgHaze *haze, StgCurve *curve, f32 scale) {
     u8 *clut;
     s32 i;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     clut = haze->clut;
     memset(table, 0, sizeof(table));
     StgCurve_Build(curve, table);

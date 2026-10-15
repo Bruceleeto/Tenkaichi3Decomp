@@ -1723,6 +1723,12 @@ void StgFog_BuildClut(StgFog *tone, StgFogPoint *pts, s32 clearLast, f32 scale) 
     u8 *clut = tone->clut;
     s32 i;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     memset(curve, 0, sizeof(curve));
     StgCurve_Build(pts, curve);
     for (i = 0; i < 256; i++) {

@@ -188,6 +188,12 @@ void StgPanBlur_Term(void) {
 void StgPanBlur_BuildClut(u8 *clut) {
     s32 i;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     for (i = 0; i < 0x100; i++) {
         u8 *e = clut + GFXPOST_CLUT_INDEX(i) * 4;
         s32 a;
@@ -1296,6 +1302,12 @@ void GfxPost_AddScreenFrame(void) {
 void ObjOutline_BuildClut(u8 *clut) {
     s32 i;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     for (i = 0; i < 0x100; i++) {
         s32 k = GFXPOST_CLUT_INDEX(i);
 
@@ -1676,6 +1688,12 @@ void ObjOutline_Draw(void) {
 void StgGlare_BuildClut(u8 *clut) {
     s32 i;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     for (i = 0; i < 0x100; i++) {
         s32 k = GFXPOST_CLUT_INDEX(i) * 4;
 
@@ -1833,6 +1851,12 @@ void StgDepthTint_BuildClut(u8 *clut, StgDepthTint *tint) {
     f32 table[0x100];
     s32 c[3];
     s32 i;
+
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
 
     memset(table, 0, sizeof(table));
     StgCurve_Build(&tint->curve, table);
@@ -2024,6 +2048,12 @@ void ObjGlow_BuildClut(void) {
     u8 *clut = gObjGlow->cur->clut;
     u8 *alpha = gObjGlow->table.alpha;
     s32 i;
+
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
 
     for (i = 0; i < 0x100; i++) {
         u8 *e = clut + GFXPOST_CLUT_INDEX(i) * 4;

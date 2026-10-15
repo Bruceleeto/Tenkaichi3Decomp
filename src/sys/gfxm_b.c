@@ -961,6 +961,12 @@ void GfxAlphaKey_BuildClut(u8 *clut) {
     s32 i;
     s32 n;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
+
     clut[0] = 0;
     clut[1] = 0;
     clut[2] = 0;
@@ -1410,6 +1416,12 @@ void GfxWater_SetColor(s32 view, u8 r, u8 g, u8 b, s32 a) {
 void GfxDepthFog_BuildClut(u8 *clut) {
     s32 i;
     s32 n;
+
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers: none of the passes that read the table is drawn, nor is it sent) */
+        return;
+    }
+#endif
 
     for (i = 0; i < 256; i++) {
         n = ((i & 0xE7) | ((i & 8) << 1) | ((i & 0x10) >> 1)) * 4;
