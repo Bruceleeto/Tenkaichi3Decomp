@@ -831,16 +831,11 @@ void FlashDraw_FlatQuad(FlashQuad *q) {
     s32 oy;
     s32 ox;
 
-    p[0] = 0x1000000000008004;
-    p[1] = 0xE;
+    PORT_PKT(p, 0, 0x1000000000008004, 0xE);
     p += 2;
-    p[0] = GFX_FRAME_REG();
-    p[1] = 0x4C;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x4C, GFX_FRAME_REG());
     p += 2;
-    p[0] = 1;
-    p[1] = 0x46;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x46, 1);
     p += 2;
     if (q->flags & FLASH_QUAD_ADD) {
         p[0] = 0x48;
@@ -851,17 +846,14 @@ void FlashDraw_FlatQuad(FlashQuad *q) {
     }
     p[1] = 0x42;
     p += 2;
-    p[0] = 0x30000;
-    p[1] = 0x47;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x47, 0x30000);
     p += 2;
 #ifdef PORT
     if (FlashDraw_PortQuad(q, 0, -1, p)) {
         return;
     }
 #endif
-    p[0] = 0x6400000000008001;
-    p[1] = 0x555510;
+    PORT_PKT(p, 0, 0x6400000000008001, 0x555510);
     p += 2;
     p[0] = 0x44;
     oy = 0x7200;
@@ -884,8 +876,7 @@ void FlashDraw_MaskQuad(FlashQuad *q, u64 tex0, s32 set) {
     u64 frame;
     u64 reg;
 
-    p[0] = 0x1000000000008007;
-    p[1] = 0xE;
+    PORT_PKT(p, 0, 0x1000000000008007, 0xE);
     p += 2;
     frame = GFX_FRAME_REG();
     if (set) {
@@ -893,13 +884,9 @@ void FlashDraw_MaskQuad(FlashQuad *q, u64 tex0, s32 set) {
     } else {
         reg = frame | 0xFF00000000000000;
     }
-    p[0] = reg;
-    p[1] = 0x4C;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x4C, reg);
     p += 2;
-    p[0] = 1;
-    p[1] = 0x46;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x46, 1);
     p += 2;
     if (set) {
         p[0] = 0x50000;
@@ -917,13 +904,9 @@ void FlashDraw_MaskQuad(FlashQuad *q, u64 tex0, s32 set) {
     }
     p[1] = 0x42;
     p += 2;
-    p[0] = 0;
-    p[1] = 0x3F;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x3F, 0);
     p += 2;
-    p[0] = 0x60;
-    p[1] = 0x14;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x14, 0x60);
     p += 2;
     if (q->flags & FLASH_QUAD_REPEAT) {
         p[0] = 0;
@@ -966,16 +949,11 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
         return;
     }
     p = Dma_BeginDirect();
-    p[0] = 0x1000000000008006;
-    p[1] = 0xE;
+    PORT_PKT(p, 0, 0x1000000000008006, 0xE);
     p += 2;
-    p[0] = GFX_FRAME_REG();
-    p[1] = 0x4C;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x4C, GFX_FRAME_REG());
     p += 2;
-    p[0] = 1;
-    p[1] = 0x46;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x46, 1);
     p += 2;
     if (q->flags & FLASH_QUAD_ADD) {
         p[0] = 0x48;
@@ -986,13 +964,9 @@ void FlashDraw_Quad(FlashTex *tex, FlashQuad *q) {
     }
     p[1] = 0x42;
     p += 2;
-    p[0] = 0x60;
-    p[1] = 0x14;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x14, 0x60);
     p += 2;
-    p[0] = 0x30000;
-    p[1] = 0x47;
-    PORT_AD(p, 0);
+    PORT_REG(p, 0, 0x47, 0x30000);
     p += 2;
     if (q->flags & FLASH_QUAD_REPEAT) {
         p[0] = 0;
