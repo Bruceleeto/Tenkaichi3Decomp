@@ -222,17 +222,18 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
    pixels and the bar drawn in the pieces of its rectangle outside them, as plain quads. Only sprites drawn straight
    (no rotation) are cut this way; those are all the gauges' (any other is drawn as before: by the mark test). */
 
-/* The masks' opaque texels (measured from the gauge sheet, texture 8): in the texel rectangle u0..u1 x v0..v1, row
-   r (r < rows) is opaque from u0 + start - r / 2 to u1 - r / 2 (the slant of the bar's ends); the rows below are
-   clear. A mask not listed is taken as opaque throughout its rectangle. */
+/* The masks' opaque texels (measured from the gauge sheet, 00005.bin's first, textures 8 and 0x18): in the texel
+   rectangle u0..u1 x v0..v1, row r (r < rows) is opaque from u0 + start - r / 2 to u1 - end - r / 2 (the slant of the
+   bar's ends); the rows below are clear. A mask not listed is taken as opaque throughout its rectangle. */
 typedef struct HudCMaskShape {
     s16 u0, v0, u1, v1;
-    s16 start, rows;
+    s16 start, end, rows;
 } HudCMaskShape;
 
 static const HudCMaskShape sHudMaskShape[] = {
-    {0, 48, 160, 64, 5, 12}, /* the life bars' (HudGauge_DrawHp) */
-    {192, 0, 218, 6, 2, 6},  /* the blast gauge's (HudGauge_DrawBlast) */
+    {0, 48, 160, 64, 5, 0, 12}, /* the life bars' (HudGauge_DrawHp) */
+    {192, 0, 218, 6, 2, 0, 6},  /* the blast gauge's (HudGauge_DrawBlast) */
+    {0, 16, 32, 32, 1, 2, 4},   /* the team panel's health bars and switch gauge (HudTeam_DrawHpA, DrawHpB, DrawGauge) */
 };
 
 #define HUDC_MARKS 96
@@ -279,7 +280,7 @@ static void HudSprite_PortMark(f32 (*v)[4], s32 (*uv)[2]) {
         const HudCMaskShape *s = &sHudMaskShape[i];
         if (s->u0 == u0 && s->v0 == v0 && s->u1 == u1 && s->v1 == v1) {
             for (r = 0; r < s->rows; r += 2) {
-                HudSprite_PortMarkTexels(v, uv, u0 + s->start - r / 2, v0 + r, u1 - r / 2, v0 + (r + 2 < s->rows ? r + 2 : s->rows));
+                HudSprite_PortMarkTexels(v, uv, u0 + s->start - r / 2, v0 + r, u1 - s->end - r / 2, v0 + (r + 2 < s->rows ? r + 2 : s->rows));
             }
             return;
         }
