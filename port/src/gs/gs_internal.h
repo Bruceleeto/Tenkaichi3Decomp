@@ -28,7 +28,7 @@ typedef struct GsState {
     uint32_t tx, ty, tw, th, tpos;
 } GsState;
 
-extern GsState gGs;
+extern GsState gGs; /* (gs_walk.c; set by the reference's packets) */
 extern uint32_t gGsPageGen[512]; /* bumped whenever an upload writes into that 8 KB page of GS memory (gs_walk.c) */
 extern unsigned gGsFrame; /* pictures so far (gs_walk.c) */
 

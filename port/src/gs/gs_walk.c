@@ -408,6 +408,64 @@ void Gs_Marker(uint32_t addr, uint64_t d) {
     }
 }
 
+/* ---- the GS state ----
+   What the packets set in the GS, which gs_draw.c still reads for what is drawn by packet and to check the records
+   against: the reference's to keep (gs_core.c reg_write). Without it (the Dreamcast) nothing sets it and there is
+   no GS memory: it reads as it does on the PC when the lists are walked, never written, and empty. */
+GsState gGs;
+
+int Gs_PsmBits(uint32_t psm) {
+    if ((psm & 0x30) == 0x30) {
+        psm &= 0x0F; /* a depth buffer read as a texture: 32, 24 or 16 bits like the colour formats */
+    }
+    switch (psm) {
+    case 0x00: return 32;
+    case 0x01: return 24;
+    case 0x02: case 0x0A: return 16;
+    case 0x13: case 0x1B: return 8;
+    case 0x14: case 0x24: case 0x2C: return 4;
+    default: return 32;
+    }
+}
+
+/* A stored colour of format psm as R, G, B, A (TEXA supplies alpha where the format has none or one bit). */
+uint32_t Gs_Expand(uint32_t c, uint32_t psm) {
+    uint32_t ta0 = gGs.texa & 0xFF, ta1 = (gGs.texa >> 32) & 0xFF, aem = (gGs.texa >> 15) & 1;
+
+    if ((psm & 0x30) == 0x30) {
+        psm &= 0x0F;
+    }
+
+    if (psm == 0x00) {
+        return c;
+    }
+    if (psm == 0x01) {
+        c &= 0xFFFFFF;
+        return c | ((aem && c == 0 ? 0 : ta0) << 24);
+    }
+    {
+        uint32_t r = (c & 31) << 3, g = ((c >> 5) & 31) << 3, b = ((c >> 10) & 31) << 3;
+        uint32_t a = (c & 0x8000) ? ta1 : (aem && (c & 0x7FFF) == 0 ? 0 : ta0);
+        return r | g << 8 | b << 16 | a << 24;
+    }
+}
+
+#ifndef PORT_GS_REF
+/* GS memory, which the Dreamcast does not have: nothing was ever uploaded to it (what the game's textures and
+   palettes are, gs_pvr.c knows from tex.pak and the markers). */
+uint32_t Gs_VramRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y) {
+    return 0;
+}
+
+int Gs_SrcRead(uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y, uint32_t *v) {
+    return 0; /* (no upload's data) */
+}
+
+uint32_t Gs_PageHash(uint32_t page) {
+    return 0; /* (every page as empty as the next) */
+}
+#endif
+
 /* ---- the walk ----
    The frame's list as the Dreamcast takes it (and the PC with BT3_WALK=1, in place of the reference's run_chain): the
    DMA chain is followed only to find where the queued records go, and the port's markers in its GIF packets (GS

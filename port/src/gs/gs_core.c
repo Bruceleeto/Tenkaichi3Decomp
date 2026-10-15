@@ -37,7 +37,6 @@ typedef struct Target {
     unsigned drawn; /* pixels written since the last frame end */
 } Target;
 
-GsState gGs;
 unsigned gGsFbUploads; /* bit 0 / 1: pixels were uploaded into display buffer 0 / 0x70 since the back end last looked */
 #define gs gGs
 #define Vertex GsVertex
@@ -557,42 +556,6 @@ static Target *target_get(uint32_t fbp) {
 }
 
 /* ------------------------------------------------------------------------------------------------ textures */
-
-int Gs_PsmBits(uint32_t psm) {
-    if ((psm & 0x30) == 0x30) {
-        psm &= 0x0F; /* a depth buffer read as a texture: 32, 24 or 16 bits like the colour formats */
-    }
-    switch (psm) {
-    case 0x00: return 32;
-    case 0x01: return 24;
-    case 0x02: case 0x0A: return 16;
-    case 0x13: case 0x1B: return 8;
-    case 0x14: case 0x24: case 0x2C: return 4;
-    default: return 32;
-    }
-}
-
-/* A stored colour of format psm as R, G, B, A (TEXA supplies alpha where the format has none or one bit). */
-uint32_t Gs_Expand(uint32_t c, uint32_t psm) {
-    uint32_t ta0 = gs.texa & 0xFF, ta1 = (gs.texa >> 32) & 0xFF, aem = (gs.texa >> 15) & 1;
-
-    if ((psm & 0x30) == 0x30) {
-        psm &= 0x0F;
-    }
-
-    if (psm == 0x00) {
-        return c;
-    }
-    if (psm == 0x01) {
-        c &= 0xFFFFFF;
-        return c | ((aem && c == 0 ? 0 : ta0) << 24);
-    }
-    {
-        uint32_t r = (c & 31) << 3, g = ((c >> 5) & 31) << 3, b = ((c >> 10) & 31) << 3;
-        uint32_t a = (c & 0x8000) ? ta1 : (aem && (c & 0x7FFF) == 0 ? 0 : ta0);
-        return r | g << 8 | b << 16 | a << 24;
-    }
-}
 
 static uint32_t texel(int ctx, int u, int v) {
     uint64_t t0 = gs.tex0[ctx], cl = gs.clamp[ctx];

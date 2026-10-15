@@ -30,6 +30,9 @@ NL_SRC   := $(sort $(wildcard port/third_party/newlib_libm/*.c))
 VU0_SRC  := src/port/vu0_a.c src/port/vu0_b.c
 # the PC's only: its renderers, SDL's window, sound, input and screen reader; texture packs; online play
 GS_PC    := gs_gpu.c gs_gl.c gs_window.c audio_sdl.c gs_input.c a11y.c gs_texpack.c net.c net_chat.c net_match.c net_relay.c net_sign.c state.c
+# and the PS2 reference, what the PC compares records against: the GS (GS memory, the packets) and VU1; the lists are
+# walked by gs_walk.c alone
+GS_PC    += gs_core.c gs_vu1.c
 GS_SRC   := $(filter-out $(addprefix port/src/gs/,$(GS_PC)),$(sort $(wildcard port/src/gs/*.c)))
 PC_SRC   := $(filter-out port/src/plat_crash.c,$(sort $(wildcard port/src/*.c)))
 DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c)
@@ -52,11 +55,6 @@ GS_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
 PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/include -Iport/src -Iport/src/dc
 PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
 PC_HARD     := plat_libm plat_fastvec vu1_native
-
-# the PS2 reference is still linked (port/src/gs/gs_core.c, gs_vu1.c), until the walker takes its place
-GAME_CFLAGS += -DPORT_GS_REF
-GS_CFLAGS   += -DPORT_GS_REF
-PC_CFLAGS   += -DPORT_GS_REF
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 
