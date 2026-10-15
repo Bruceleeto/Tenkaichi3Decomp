@@ -142,7 +142,29 @@ void Rnd_OtEnd(void);
 int Rnd_OtTake(const uint64_t *pkt, unsigned qwc);
 void Rnd_OtDraw(const uint64_t *pkt, unsigned qwc);
 uint64_t *Rnd_OtState(uint64_t *dst);
-extern unsigned gRndOtStat[2]; /* the ordering table's draws sent as packets, as polygons (BT3_GS_VERBOSE) */
+/* A draw the effects queue in the ordering table as it is instead of as a GIF packet (src/sys/gfx_ot.c Ot_NewRec):
+   what the packet's PRIM says (ctx, abe, gouraud, tme, fst, the type: 1 line, 2 line strip, 3 triangle, 4 strip,
+   5 fan, 6 sprite) and its n corners as the packet holds them: x, y in sixteenths of a pixel with XYOFFSET in,
+   the 24-bit depth, s t q (with fst: U and V in sixteenths of a texel, as whole numbers in s and t), r g b a (r in
+   the low byte). With setTex0, the packet's TEX0 of context ctx is written before it, as the packet wrote it. */
+typedef struct RndOtVtx {
+    uint16_t x, y;
+    uint32_t z;
+    float s, t, q;
+    uint32_t rgba;
+} RndOtVtx; /* 24 bytes */
+typedef struct RndOtRec {
+    uint8_t ctx, abe, gouraud, tme, fst, type, n, setTex0;
+    uint64_t tex0;
+    RndOtVtx v[4];
+} RndOtRec; /* 112 bytes */
+/* A record of the ordering table: whether it is drawn as polygons (1: Rnd_OtRec, under the state followed to
+   that point, as Rnd_OtDraw draws the packet it stands for), or not (0: Rnd_OtRecPacket writes that packet at dst
+   and returns its end; its register writes are followed). */
+int Rnd_OtRecTakes(const RndOtRec *r);
+void Rnd_OtRec(const RndOtRec *r);
+uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst);
+extern unsigned gRndOtStat[3]; /* the ordering table's draws sent as packets, as polygons, as records (BT3_GS_VERBOSE) */
 void Rnd_StateInit(RndState *s, uint32_t fbp); /* the whole picture, blended normally, no test, nothing else */
 int Rnd_Fill(const RndState *st, uint32_t rgba); /* the whole picture in one colour, as Port_Quad */
 

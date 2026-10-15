@@ -14,7 +14,8 @@
  * known is handed to the renderer as polygons (Port_Poly), in its place among the packets that stay; any other
  * packet stays, and its register writes are followed. What a draw taken would have left in the GS (TEX0 and its
  * palette load, CLAMP, TEX1, PRIM) is written as A+D before the next packet that stays, so what is still a packet
- * draws as it did.
+ * draws as it did. An effect that queues its draw as a record instead (src/sys/gfx_ot.c Ot_NewRec) has it read
+ * through the same steps, corner by corner (Rnd_OtRec), so it is drawn exactly as its packet would have been.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -23,7 +24,7 @@
 #include <string.h>
 #include "../../include/port/rnd.h"
 
-unsigned gRndOtStat[2];
+unsigned gRndOtStat[3];
 uint32_t gRndCtxBad[2];       /* RND_BAD_: what of a context's state a record cannot say */
 
 static uint64_t sTex0[2];     /* TEX0 of each context */
@@ -402,6 +403,83 @@ uint64_t *Rnd_OtState(uint64_t *dst) {
     tag[0] = n | 1ull << 15 | 1ull << 60; /* NLOOP n, EOP, PACKED, one register: A+D */
     tag[1] = 0xE;
     sDirty = 0;
+    return dst;
+}
+
+/* The PRIM a record's packet would write. */
+static uint64_t rec_prim(const RndOtRec *r) {
+    return (uint64_t)(r->type & 7) | (uint64_t)(r->gouraud != 0) << 3 | (uint64_t)(r->tme != 0) << 4 | (uint64_t)(r->abe != 0) << 6 |
+           (uint64_t)(r->fst != 0) << 8 | (uint64_t)(r->ctx & 1) << 9;
+}
+
+int Rnd_OtRecTakes(const RndOtRec *r) {
+    return Port_TakesRecords() && gRndCtxBad[r->ctx & 1] == 0 && r->type >= 1 && r->type <= 6 && r->n <= 4;
+}
+
+/* Its corners go through vertex() as the packet's would: its PRIM and TEX0 written as taken, then each corner's
+   colour, texture coordinates and position, each one a kick. */
+void Rnd_OtRec(const RndOtRec *r) {
+    int i;
+
+    gs_write(0, rec_prim(r), 1);
+    if (r->setTex0) {
+        gs_write(0x06 + (r->ctx & 1), r->tex0, 1);
+    }
+    sVn = 0;
+    for (i = 0; i < r->n; i++) {
+        const RndOtVtx *v = &r->v[i];
+        sRgba = v->rgba;
+        if (r->fst) {
+            sU = (int)v->s & 0x3FFF;
+            sVv = (int)v->t & 0x3FFF;
+        } else {
+            sS = v->s;
+            sT = v->t;
+            sQ = v->q;
+        }
+        vertex(v->x, v->y, v->z & 0xFFFFFF, 1, DRAW);
+    }
+    gRndOtStat[2]++;
+}
+
+/* The packet: PRIM (and TEX0) as PACKED registers, then each corner's RGBAQ, ST (Q in it) or UV, and XYZ2. */
+uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
+    uint64_t *start = dst;
+    int i;
+
+    dst[0] = 1 | (uint64_t)(r->setTex0 ? 2 : 1) << 60; /* NLOOP 1, PACKED */
+    dst[1] = r->setTex0 ? 0x00ull | (uint64_t)(0x06 + (r->ctx & 1)) << 4 : 0x00ull;
+    dst[2] = rec_prim(r);
+    dst[3] = 0;
+    dst += 4;
+    if (r->setTex0) {
+        dst[0] = r->tex0;
+        dst[1] = 0;
+        dst += 2;
+    }
+    dst[0] = (uint64_t)r->n | 1ull << 15 | 3ull << 60; /* NLOOP n, EOP, PACKED, three registers */
+    dst[1] = 0x1 | (uint64_t)(r->fst ? 0x3 : 0x2) << 4 | 0x5ull << 8;
+    dst += 2;
+    for (i = 0; i < r->n; i++) {
+        const RndOtVtx *v = &r->v[i];
+        uint32_t q;
+        dst[0] = (uint64_t)(v->rgba & 0xFF) | (uint64_t)((v->rgba >> 8) & 0xFF) << 32;
+        dst[1] = (uint64_t)((v->rgba >> 16) & 0xFF) | (uint64_t)((v->rgba >> 24) & 0xFF) << 32;
+        if (r->fst) {
+            dst[2] = (uint64_t)((int)v->s & 0x3FFF) | (uint64_t)((int)v->t & 0x3FFF) << 32;
+            dst[3] = 0;
+        } else {
+            memcpy(&dst[2], &v->s, 4);
+            memcpy((uint8_t *)&dst[2] + 4, &v->t, 4);
+            memcpy(&q, &v->q, 4);
+            dst[3] = q;
+        }
+        dst[4] = (uint64_t)v->x | (uint64_t)v->y << 32;
+        dst[5] = v->z & 0xFFFFFF;
+        dst += 6;
+    }
+    walk(start, (unsigned)(dst - start) / 2, FOLLOW); /* (what it sets, as a packet that stays) */
+    gRndOtStat[0]++;
     return dst;
 }
 

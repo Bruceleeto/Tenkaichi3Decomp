@@ -191,6 +191,17 @@ s32 Ot_Send(void) {
     dst = (u8 *)Dma_BeginDirect();
     for (prim = gOtHead; prim != NULL; prim = prim->next) {
 #ifdef PORT
+        if (prim->qwc == 0 && prim->tagId == OT_REC_TAG) { /* a draw as it is: polygons, or else its packet */
+            if (Rnd_OtRecTakes(OT_REC(prim))) {
+                Dma_EndDirect((u64 *)dst);
+                Rnd_OtRec(OT_REC(prim));
+                dst = (u8 *)Dma_BeginDirect();
+            } else {
+                dst = (u8 *)Rnd_OtState((u64 *)dst);
+                dst = (u8 *)Rnd_OtRecPacket(OT_REC(prim), (u64 *)dst);
+            }
+            continue;
+        }
         if (Rnd_OtTake((const u64 *)(prim + 1), prim->qwc)) { /* its polygons handed to the renderer (port/src/rnd_gs.c) */
             Dma_EndDirect((u64 *)dst);
             Rnd_OtDraw((const u64 *)(prim + 1), prim->qwc);
@@ -363,3 +374,59 @@ s32 Ot_Align64(s32 size) {
     }
     return size;
 }
+
+#ifdef PORT
+/* Takes a record node from the packet memory (see port/ot_rec.h): the PRIM's bits (the context, blending, gouraud,
+   texture, fst, the type) and n corners, which the caller fills before it links the node as it would the packet. */
+void *Ot_NewRec(u64 prim, s32 n) {
+    OtPrim *node = (OtPrim *)gOtCur;
+    OtRec *r;
+
+    if (node == NULL) {
+        return NULL;
+    }
+    gOtCur = (u32 *)((u8 *)node + sizeof(OtPrim) + sizeof(OtRec));
+    node->qwc = 0;
+    node->tagId = OT_REC_TAG;
+    node->next = NULL;
+    node->vif[0] = node->vif[1] = 0;
+    r = OT_REC(node);
+    r->type = prim & 7;
+    r->gouraud = (prim >> 3) & 1;
+    r->tme = (prim >> 4) & 1;
+    r->abe = (prim >> 6) & 1;
+    r->fst = (prim >> 8) & 1;
+    r->ctx = (prim >> 9) & 1;
+    r->n = n;
+    r->setTex0 = 0;
+    r->tex0 = 0;
+    return node;
+}
+
+void Ot_RecVtx(void *node, s32 i, s32 x, s32 y, u32 z, f32 s, f32 t, f32 q, u32 rgba) {
+    OtRec *r = OT_REC(node);
+
+    r->v[i].x = x;
+    r->v[i].y = y;
+    r->v[i].z = z & 0xFFFFFF;
+    r->v[i].s = s;
+    r->v[i].t = t;
+    r->v[i].q = q;
+    r->v[i].rgba = rgba;
+}
+
+void Ot_RecTex0(void *node, u64 tex0) {
+    OT_REC(node)->setTex0 = 1;
+    OT_REC(node)->tex0 = tex0;
+}
+
+u32 Ot_RecRgba(f32 r, f32 g, f32 b, f32 a) {
+    u8 c[4];
+
+    c[0] = r;
+    c[1] = g;
+    c[2] = b;
+    c[3] = a;
+    return c[0] | c[1] << 8 | c[2] << 16 | (u32)c[3] << 24;
+}
+#endif

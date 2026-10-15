@@ -1218,7 +1218,7 @@ static void draw_log(int shown) {
     }
 }
 
-extern unsigned gRndOtStat[2]; /* gs_marker.c */
+extern unsigned gRndOtStat[3]; /* rnd_gs.c */
 
 static void frame_end(void) {
     int i, shown;
@@ -1226,11 +1226,11 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory; ordering table: %u packets, %u records\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory; ordering table: %u packets, %u decoded, %u records\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gRndOtStat[0], gRndOtStat[1]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
         sTintDraws = 0;
-        gRndOtStat[0] = gRndOtStat[1] = 0;
+        gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = 0;
         gsRndFallback = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
         memset(sPalMade, 0, sizeof(sPalMade));

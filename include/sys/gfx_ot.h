@@ -23,6 +23,11 @@ typedef struct OtPrim {
     /* 0x08 */ u32 vif[2];       /* VIF codes of the tag; not sent (Ot_Send copies only the GIF data) */
 } OtPrim; /* 0x10, GIF data follows */
 
+#ifdef PORT
+#include "port/ot_rec.h"
+#define OT_REC(prim) ((OtRec *)((OtPrim *)(prim) + 1))
+#endif
+
 /* One chain: its fixed head packet and the last packet linked so far (== head when empty). */
 typedef struct OtEntry {
     /* 0x00 */ OtPrim *head;
