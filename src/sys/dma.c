@@ -532,6 +532,9 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     u64 *p = Dma_BeginDirect();
     u64 *tag;
     s32 i;
+#ifdef PORT
+    u64 *start = p;
+#endif
 
     p[0] = GIF_TAG(5, 0, 1);
     p[1] = GIF_REG_AD;
@@ -551,6 +554,18 @@ void Dma_AddFillRect(s32 x, s32 y, s32 w, s32 h, u32 rgba) {
     p[0] = (u64)rgba | (0x3F800000ULL << 32);
     p[1] = GS_RGBAQ;
     p += 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the sprites as one rectangle, a record under the state just set (followed): also
+                                  where the colour does not change (rgba 0, blended normally), its alpha 0 written
+                                  clears the marks the stage's blended groups test (src/battle/stgm_a.c) */
+        start[0] = GIF_TAG(5, 1, 1);
+        Dma_EndDirect(p);
+        if (Rnd_Rect(0, x << 4, y << 4, (x + n * 32) << 4, (y + h) << 4, 0, rgba, 1)) {
+            return;
+        }
+        p = Dma_BeginDirect();
+    }
+#endif
     tag = p;
     p += 2;
     for (i = 0; i < n; i++) {
