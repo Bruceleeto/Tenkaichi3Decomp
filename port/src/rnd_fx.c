@@ -8,8 +8,9 @@
  * (Rnd_TargetTex): the renderer takes what that buffer holds where the record is drawn, as it does for a packet
  * that names the page in TEX0 (port/src/gs/gs_draw.c). Nothing is read from GS memory.
  *
- * One switch says whether frame buffers can be drawn into and read at all (Rnd_FxOn): the Dreamcast has no room
- * for them in its video memory, BT3_PVR_NO_RTT=1 turns them off on PC. With it off an effect draws nothing and
+ * One switch says whether frame buffers can be drawn into and read at all (Rnd_FxOn): off in the Dreamcast's
+ * build (BT3_NO_RTT, unless make -f Makefile.dc DC_RTT=1: no room for them in its video memory yet), and
+ * BT3_PVR_NO_RTT=1 turns them off on PC. With it off an effect draws nothing and
  * sends nothing, and the game goes on as if it were not there (port/src/gs/gs_pvr.c leaves the draws into other
  * buffers out by the same switch).
  */
@@ -19,7 +20,7 @@
 #include "../../include/port/rnd.h"
 
 int Rnd_FxOn(void) {
-#ifdef __DREAMCAST__
+#ifdef BT3_NO_RTT
     return 0;
 #else
     static int v = -1;

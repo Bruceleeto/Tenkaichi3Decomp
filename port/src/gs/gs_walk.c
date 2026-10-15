@@ -159,11 +159,14 @@ void Gs_FrameCount(void) {
      - software renderer: from its GS memory (gs_core.c);
      - GPU back end: the frame buffer's picture is read from the card once and kept for the calls that follow in the
        same frame (two halves), reduced to the GS's 512 x 448;
-     - nothing drawn (tests) or the back end on a thread of its own: black, and the game is not told otherwise. */
+     - nothing drawn (tests) or the back end on a thread of its own: black, and the game is not told otherwise;
+     - BT3_NO_RTT (the Dreamcast's build without DC_RTT=1): black, as frame buffers are not read at all. */
 void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
+#ifndef BT3_NO_RTT
     extern int GsGpu_ReadFrame(uint32_t fbp, uint8_t *rgba); /* gs_draw.c */
     static uint8_t kept[512 * 448 * 4];
     static unsigned keptFrame = ~0u, keptFbp = ~0u;
+#endif
     unsigned fbp = bp / 0xE00 * 0x70, y0 = bp % 0xE00 / 8, x, y;
 
     if (w > 512) { w = 512; }
@@ -171,6 +174,7 @@ void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
     if (getenv("BT3_GS_VERBOSE") != NULL || getenv("BT3_STORE_LOG") != NULL) {
         fprintf(stderr, "gs: frame %u: the game reads %ux%u back from buffer %#x, row %u\n", sFrame, w, h, fbp, y0);
     }
+#ifndef BT3_NO_RTT
     if (sGpu) {
 #ifdef PORT_GS_REF
         if (GsRef_Threaded()) {
@@ -210,6 +214,7 @@ void Gs_StoreImage(unsigned bp, unsigned w, unsigned h, unsigned char *rgb) {
     else if (Gs_Mode() != NULL) {
         GsRef_StoreImage(fbp, y0, w, h, rgb);
     }
+#endif
 #endif
 }
 

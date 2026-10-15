@@ -1024,7 +1024,11 @@ static void render_run(const uint32_t *idx, uint32_t n, TgVer *dst, const TgVer 
    one left out). The Dreamcast's default while its 8 MB of PVR memory has no room for them (gpu_pvr has 16 for
    now: gpu_pvr/kos/arch/arch.h GPU_PVR_VRAM_MB). */
 static int no_rtt(void) {
+#ifdef BT3_NO_RTT
+    return 1; /* (the build's: Makefile.dc DC_RTT) */
+#else
     return !Rnd_FxOn(); /* (port/src/rnd_fx.c: the effects as records ask the same) */
+#endif
 }
 
 /* The run collected for buffer sRunTarget, rendered into its texture. */
