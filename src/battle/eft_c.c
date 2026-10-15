@@ -1760,54 +1760,69 @@ static inline void EftSurf_QueueTri(EftScreenPos *v0, EftScreenPos *v1, EftScree
         layer = 0;
         abe = 0;
     }
-    p = (EftSurfTriPkt *)gOtCur;
-    gOtCur = (u32 *)(p + 1);
-    p->prim = ((u64)abe << 6) | 0x1B;
-    p->dmaTag = 0x20000007;
-    p->vif0 = 0x10000000;
-    p->vif1 = 0x50000007;
-    p->gifTag = 0xC400000000008001;
-    p->regs = 0xF42142142160;
-    p->next = NULL;
-    p->nop = 0;
-    p->rgbaq0.r = c0[0];
-    p->rgbaq0.g = c0[1];
-    p->rgbaq0.b = c0[2];
-    p->rgbaq0.a = c0[3];
-    p->rgbaq0.q = uv0->z;
-    p->rgbaq1.r = c1[0];
-    p->rgbaq1.g = c1[1];
-    p->rgbaq1.b = c1[2];
-    p->rgbaq1.a = c1[3];
-    p->rgbaq1.q = uv1->z;
-    p->rgbaq2.r = c2[0];
-    p->rgbaq2.g = c2[1];
-    p->rgbaq2.b = c2[2];
-    p->rgbaq2.a = c2[3];
-    l = layer;
-    if (l >= 2) {
-        l -= 2;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the triangle as a record */
+        p = Ot_NewRec(((u64)abe << 6) | 0x1B, 3);
+        Ot_RecTex0(p, tex0);
+        Ot_RecVtx(p, 0, v0->x, v0->y, v0->z, uv0->x, uv0->y, uv0->z, Ot_RecRgba(c0[0], c0[1], c0[2], c0[3]));
+        Ot_RecVtx(p, 1, v1->x, v1->y, v1->z, uv1->x, uv1->y, uv1->z, Ot_RecRgba(c1[0], c1[1], c1[2], c1[3]));
+        Ot_RecVtx(p, 2, v2->x, v2->y, v2->z, uv2->x, uv2->y, uv2->z, Ot_RecRgba(c2[0], c2[1], c2[2], c2[3]));
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+    } else
+#endif
+    {
+        p = (EftSurfTriPkt *)gOtCur;
+        gOtCur = (u32 *)(p + 1);
+        p->prim = ((u64)abe << 6) | 0x1B;
+        p->dmaTag = 0x20000007;
+        p->vif0 = 0x10000000;
+        p->vif1 = 0x50000007;
+        p->gifTag = 0xC400000000008001;
+        p->regs = 0xF42142142160;
+        p->next = NULL;
+        p->nop = 0;
+        p->rgbaq0.r = c0[0];
+        p->rgbaq0.g = c0[1];
+        p->rgbaq0.b = c0[2];
+        p->rgbaq0.a = c0[3];
+        p->rgbaq0.q = uv0->z;
+        p->rgbaq1.r = c1[0];
+        p->rgbaq1.g = c1[1];
+        p->rgbaq1.b = c1[2];
+        p->rgbaq1.a = c1[3];
+        p->rgbaq1.q = uv1->z;
+        p->rgbaq2.r = c2[0];
+        p->rgbaq2.g = c2[1];
+        p->rgbaq2.b = c2[2];
+        p->rgbaq2.a = c2[3];
+        l = layer;
+        if (l >= 2) {
+            l -= 2;
+        }
+        p->rgbaq2.q = uv2->z;
+        p->tex0 = tex0;
+        p->st0.s = uv0->x;
+        p->st0.t = uv0->y;
+        p->st1.s = uv1->x;
+        p->st1.t = uv1->y;
+        p->st2.s = uv2->x;
+        p->st2.t = uv2->y;
+        p->xyz0.x = v0->x;
+        p->xyz0.y = v0->y;
+        p->xyz0.z = v0->z;
+        p->xyz0.f = 0xFF;
+        p->xyz1.x = v1->x;
+        p->xyz1.y = v1->y;
+        p->xyz1.z = v1->z;
+        p->xyz1.f = 0xFF;
+        p->xyz2.x = v2->x;
+        p->xyz2.y = v2->y;
+        p->xyz2.z = v2->z;
+        p->xyz2.f = 0xFF;
     }
-    p->rgbaq2.q = uv2->z;
-    p->tex0 = tex0;
-    p->st0.s = uv0->x;
-    p->st0.t = uv0->y;
-    p->st1.s = uv1->x;
-    p->st1.t = uv1->y;
-    p->st2.s = uv2->x;
-    p->st2.t = uv2->y;
-    p->xyz0.x = v0->x;
-    p->xyz0.y = v0->y;
-    p->xyz0.z = v0->z;
-    p->xyz0.f = 0xFF;
-    p->xyz1.x = v1->x;
-    p->xyz1.y = v1->y;
-    p->xyz1.z = v1->z;
-    p->xyz1.f = 0xFF;
-    p->xyz2.x = v2->x;
-    p->xyz2.y = v2->y;
-    p->xyz2.z = v2->z;
-    p->xyz2.f = 0xFF;
     if (z < 0) {
         e = &gOtZ[0].layer[l];
     } else if (z >= 0x1000) {
