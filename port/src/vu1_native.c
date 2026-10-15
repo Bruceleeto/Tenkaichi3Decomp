@@ -666,8 +666,10 @@ void Vu1Native_Prog2(const void *chain, const void *consts) {
    as a fan only when its last corner has no flag. Constants (Vu1Pkt_LoadProg6): screen, clip, clip -> screen,
    shadow camera (0..15), the scale (16.x). The chain: the fans' tag first (NLOOP 0), then batches of a TEX0 tag
    and its quadword, the strip's tag, the corners. The texture: the TEX0 bound (ObjGs_AddShadowTexEnv), the page
-   it names read as a frame buffer (Rnd_TargetTex); in its format, PSMCT24, a texel's alpha is TEXA's 0x80, so the
-   corners' alpha is the one drawn by (RND_TEX_RGB). */
+   it names read as a frame buffer (Rnd_TargetTex) with its alpha (TCC 1), as the renderers draw the packet's
+   strips from the page: outside the silhouette the page's alpha is 0 and the alpha test (not equal to 0) leaves
+   the ground as it was. (The GS reads a PSMCT24 texel's alpha as TEXA's 0x80; drawn so, RND_TEX_RGB, the ground
+   around the shadow came out lighter than the packets draw it.) */
 #define P6_MAXV 72 /* corners of one batch (the builder sends at most 54) */
 
 static float sP6[68]; /* VU 0..16 */
@@ -683,7 +685,7 @@ static uint32_t p6_target(uint64_t tex0) {
     if (((tex0 >> 20) & 0x3F) != 1 || ((tex0 >> 35) & 3) != 0 || (tbp & 31) != 0 || tw > 9 || th > 9) {
         return 0;
     }
-    return Rnd_TargetTex(tbp >> 5, 1 << tw, 1 << th, 1) | RND_TEX_RGB;
+    return Rnd_TargetTex(tbp >> 5, 1 << tw, 1 << th, 1);
 }
 
 static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {

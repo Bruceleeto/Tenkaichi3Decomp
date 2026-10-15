@@ -649,7 +649,7 @@ int main(int argc, char **argv) {
                 GsVu1_SetOffset(0x1B2);
                 gs.tex0[0] = SHADOW_TEX0;
                 sTex0Ctx0 = SHADOW_TEX0;
-                sWantTex = Rnd_TargetTex(0x150, 256, 256, 1) | RND_TEX_RGB;
+                sWantTex = Rnd_TargetTex(0x150, 256, 256, 1);
                 run_chain(pkt);
                 Vu1Native_SetProg6(k6);
                 if (!Vu1Native_Prog6(pkt)) {
