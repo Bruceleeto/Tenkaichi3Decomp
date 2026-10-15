@@ -2,6 +2,9 @@
 #include "battle/eft_d.h"
 #include "sys/dma.h"
 #include "sys/gfx.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 /*
  * Stage-change transition: 0x13C300..0x13F430. First part (to 0x13EA00): how a particle is drawn (three
@@ -59,6 +62,36 @@ typedef s32 EftIVec[4] __attribute__((aligned(16)));
 typedef struct EftVec16 {
     f32 v[4];
 } __attribute__((aligned(16))) EftVec16;
+
+#ifdef PORT
+/* A particle as a record (include/port/rnd.h), once its packet has set the state (closed here, and followed):
+   n 4, a strip of four corners; n 2, a sprite of two (the second's depth). Each corner as the packet's XYZ2
+   would carry it. 0 = not taken: the packet goes on, in a new one. */
+static s32 EftBurst_PortQuad(u64 **pkt, u64 tex0, u64 rgbaq, EftIVec *scr, EftFVec *st, s32 n) {
+    RndPoly r;
+    s32 i;
+
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    Dma_EndDirect(*pkt);
+    memset(&r, 0, sizeof(r));
+    for (i = 0; i < 4; i++) {
+        s32 a = n == 2 ? (i & 1) : i, b = n == 2 ? (i >> 1) : i, c = n == 2 ? 1 : i; /* (x, y and depth from) */
+        u64 xa = (s64)scr[a][0] | ((s64)scr[a][1] << 16) | ((s64)scr[a][2] << 32);
+        u64 xb = (s64)scr[b][0] | ((s64)scr[b][1] << 16) | ((s64)scr[b][2] << 32);
+        u64 xc = (s64)scr[c][0] | ((s64)scr[c][1] << 16) | ((s64)scr[c][2] << 32);
+        Rnd_Vtx(&r.v[i], 0, (s32)(xa & 0xFFFF), (s32)((xb >> 16) & 0xFFFF), (u32)(xc >> 32), st[a][0], st[b][1], 1.0f, (u32)rgbaq);
+    }
+    r.n = 4;
+    r.gsTex0 = tex0;
+    if (Rnd_Draw(&r, 0, 1, 0)) {
+        return 1;
+    }
+    *pkt = Dma_BeginDirect();
+    return 0;
+}
+#endif
 
 /* The part of the camera view (gBtlCamView) the transition reads. */
 typedef struct EftView {
@@ -126,6 +159,14 @@ void EftBurst_DrawQuad(EftBurstPtcl *p) {
         pkt[0] = 0x73003;
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
+#ifdef PORT
+        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+                              lifeMax < life * 2 ? ((s64)((lifeMax - life) * 16 / lifeMax) << 24) | 0x3F80000000808080
+                                                 : ((s64)(life * 16 / lifeMax) << 24) | 0x3F80000000808080,
+                              scr, st, 4)) {
+            return;
+        }
+#endif
         pkt[0] = 0x2400000000008001;
         pkt[1] = 0x10;
         pkt += 2;
@@ -239,6 +280,14 @@ void EftBurst_DrawQuadRot(EftBurstPtcl *p) {
         pkt[0] = 0x73003;
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
+#ifdef PORT
+        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+                              flags & EFT_BURST_F_COLOR ? (u64)p->color | ((s64)(alpha * life / lifeMax) << 24) | 0x3F80000000000000
+                                                        : ((s64)(alpha * life / lifeMax) << 24) | 0x3F80000000805050,
+                              scr, st, 4)) {
+            return;
+        }
+#endif
         pkt[0] = 0x2400000000008001;
         pkt[1] = 0x10;
         pkt += 2;
@@ -326,6 +375,14 @@ void EftBurst_DrawSprite(EftBurstPtcl *p) {
         pkt[0] = 0x33003;
         pkt[1] = 0x47; /* TEST_1 */
         pkt += 2;
+#ifdef PORT
+        if (EftBurst_PortQuad(&pkt, p->tex->tex0 | 0x5400400002D00,
+                              flags & EFT_BURST_F_COLOR ? (u64)p->color | ((s64)alpha << 24) | 0x3F80000000000000
+                                                        : ((s64)(life * 80 / lifeMax) << 24) | 0x3F80000000505050,
+                              scr, st, 2)) {
+            return;
+        }
+#endif
         pkt[0] = 0x6400000000008001;
         pkt[1] = 0x52525210;
         pkt += 2;
