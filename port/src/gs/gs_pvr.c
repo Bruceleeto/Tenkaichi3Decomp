@@ -86,6 +86,9 @@ static unsigned sTintDraws; /* per 30 frames: draws with a tinted palette (Port_
 static unsigned sPalMade[2]; /* per 30 frames: palettes made for a native one from tex.pak, out of GS memory */
 static unsigned sNatLive, sNatSteal, sNatMiss[4]; /* per frame, draws of a 4/8-bit texture not native: no record at
                                                      its block, record not native, another size or format; uploads not native */
+static unsigned sPalMiss; /* per 30 frames: palette uploads not native (not a palette of the pack, or no record free): sent
+                             to GS memory as before */
+static int sPalAsk;       /* Port_TexNative asking whether a direct entry's pixels are also a palette (not counted) */
 
 /* pvr_mem_malloc, telling what did not fit and what PVR memory holds then (game textures as converted, as the
    old path makes them, render targets). */
@@ -1229,13 +1232,14 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory; ordering table: %u packets, %u decoded, %u records\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory; ordering table: %u packets, %u decoded, %u records\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
         sTintDraws = 0;
         gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = 0;
         gsRndFallback = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
+        sPalMiss = 0;
         memset(sPalMade, 0, sizeof(sPalMade));
     }
     memset(gGsTint, 0, sizeof(gGsTint)); /* (the tints are the frame's: the game sets them again for the next) */
@@ -1481,9 +1485,11 @@ int Port_TexNative(void *e, int tbp) {
     if ((n = nat_get(e)) == NULL || n->none) { sNatMiss[3]++; return 0; }
     pkt[8] = (uint32_t)tbp & 0x3FFF;
     pkt[9] = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
+    sPalAsk = 1;
     if (n->direct && Port_PalNative(Port_Ptr(rd32((uint8_t *)e + 0x38)), (int)rd32((uint8_t *)e + 8), rd32((uint8_t *)e + 0x18), tbp)) {
         pkt[9] &= 0xFFFF; /* (also a palette of the pack, which its marker just said: this one clears nothing) */
     }
+    sPalAsk = 0;
     Dma_AddData(pkt, sizeof(pkt));
     return (int)((uint32_t)(n - sNat + 1) | (uint32_t)n->gen << 16);
 }
@@ -1588,7 +1594,7 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         }
     }
     if (p == NULL) {
-        if ((p = pal_new(addr)) == NULL) { return 0; }
+        if ((p = pal_new(addr)) == NULL) { sPalMiss += !sPalAsk; return 0; }
         p->sample = pal_sample(pkt, (uint32_t)size);
         if (pkt_key(pkt, (uint32_t)size, blt, &key, 1, &img) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
             (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
@@ -1598,7 +1604,13 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
             if (w == 256 && TexPak_Psm(k) == 0) { pal_split(p); }
         }
     }
-    if (p->pak < 0) { return 0; }
+    if (p->pak < 0) {
+        sPalMiss += !sPalAsk;
+        if (!sPalAsk && getenv("BT3_TEX_LOG") != NULL) {
+            fprintf(stderr, "nat: frame %u: palette packet %08X (%d bytes) to block %X not in the pack\n", (unsigned)gGsFrame, (unsigned)addr, size, (unsigned)block);
+        }
+        return 0;
+    }
     m[8] = (uint32_t)block & 0x3FFF;
     m[9] = (uint32_t)(p - sPal + 1) | (p->n == 256 ? 4u : 1u) << 16; /* (the blocks it covers) */
     if (p->sub[0] != 0 && (block & 3) == 0) {
