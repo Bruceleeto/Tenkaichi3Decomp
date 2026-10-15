@@ -1232,12 +1232,12 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory; ordering table: %u packets, %u decoded, %u records\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing; ordering table: %u packets, %u decoded, %u records\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2]);
         sTintDraws = 0;
         gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = 0;
-        gsRndFallback = 0;
+        gsRndFallback = gsRndByTex0 = gsRndHandleMiss = 0;
         memset(sNatMiss, 0, sizeof(sNatMiss));
         sPalMiss = 0;
         memset(sPalMade, 0, sizeof(sPalMade));
@@ -1859,22 +1859,28 @@ uint32_t Port_PalSub(uint32_t pal, int k) {
 }
 
 /* What a record the game handed over names (include/port/rnd.h): texture `tex` and palette `pal` as Port_TexNative
-   and Port_PalNative gave them, and its size. 0 = not (or no longer) one: the record's GS fallback is drawn. */
-static GsTex tex_handle(uint32_t tex, uint32_t pal, uint32_t *tw, uint32_t *th) {
-    uint32_t ti = tex & 0xFFFF, pi = pal & 0xFFFF;
+   and Port_PalNative gave them, and its size. With the record's TEX0 (t0 not 0) it is read as that TEX0 reads it,
+   as a draw of TEX0 alone would read the record at its block (GsPvr_Native): its format and size (a direct one as
+   8-bit indices: the light), whose palette is then the one pal names. 0 = not (or no longer) one, or not drawable
+   so: the record's TEX0 is looked for at its block, else its GS fallback is drawn. */
+static GsTex tex_handle(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
+    uint32_t ti = tex & 0xFFFF, pi = pal & 0xFFFF, psm, w, h;
     NatTex *n;
     const NatPal *p = NULL;
 
     if (ti == 0 || ti > MAX_NAT || sNat[ti - 1].e == 0 || sNat[ti - 1].none || sNat[ti - 1].gen != tex >> 16) { return 0; }
     n = &sNat[ti - 1];
-    if (!n->direct) {
+    psm = t0 != 0 ? (uint32_t)(t0 >> 20) & 0x3F : n->psm;
+    w = t0 != 0 ? 1u << ((t0 >> 26) & 15) : n->tw;
+    h = t0 != 0 ? 1u << ((t0 >> 30) & 15) : n->th;
+    if (!n->direct || psm != n->psm) { /* (indices: their palette) */
         if (pi == 0 || pi > MAX_PAL || sPal[pi - 1].addr == 0 || (sPal[pi - 1].gen & 0xFFFF) != pal >> 16 ||
-            sPal[pi - 1].n != (n->bits == 8 ? 256u : 16u)) { return 0; }
+            sPal[pi - 1].n != (psm == 0x14 ? 16u : 256u)) { return 0; }
         p = &sPal[pi - 1];
     }
-    *tw = n->tw;
-    *th = n->th;
-    return nat_resolve(n, 0, n->psm, n->tw, n->th, p, 0, 0, p != NULL ? 0x80000000u | p->gen : 0);
+    *tw = w;
+    *th = h;
+    return nat_resolve(n, t0 != 0 ? (uint32_t)t0 & 0x3FFF : 0, psm, w, h, p, 0, 0, p != NULL ? 0x80000000u | p->gen : 0);
 }
 
 /* Native record n drawn as a psm texture of tw x th with palette pal (NULL: the one at cbp in GS memory; palKey

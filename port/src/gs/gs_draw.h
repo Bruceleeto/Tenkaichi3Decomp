@@ -120,6 +120,7 @@ extern int gsDepthByteIsFog;    /* the top byte of the depth page as the game la
 extern unsigned gsNative;       /* native effect markers seen this frame */
 extern unsigned gsSkipped;      /* primitives of PS2-only passes dropped this frame */
 extern unsigned gsRndFallback;  /* quads the game handed over drawn from GS memory (no handle that names anything) */
+extern unsigned gsRndByTex0, gsRndHandleMiss; /* records textured by TEX0 alone; with a handle that named nothing */
 extern int gGsMainFbp;          /* the frame buffer the game shows (gs_sony.c), -1 before the first swap */
 /* created / spent since the front end last cleared them (gs_core.c's slow-frame report) */
 extern unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes;
@@ -154,8 +155,9 @@ typedef struct GsBackend {
     int (*pipeGet)(uint32_t key);         /* the back end's pipeline for a key, creating it if new */
     int (*targetRead)(int i, uint8_t *rgba); /* target i's picture as 512 x 448 RGBA, top row first; 0 = not read */
     void (*targetCopy)(int src, int dst);    /* the colour of target src into target dst, as it is now */
-    /* A texture the game named by handle (include/port/rnd.h), and its size; 0 = none (NULL: the back end has none) */
-    GsTex (*texHandle)(uint32_t tex, uint32_t pal, uint32_t *tw, uint32_t *th);
+    /* A texture the game named by handle (include/port/rnd.h), read as TEX0 t0 reads it (0: as it was uploaded),
+       and its size; 0 = none (NULL: the back end has none) */
+    GsTex (*texHandle)(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th);
 } GsBackend;
 
 extern GsBackend sVulkanBackend; /* gs_gpu.c */

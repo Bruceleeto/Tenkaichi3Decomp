@@ -1341,12 +1341,21 @@ static void rnd_gs(const RndState *st, uint32_t tex, uint32_t pal, uint64_t t0, 
     }
 }
 
-/* The texture a record names: by its handles, or the native one uploaded where TEX0 says (the block map of the
-   PVR layer, gGsNat / gGsPal: no GS memory read); its size. 0 = none (rnd_gs then). */
+/* Records textured this frame by TEX0 alone (no handle: the native one at its block, or GS memory), and records
+   whose handle named nothing drawable (freed, or not as TEX0 reads it; then as by TEX0 alone). */
+unsigned gsRndByTex0, gsRndHandleMiss;
+
+/* The texture a record names: by its handles (read as its TEX0 reads it), or the native one uploaded where TEX0
+   says (the block map of the PVR layer, gGsNat / gGsPal: no GS memory read); its size. 0 = none (rnd_gs then). */
 static GsTex rnd_tex(uint32_t tex, uint32_t pal, uint64_t t0, uint32_t *tw, uint32_t *th) {
     GsTex g;
-    if (tex != 0 && sBackend->texHandle != NULL && (g = sBackend->texHandle(tex, pal, tw, th)) != 0) {
-        return g;
+    if (tex != 0 && sBackend->texHandle != NULL) {
+        if ((g = sBackend->texHandle(tex, pal, t0, tw, th)) != 0) {
+            return g;
+        }
+        gsRndHandleMiss++;
+    } else if (tex == 0 && t0 != 0) {
+        gsRndByTex0++;
     }
 #ifdef BT3_PVR
     if (t0 != 0 && sBackend == &sPvrBackend) {
