@@ -631,6 +631,9 @@ void EftQuad_DrawSprite(EftYVec *corner, EftYVec uv0, EftYVec uv1, EftYVec color
 
                 gOtCur = (u32 *)p;
                 ctx = layer >= 2;
+                if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                    return; /* (no room left in the packet memory: not drawn) */
+                }
                 p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
                 z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
                 if (flip) {
