@@ -906,6 +906,9 @@ static inline void EftSprAnim_QueueTri(EftAeScr *v0, EftAeScr *v1, EftAeScr *v2,
         } else {
             e = &gOtZ[z].layer[l];
         }
+        if (!Ot_RecRoom(Ot_RecBytes(3))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         q = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1B, 3);
         Ot_RecTex0(q, tex0);
         Ot_RecClamp(q);
