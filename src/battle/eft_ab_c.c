@@ -1,5 +1,8 @@
 #include "common.h"
 #include "battle/eft_ab.h"
+#ifdef PORT
+#include "port/ot_rec.h"
+#endif
 
 /*
  * 0x1A0E58..0x1A62C8, two files merged at integration. First part: ribbon helpers, 0x1A0E58..0x1A21A8, the first
@@ -2255,51 +2258,65 @@ void EftZap_DrawQuad(EftAcVec *pos, EftAcVec color, f32 u0, f32 v0, f32 u1, f32 
     if (l >= 2) {
         l -= 2;
     }
-    p->v[0].rgbaq.r = icol.x;
-    p->v[0].rgbaq.g = icol.y;
-    p->v[0].rgbaq.b = icol.z;
-    p->v[0].rgbaq.a = icol.w;
-    p->v[0].rgbaq.q = stq[0].z;
-    p->v[1].rgbaq.r = icol.x;
-    p->v[1].rgbaq.g = icol.y;
-    p->v[1].rgbaq.b = icol.z;
-    p->v[1].rgbaq.a = icol.w;
-    p->v[1].rgbaq.q = stq[1].z;
-    p->v[2].rgbaq.r = icol.x;
-    p->v[2].rgbaq.g = icol.y;
-    p->v[2].rgbaq.b = icol.z;
-    p->v[2].rgbaq.a = icol.w;
-    p->v[2].rgbaq.q = stq[2].z;
-    p->v[3].rgbaq.r = icol.x;
-    p->v[3].rgbaq.g = icol.y;
-    p->v[3].rgbaq.b = icol.z;
-    p->v[3].rgbaq.a = icol.w;
-    p->v[3].rgbaq.q = stq[3].z;
-    p->v[0].st.s = stq[0].x;
-    p->v[0].st.t = stq[0].y;
-    p->v[1].st.s = stq[1].x;
-    p->v[1].st.t = stq[1].y;
-    p->v[2].st.s = stq[2].x;
-    p->v[2].st.t = stq[2].y;
-    p->v[3].st.s = stq[3].x;
-    p->v[3].st.t = stq[3].y;
-    p->v[0].xyz.x = scr[0].x;
-    p->v[0].xyz.y = scr[0].y;
-    p->v[0].xyz.z = scr[0].z;
-    p->v[0].xyz.f = 0xFF;
-    p->v[1].xyz.x = scr[1].x;
-    p->v[1].xyz.y = scr[1].y;
-    p->v[1].xyz.z = scr[1].z;
-    p->v[1].xyz.f = 0xFF;
-    p->v[2].xyz.x = scr[2].x;
-    p->v[2].xyz.y = scr[2].y;
-    p->v[2].xyz.z = scr[2].z;
-    p->v[2].xyz.f = 0xFF;
-    p->v[3].xyz.x = scr[3].x;
-    p->v[3].xyz.y = scr[3].y;
-    p->v[3].xyz.z = scr[3].z;
-    p->v[3].xyz.f = 0xFF;
-    p->tex0 = *t;
+#ifdef PORT
+    if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
+        u32 rgba = (u8)icol.x | (u8)icol.y << 8 | (u8)icol.z << 16 | (u32)(u8)icol.w << 24;
+        s32 i;
+        gOtCur = (u8 *)p;
+        p = Ot_NewRec(((u64)abe << 6) | ((u64)ctx << 9) | 0x1C, 4);
+        Ot_RecTex0(p, *t);
+        for (i = 0; i < 4; i++) {
+            Ot_RecVtx(p, i, scr[i].x, scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
+        }
+    } else
+#endif
+    {
+        p->v[0].rgbaq.r = icol.x;
+        p->v[0].rgbaq.g = icol.y;
+        p->v[0].rgbaq.b = icol.z;
+        p->v[0].rgbaq.a = icol.w;
+        p->v[0].rgbaq.q = stq[0].z;
+        p->v[1].rgbaq.r = icol.x;
+        p->v[1].rgbaq.g = icol.y;
+        p->v[1].rgbaq.b = icol.z;
+        p->v[1].rgbaq.a = icol.w;
+        p->v[1].rgbaq.q = stq[1].z;
+        p->v[2].rgbaq.r = icol.x;
+        p->v[2].rgbaq.g = icol.y;
+        p->v[2].rgbaq.b = icol.z;
+        p->v[2].rgbaq.a = icol.w;
+        p->v[2].rgbaq.q = stq[2].z;
+        p->v[3].rgbaq.r = icol.x;
+        p->v[3].rgbaq.g = icol.y;
+        p->v[3].rgbaq.b = icol.z;
+        p->v[3].rgbaq.a = icol.w;
+        p->v[3].rgbaq.q = stq[3].z;
+        p->v[0].st.s = stq[0].x;
+        p->v[0].st.t = stq[0].y;
+        p->v[1].st.s = stq[1].x;
+        p->v[1].st.t = stq[1].y;
+        p->v[2].st.s = stq[2].x;
+        p->v[2].st.t = stq[2].y;
+        p->v[3].st.s = stq[3].x;
+        p->v[3].st.t = stq[3].y;
+        p->v[0].xyz.x = scr[0].x;
+        p->v[0].xyz.y = scr[0].y;
+        p->v[0].xyz.z = scr[0].z;
+        p->v[0].xyz.f = 0xFF;
+        p->v[1].xyz.x = scr[1].x;
+        p->v[1].xyz.y = scr[1].y;
+        p->v[1].xyz.z = scr[1].z;
+        p->v[1].xyz.f = 0xFF;
+        p->v[2].xyz.x = scr[2].x;
+        p->v[2].xyz.y = scr[2].y;
+        p->v[2].xyz.z = scr[2].z;
+        p->v[2].xyz.f = 0xFF;
+        p->v[3].xyz.x = scr[3].x;
+        p->v[3].xyz.y = scr[3].y;
+        p->v[3].xyz.z = scr[3].z;
+        p->v[3].xyz.f = 0xFF;
+        p->tex0 = *t;
+    }
     if (z < 0) {
         e = &gOtZ[0].layer[l];
     } else if (z >= 0x1000) {
