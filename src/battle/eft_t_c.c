@@ -566,6 +566,7 @@ void EftShotFx_DrawQuad(Vec4 *quad, EftUMtx mtx, u8 r, u8 g, u8 b, u8 a, u64 *te
         gOtCur = (u32 *)p;
         p = Ot_NewRec(0x5C, 4);
         Ot_RecTex0(p, *tex);
+        EftVram_PortRecTex(p, *tex);
         for (i = 0; i < 4; i++) {
             Ot_RecVtx(p, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z,
                       r | g << 8 | b << 16 | (u32)a << 24);
