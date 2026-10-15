@@ -564,6 +564,9 @@ void EftShotFx_DrawQuad(Vec4 *quad, EftUMtx mtx, u8 r, u8 g, u8 b, u8 a, u64 *te
 #ifdef PORT
     if (Port_TakesRecords()) { /* the strip as a record, in the packet's place */
         gOtCur = (u32 *)p;
+        if (!Ot_RecRoom(Ot_RecBytes(4))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(0x5C, 4);
         Ot_RecTex0(p, *tex);
         EftVram_PortRecTex(p, *tex);
