@@ -25,6 +25,9 @@
 #include "sys/dma.h"
 #include "sys/gfx.h"
 #include "sys/gfxm_d_c.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 #include "battle/btl_cam.h"
 
 extern void Vec4_Copy(Vec4 *dst, Vec4 *src);
@@ -135,6 +138,46 @@ void ObjSeam_Draw(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view) {
         tex0Base = (tex0Base & 0xFFF8001FFFFFFFFF) | ((u64)cbpBase << 37);
         tex0Shade = (tex0Shade & 0xFFF8001FFFFFFFFF) | ((u64)cbpShade << 37);
         vtx = (ObjSeamVtx *)((u8 *)model + sec->vtxOfs);
+#ifdef PORT
+        /* the triangles as records (include/port/rnd.h): each pass's TEX0 written (followed), then its triangles
+           through its context, those of a corner outside the guard band left out as the GS does */
+        if (Port_TakesRecords() && gRndCtxBad[0] == 0 && gRndCtxBad[1] == 0) {
+            u32 rgba = ((u32)(s32)view->color.x & 0xFF) | (((u32)(s32)view->color.y & 0xFF) << 8) |
+                       (((u32)(s32)view->color.z & 0xFF) << 16) | 0x80000000; /* (the packed RGBAQ's low bytes) */
+
+            for (pass = 0; pass < 2; pass++) {
+                u64 reg = (pass == 0 ? tex0Base : tex0Shade) | 0x400000000;
+
+                p = Dma_BeginDirect();
+                p[0] = GIF_TAG(2, 0, 1);
+                p[1] = GIF_REG_AD;
+                p[2] = 0;
+                p[3] = GS_TEXFLUSH;
+                p[4] = reg;
+                p[5] = pass == 0 ? GS_TEX0_1 : 7; /* TEX0_2 */
+                Dma_EndDirect(p + 6);
+                for (i = 0; i < sec->triCount; i++) {
+                    RndPoly r;
+                    s32 k;
+
+                    if ((vtx[tri[i].idx[0]].xyz.w[3] | vtx[tri[i].idx[1]].xyz.w[3] | vtx[tri[i].idx[2]].xyz.w[3]) & 0x8000) {
+                        continue;
+                    }
+                    __builtin_memset(&r, 0, sizeof(r));
+                    for (k = 0; k < 3; k++) {
+                        ObjSeamVtx *v = &vtx[tri[i].idx[k]];
+                        f32 *st = (f32 *)(pass == 0 ? &v->stBase : &v->stShade);
+
+                        Rnd_Vtx(&r.v[k], pass, v->xyz.w[0], v->xyz.w[1], (u32)v->xyz.w[2], st[0], st[1], st[2], rgba);
+                    }
+                    r.n = 3;
+                    r.gsTex0 = reg;
+                    Rnd_Draw(&r, pass, 1, 1);
+                }
+            }
+            return;
+        }
+#endif
         p = Dma_BeginDirect();
         regBase = tex0Base | 0x400000000;
         regShade = tex0Shade | 0x400000000;
