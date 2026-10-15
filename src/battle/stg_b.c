@@ -1762,6 +1762,47 @@ void StgFog_ResetColor(void) {
     gStgFog->color = 0x80808080;
 }
 
+#ifdef PORT
+/* StgFog_Draw's copies as records, after its table pass (a packet: the depth through the curve into the frame's
+   alpha, drawn natively by the GPU renderer): the frame halved into 0x150 (filtered), then 0x150 back over the
+   frame blended by the frame's alpha, colour only. Then the state its packet leaves. */
+static void StgFog_PortCopies(void) {
+    RndState st;
+    u64 *p;
+
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = 0xFF;
+    st.scissor[3] = 0xDF;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, 256.0f, 224.0f, 0, 0,
+             0x200 << 4, 0x1C0 << 4, 0x80808080);
+    Rnd_StateInit(&st, GFX_FRAME_FBP());
+    st.flags = RND_SMOOTH | RND_DEST_ALPHA | RND_NO_ALPHA;
+    Rnd_Blit(&st, Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB, 0.0f, 0.0f, 512.0f, 448.0f, 8, 8,
+             (0x100 << 4) + 8, (0xE0 << 4) + 8, 0x80808080);
+    p = Dma_BeginDirect();
+    Gfx_PutDefaultEnv((GsQword **)&p);
+    p[0] = GIF_TAG(7, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[3] = GS_ZBUF_1;
+    p[4] = 0x30000;
+    p[5] = GS_TEST_1;
+    p[6] = !(gGfx.frame & 1) ? 0xFF00000000080070ULL : 0xFF00000000080000ULL;
+    p[7] = GS_FRAME_1;
+    p[8] = (0x80ULL << 32) | 0x54;
+    p[9] = GS_ALPHA_1;
+    p[10] = (u64)0x2A00 | (4ULL << 14) | ((u64)Tex_Log2Size(0x100) << 26) | ((u64)Tex_Log2Size(0xE0) << 30);
+    p[11] = GS_TEX0_1;
+    p[12] = 0x156;
+    p[13] = GS_PRIM;
+    p[14] = 0x80808080 | (0x3F800000ULL << 32);
+    p[15] = GS_RGBAQ;
+    Dma_EndDirect(p + 16);
+}
+#endif
+
 /* Draws the depth tone: the table turns depth into the frame's alpha, the frame is copied at half size into the
    work buffer, and the copy is blended back over the frame through that alpha (a blur that grows with depth). */
 /* Emits two local tables in .sdata: 0x2FEC10 = {0x2A00, 0x2D80} (the work buffers as textures) and
@@ -1780,12 +1821,23 @@ void StgFog_Draw(void) {
     s32 srcH = 0x1C0;
     s32 h = 0xE0;
 
+#ifdef PORT
+    if (Port_TakesRecords() && !Rnd_FxOn()) { /* (no frame buffers, no depth texture: nothing) */
+        return;
+    }
+#endif
     Dma_AddData(tone->load, 0x10);
     Dma_AddTexFlush();
     Dma_AddFrame(!(gGfx.frame & 1) ? 0x70 : 0, 8, 0xFFFFFF);
     Dma_AddZbuf(0xE0, 1);
     GfxPost_DrawDepthClut(0, 0x1C00, tone->cbp, (0x80ULL << 32) | 0x48);
     Dma_AddZbuf(0xE0, 0);
+#ifdef PORT
+    if (Port_TakesRecords()) {
+        StgFog_PortCopies();
+        return;
+    }
+#endif
     {
         u32 tbp[2] = { 0x2A00, 0x2D80 };
         u32 fbp[2] = { 0x150, 0x16C };
