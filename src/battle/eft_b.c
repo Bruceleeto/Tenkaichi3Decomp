@@ -1,4 +1,5 @@
 #include "common.h"
+#include "sys/dma.h"
 #include "battle/eft_b.h"
 #include "sys/gfx_ot.h"
 
@@ -1351,12 +1352,15 @@ void EftStageScroll_Draw(void) {
     p += 2;
     p[0] = 0x44;
     p[1] = 0x42;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0x50000;
     p[1] = 0x47;
+    PORT_AD(p, 0);
     p += 2;
     p[0] = 0;
     p[1] = 8;
+    PORT_AD(p, 0);
     p += 2;
     Dma_EndDirect(p);
     Mtx_StoreIdentity(&m);
