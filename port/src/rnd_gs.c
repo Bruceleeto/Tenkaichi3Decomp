@@ -348,15 +348,19 @@ void Rnd_GsReg(uint32_t addr, uint64_t v) {
     }
 }
 
-#ifdef PORT_GS_REF
-/* BT3_FOLLOW_LOG=1: the packets whose following still changes the state (their producers not yet setting it
-   directly: Rnd_GsReg), by the address of the code that closed them, reported every 300 frames: the count, the
-   address (addr2line -f -e port/build/bt3). */
+/* The state a packet's following changes: kept and put back where the list is not read (Rnd_GsFollow). */
 #define SNAP(X) X(gRndCtx) X(gRndCtxBad) X(sTex0) X(sTexH) X(sPalH) X(sXyOff) X(sPrim) X(sPrmodeCont) X(sPrmode) \
     X(sDirtyVal) X(sDirtyPrim) X(sDirty) X(sRgba) X(sS) X(sT) X(sQ) X(sU) X(sVv)
 #define SNAP_SIZE(v) + sizeof(v)
 #define SNAP_PUT(v) memcpy(b, &v, sizeof(v)); b += sizeof(v);
+#define SNAP_GET(v) memcpy(&v, b, sizeof(v)); b += sizeof(v);
 static void snap(uint8_t *b) { SNAP(SNAP_PUT) }
+static void unsnap(const uint8_t *b) { SNAP(SNAP_GET) }
+
+#ifdef PORT_GS_REF
+/* BT3_FOLLOW_LOG=1: the packets whose following would change the state (their producers not setting all of it
+   directly: Rnd_GsReg), by the address of the code that closed them, reported every 300 frames: the count, the
+   address (addr2line -f -e port/build/bt3). */
 static struct { const void *from; unsigned n; } sFrom[256];
 static unsigned sFromN, sFromFrames;
 static int follow_log(void) {
@@ -379,24 +383,29 @@ void Rnd_GsFollowFrame(void) {
 #endif
 
 int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from) {
-    const uint32_t *start = pkt, *end = pkt + bytes / 4;
-    int only = 1;
+    const uint32_t *end = pkt + bytes / 4;
+    int only = 1, keep = Port_ListRead(); /* (the state taken from the packet only where the list is read: the PS2
+                                             reference; elsewhere the producers set it, Rnd_GsReg) */
+    uint8_t before[0 SNAP(SNAP_SIZE)];
 #ifdef PORT_GS_REF
-    uint8_t before[0 SNAP(SNAP_SIZE)], after[sizeof(before)];
+    uint8_t after[sizeof(before)];
 #endif
     if (sInOt) {
         return 0;
     }
 #ifdef PORT_GS_REF
-    if (follow_log()) {
+    if (!keep || follow_log()) {
+#else
+    if (!keep) {
+#endif
         snap(before);
     }
-#endif
-    (void)from; (void)start;
+    (void)from;
     while (pkt + 4 <= end) { /* DMA CNT tags, each with its VIF codes: the GIF data of a DIRECT */
         unsigned qwc = pkt[0] & 0xFFFF, id = (pkt[0] >> 28) & 7;
         if (id != 1 || pkt + 4 + qwc * 4 > end) {
-            return 0;
+            only = 0;
+            break;
         }
         if ((pkt[3] >> 24 & 0x7F) == 0x50 || (pkt[3] >> 24 & 0x7F) == 0x51) {
             only &= walk((const uint64_t *)(pkt + 4), qwc, FOLLOW) == 0; /* (no draw, no upload, every register followed) */
@@ -411,6 +420,9 @@ int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from) {
         if (memcmp(before, after, sizeof(before)) != 0) { follow_changed(from); }
     }
 #endif
+    if (!keep) {
+        unsnap(before);
+    }
     return only && pkt == end;
 }
 

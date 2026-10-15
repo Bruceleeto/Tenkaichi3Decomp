@@ -119,7 +119,8 @@ int Port_ListRead(void);         /* 1: the display list is read for what only th
                                     packets need not be built (the Dreamcast; BT3_WALK=3 on PC) */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
 /* port/src/rnd_gs.c. The GS state the game sets, followed into gRndCtx from each packet the display list gets
-   (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them). */
+   (src/sys/dma.c: DMA CNT tags and their VIF DIRECT data, as Dma_AddData / Dma_EndDirect close them) where the list
+   is read (Port_ListRead); elsewhere only looked at (the state put back): the producers set it (Rnd_GsReg). */
 int Rnd_GsFollow(const uint32_t *pkt, unsigned bytes, const void *from); /* 1: the packet only sets state, all of it
                                                                            followed; from: its producer (BT3_FOLLOW_LOG) */
 void Rnd_GsFollowFrame(void);
