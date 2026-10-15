@@ -79,14 +79,19 @@ static uint32_t divide(uint32_t a, uint32_t b, int nearest) {
 }
 
 uint32_t RefVu0_DivBits(uint32_t a, uint32_t b) { return divide(a, b, mode(0)); }
+#ifndef __DREAMCAST__ /* (the Dreamcast does the game's floats on its own float unit: only the primitives above) */
 uint32_t __divsf3(uint32_t a, uint32_t b) { return divide(a, b, 1); }
+#endif
 
 #else /* PORT_FLOAT_HW: the primitives of src/port/vu0_a.c (compile it without REF_VU0_EXTERN_ARITH) */
 
+#ifndef __DREAMCAST__ /* (the Dreamcast does the game's floats on its own float unit: only the primitives above) */
 uint32_t __divsf3(uint32_t a, uint32_t b) { return RefVu0_DivBits(a, b); }
+#endif
 
 #endif
 
+#ifndef __DREAMCAST__ /* (the Dreamcast does the game's floats on its own float unit: only the primitives above) */
 #if PORT_FLOAT_MODEL == PORT_FLOAT_PCSX2
 uint32_t __addsf3(uint32_t a, uint32_t b) { return fpu_add(a, b); }
 uint32_t __subsf3(uint32_t a, uint32_t b) { return fpu_add(a, b ^ SIGN); }
@@ -143,3 +148,4 @@ uint32_t __floatunsisf(uint32_t v) {
 
     return (v & SIGN) ? RefVu0_AddBits(f, 0x4F800000u) : f;
 }
+#endif /* __DREAMCAST__ */

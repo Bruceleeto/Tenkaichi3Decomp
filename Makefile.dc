@@ -31,7 +31,7 @@ VU0_SRC  := src/port/vu0_a.c src/port/vu0_b.c
 # the PC's only: its renderers, SDL's window, sound, input and screen reader; texture packs; online play
 GS_PC    := gs_gpu.c gs_gl.c gs_window.c audio_sdl.c gs_input.c a11y.c gs_texpack.c net.c net_chat.c net_match.c net_relay.c net_sign.c state.c
 GS_SRC   := $(filter-out $(addprefix port/src/gs/,$(GS_PC)),$(sort $(wildcard port/src/gs/*.c)))
-PC_SRC   := $(filter-out port/src/softfloat_ps2.c port/src/plat_crash.c,$(sort $(wildcard port/src/*.c)))
+PC_SRC   := $(filter-out port/src/plat_crash.c,$(sort $(wildcard port/src/*.c)))
 DC_SRC   := $(sort $(wildcard port/src/dc/*.c)) $(addprefix port/src/null/,audio_null.c net_null.c texpack_null.c window_null.c)
 
 GAME_OBJ := $(foreach f,$(GAME_SRC),$(OBJ)/$(subst /,_,$(patsubst src/%.c,%,$(f))).o)
