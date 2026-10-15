@@ -644,6 +644,9 @@ void EftStreak_DrawScreen(Vec4 *corner, EftTVec color, s32 blend, s32 segs, s32 
             tt[2] = t.z;
             s[3] = uv[1].z;
             tt[3] = t.w;
+            if (!Ot_RecRoom(Ot_RecBytes(4))) {
+                break; /* (no room left in the packet memory: this one and the rest not drawn) */
+            }
             q = Ot_NewRec(0x5C, 4);
             Ot_RecTex0(q, tex0);
             EftVram_PortRecTex(q, tex0);
