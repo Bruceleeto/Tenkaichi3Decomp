@@ -62,8 +62,9 @@ int Port_Mark(uint32_t addr, uint64_t d) {
 
 /* A marker packet (a DMA CNT tag, VIF DIRECT, a GIF tag of N A+D writes of the port's registers, as Port_GsMarker,
    gs_pvr.c Port_TexNative / Port_PalNative / Port_ClutTint build them): its writes to the renderer's queue, in
-   their place among the records; the packet itself into the display list only for the PS2 reference, which walks
-   the list for them (gs_core.c; BT3_WALK=1 on PC). */
+   their place among the records; the packet itself into the display list only where the list is read for them
+   (the PS2 reference: gs_core.c; BT3_WALK=1, 2 on PC). */
+extern int Port_ListRead(void); /* gs/gs_walk.c */
 void Port_MarkAdd(const uint32_t *pkt, int size) {
     uint32_t i, n = pkt[4] & 0x7FFF;
     for (i = 0; i < n && 8 + i * 4 + 4 <= (uint32_t)size / 4; i++) {
@@ -71,7 +72,9 @@ void Port_MarkAdd(const uint32_t *pkt, int size) {
         Port_Mark(q[2], q[0] | (uint64_t)q[1] << 32);
     }
 #ifdef PORT_GS_REF
-    Dma_AddData((void *)pkt, size);
+    if (Port_ListRead()) {
+        Dma_AddData((void *)pkt, size);
+    }
 #endif
 }
 
