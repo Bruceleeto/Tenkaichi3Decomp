@@ -2030,6 +2030,16 @@ void GsGpu_SetSettings(const PortVideo *v) {
     Port_SettingsWrite();
 }
 
+/* 1: the renderer tests the pixels' marks (RND_IF_UNMARKED / RND_IF_MARKED: the GS's destination alpha test). The
+   PVR cannot: what is drawn by them is cut by the caller (src/battle/hud_c_c.c). */
+int Rnd_TestsMarks(void) {
+#ifdef BT3_PVR
+    return sBackend != &sPvrBackend;
+#else
+    return 1;
+#endif
+}
+
 int GsGpu_Init(void) {
     const char *api = getenv("BT3_GPU_API");
     GsBackend *sb;

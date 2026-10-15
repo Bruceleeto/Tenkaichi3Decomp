@@ -215,6 +215,229 @@ void HudRes_UploadTex(HudCRes *res, s32 tex, s32 sub, s32 tbp, s32 cbp) {
     ((((s32)(v)[0] << 4) + SPRITE_OFS_X) | ((u64)((Sprite_ConvY((s32)(v)[1]) << 4) + SPRITE_OFS_Y) << 16))
 
 #ifdef PORT
+/* The marks where the renderer cannot test them (Rnd_TestsMarks 0: the PVR). The gauges cut a bar to length with
+   the GS's destination alpha test: a mask sprite marks the pixels under its texture's opaque texels (context 2
+   writing the alpha alone, FBA on), then the bar is drawn where they are not marked (RND_IF_UNMARKED), and
+   HudSprite_DrawAlphaClear clears them for the next pass. Here a mask's opaque texels are kept as rectangles of
+   pixels and the bar drawn in the pieces of its rectangle outside them, as plain quads. Only sprites drawn straight
+   (no rotation) are cut this way; those are all the gauges' (any other is drawn as before: by the mark test). */
+
+/* The masks' opaque texels (measured from the gauge sheet, texture 8): in the texel rectangle u0..u1 x v0..v1, row
+   r (r < rows) is opaque from u0 + start - r / 2 to u1 - r / 2 (the slant of the bar's ends); the rows below are
+   clear. A mask not listed is taken as opaque throughout its rectangle. */
+typedef struct HudCMaskShape {
+    s16 u0, v0, u1, v1;
+    s16 start, rows;
+} HudCMaskShape;
+
+static const HudCMaskShape sHudMaskShape[] = {
+    {0, 48, 160, 64, 5, 12}, /* the life bars' (HudGauge_DrawHp) */
+    {192, 0, 218, 6, 2, 6},  /* the blast gauge's (HudGauge_DrawBlast) */
+};
+
+#define HUDC_MARKS 96
+
+static f32 sHudMark[HUDC_MARKS][4]; /* x0, y0, x1, y1 (x0 < x1, y0 < y1): pixels marked */
+static s32 sHudMarkCount;
+
+/* Whether the quad of corners v (top left, top right, bottom left, bottom right) is drawn straight. */
+static s32 HudSprite_PortStraight(f32 (*v)[4]) {
+    return (s32)v[0][1] == (s32)v[1][1] && (s32)v[2][1] == (s32)v[3][1] && (s32)v[0][0] == (s32)v[2][0] &&
+           (s32)v[1][0] == (s32)v[3][0] && (s32)v[0][0] != (s32)v[1][0] && (s32)v[0][1] != (s32)v[2][1];
+}
+
+/* Marks the pixels under texels u0..u1 x v0..v1 of the sprite whose corners v show texels uv. */
+static void HudSprite_PortMarkTexels(f32 (*v)[4], s32 (*uv)[2], s32 u0, s32 v0, s32 u1, s32 v1) {
+    f32 xa = (f32)(s32)v[0][0], xb = (f32)(s32)v[1][0], ya = (f32)(s32)v[0][1], yb = (f32)(s32)v[2][1];
+    f32 x0 = xa + (f32)(u0 - uv[0][0]) * (xb - xa) / (f32)(uv[1][0] - uv[0][0]);
+    f32 x1 = xa + (f32)(u1 - uv[0][0]) * (xb - xa) / (f32)(uv[1][0] - uv[0][0]);
+    f32 y0 = ya + (f32)(v0 - uv[0][1]) * (yb - ya) / (f32)(uv[2][1] - uv[0][1]);
+    f32 y1 = ya + (f32)(v1 - uv[0][1]) * (yb - ya) / (f32)(uv[2][1] - uv[0][1]);
+    f32 *m;
+
+    if (sHudMarkCount >= HUDC_MARKS || u1 <= u0 || v1 <= v0) {
+        return;
+    }
+    m = sHudMark[sHudMarkCount++];
+    m[0] = x0 < x1 ? x0 : x1;
+    m[2] = x0 < x1 ? x1 : x0;
+    m[1] = y0 < y1 ? y0 : y1;
+    m[3] = y0 < y1 ? y1 : y0;
+}
+
+/* A mask sprite: marks the pixels under its opaque texels (sHudMaskShape). */
+static void HudSprite_PortMark(f32 (*v)[4], s32 (*uv)[2]) {
+    s32 u0 = uv[0][0] < uv[1][0] ? uv[0][0] : uv[1][0], u1 = uv[0][0] < uv[1][0] ? uv[1][0] : uv[0][0];
+    s32 v0 = uv[0][1] < uv[2][1] ? uv[0][1] : uv[2][1], v1 = uv[0][1] < uv[2][1] ? uv[2][1] : uv[0][1];
+    u32 i;
+    s32 r;
+
+    if (uv[1][0] == uv[0][0] || uv[2][1] == uv[0][1]) {
+        return;
+    }
+    for (i = 0; i < sizeof(sHudMaskShape) / sizeof(sHudMaskShape[0]); i++) {
+        const HudCMaskShape *s = &sHudMaskShape[i];
+        if (s->u0 == u0 && s->v0 == v0 && s->u1 == u1 && s->v1 == v1) {
+            for (r = 0; r < s->rows; r += 2) {
+                HudSprite_PortMarkTexels(v, uv, u0 + s->start - r / 2, v0 + r, u1 - r / 2, v0 + (r + 2 < s->rows ? r + 2 : s->rows));
+            }
+            return;
+        }
+    }
+    HudSprite_PortMarkTexels(v, uv, u0, v0, u1, v1);
+}
+
+/* The bounds of the quad of corners v: x0, y0, x1, y1. */
+static void HudSprite_PortBounds(f32 (*v)[4], f32 *b) {
+    s32 k;
+
+    b[0] = b[2] = (f32)(s32)v[0][0];
+    b[1] = b[3] = (f32)(s32)v[0][1];
+    for (k = 1; k < 4; k++) {
+        f32 x = (f32)(s32)v[k][0], y = (f32)(s32)v[k][1];
+        b[0] = x < b[0] ? x : b[0];
+        b[2] = x > b[2] ? x : b[2];
+        b[1] = y < b[1] ? y : b[1];
+        b[3] = y > b[3] ? y : b[3];
+    }
+}
+
+/* Marks (on) or clears the marks of the pixels of rectangle b (x0, y0, x1, y1): a mark it crosses keeps what is
+   outside it. */
+static void HudSprite_PortMarkRect(const f32 *b, s32 on) {
+    s32 i, n = sHudMarkCount;
+
+    for (i = 0; i < n; i++) {
+        f32 m[4];
+        f32 *d = sHudMark[i];
+        if (d[0] >= b[2] || d[2] <= b[0] || d[1] >= b[3] || d[3] <= b[1]) {
+            continue;
+        }
+        m[0] = d[0];
+        m[1] = d[1];
+        m[2] = d[2];
+        m[3] = d[3];
+        d[2] = d[0]; /* (emptied: dropped below) */
+        if (m[1] < b[1] && sHudMarkCount < HUDC_MARKS) { /* above */
+            f32 *e = sHudMark[sHudMarkCount++];
+            e[0] = m[0], e[1] = m[1], e[2] = m[2], e[3] = b[1];
+        }
+        if (m[3] > b[3] && sHudMarkCount < HUDC_MARKS) { /* below */
+            f32 *e = sHudMark[sHudMarkCount++];
+            e[0] = m[0], e[1] = b[3], e[2] = m[2], e[3] = m[3];
+        }
+        if (m[0] < b[0] && sHudMarkCount < HUDC_MARKS) { /* left, beside it */
+            f32 *e = sHudMark[sHudMarkCount++];
+            e[0] = m[0], e[1] = m[1] > b[1] ? m[1] : b[1], e[2] = b[0], e[3] = m[3] < b[3] ? m[3] : b[3];
+        }
+        if (m[2] > b[2] && sHudMarkCount < HUDC_MARKS) { /* right */
+            f32 *e = sHudMark[sHudMarkCount++];
+            e[0] = b[2], e[1] = m[1] > b[1] ? m[1] : b[1], e[2] = m[2], e[3] = m[3] < b[3] ? m[3] : b[3];
+        }
+    }
+    for (i = n = 0; i < sHudMarkCount; i++) {
+        if (sHudMark[i][2] > sHudMark[i][0]) {
+            if (n != i) {
+                sHudMark[n][0] = sHudMark[i][0], sHudMark[n][1] = sHudMark[i][1];
+                sHudMark[n][2] = sHudMark[i][2], sHudMark[n][3] = sHudMark[i][3];
+            }
+            n++;
+        }
+    }
+    sHudMarkCount = n;
+    if (on && sHudMarkCount < HUDC_MARKS) {
+        f32 *e = sHudMark[sHudMarkCount++];
+        e[0] = b[0], e[1] = b[1], e[2] = b[2], e[3] = b[3];
+    }
+}
+
+/* The colour at (x, y) of the quad of corner colours c over x0..x1 x y0..y1, each channel in between. */
+static u32 HudSprite_PortLerp(const u32 *c, f32 fx, f32 fy) {
+    u32 out = 0;
+    s32 k;
+
+    for (k = 0; k < 32; k += 8) {
+        f32 top = (f32)((c[0] >> k) & 0xFF) + ((f32)((c[1] >> k) & 0xFF) - (f32)((c[0] >> k) & 0xFF)) * fx;
+        f32 bot = (f32)((c[2] >> k) & 0xFF) + ((f32)((c[3] >> k) & 0xFF) - (f32)((c[2] >> k) & 0xFF)) * fx;
+        out |= (u32)(s32)(top + (bot - top) * fy + 0.5f) << k;
+    }
+    return out;
+}
+
+/* A sprite drawn where the pixels are not marked: the pieces of its rectangle outside the marks, each a quad r with
+   the texels and colours of its place. */
+static void HudSprite_PortCut(RndQuad *r, f32 (*v)[4], s32 (*uv)[2], const u32 *rgba) {
+    f32 xa = (f32)(s32)v[0][0], xb = (f32)(s32)v[1][0], ya = (f32)(s32)v[0][1], yb = (f32)(s32)v[2][1];
+    f32 fx0 = xa < xb ? xa : xb, fx1 = xa < xb ? xb : xa, fy0 = ya < yb ? ya : yb, fy1 = ya < yb ? yb : ya;
+    f32 ys[2 * HUDC_MARKS + 2], span[HUDC_MARKS][2];
+    s32 ny = 0, i, j, b;
+
+    ys[ny++] = fy0;
+    ys[ny++] = fy1;
+    for (i = 0; i < sHudMarkCount; i++) {
+        for (j = 1; j <= 3; j += 2) {
+            if (sHudMark[i][j] > fy0 && sHudMark[i][j] < fy1) {
+                ys[ny++] = sHudMark[i][j];
+            }
+        }
+    }
+    for (i = 1; i < ny; i++) { /* (in order) */
+        f32 y = ys[i];
+        for (j = i; j > 0 && ys[j - 1] > y; j--) {
+            ys[j] = ys[j - 1];
+        }
+        ys[j] = y;
+    }
+    for (b = 0; b + 1 < ny; b++) {
+        f32 y0 = ys[b], y1 = ys[b + 1], cur = fx0;
+        s32 ns = 0;
+
+        if (y1 <= y0) {
+            continue;
+        }
+        for (i = 0; i < sHudMarkCount; i++) { /* the marks across this band, in order of x */
+            f32 *m = sHudMark[i];
+            if (m[1] <= y0 && m[3] >= y1 && m[0] < fx1 && m[2] > fx0) {
+                for (j = ns; j > 0 && span[j - 1][0] > m[0]; j--) {
+                    span[j][0] = span[j - 1][0];
+                    span[j][1] = span[j - 1][1];
+                }
+                span[j][0] = m[0];
+                span[j][1] = m[2];
+                ns++;
+            }
+        }
+        for (i = 0; i <= ns; i++) {
+            f32 x0 = cur, x1 = i < ns ? span[i][0] : fx1;
+            if (x1 > fx1) {
+                x1 = fx1;
+            }
+            if (x1 > x0) { /* a piece: x0..x1 x y0..y1 */
+                RndQuad q = *r;
+                f32 px[2], py[2];
+                s32 k;
+                px[0] = x0;
+                px[1] = x1;
+                py[0] = y0;
+                py[1] = y1;
+                for (k = 0; k < 4; k++) {
+                    f32 x = px[k & 1], y = py[k >> 1];
+                    f32 sx = (x - xa) / (xb - xa), sy = (y - ya) / (yb - ya);
+                    q.xy[k][0] = x;
+                    q.xy[k][1] = y;
+                    q.uv[k][0] = (int16_t)(s32)((f32)((uv[0][0] << 4) + 8) + sx * (f32)((uv[1][0] - uv[0][0]) << 4));
+                    q.uv[k][1] = (int16_t)(s32)((f32)((uv[0][1] << 4) + 8) + sy * (f32)((uv[2][1] - uv[0][1]) << 4));
+                    q.rgba[k] = HudSprite_PortLerp(rgba, sx, sy);
+                }
+                Port_Quad(&q);
+            }
+            if (i < ns && span[i][1] > cur) {
+                cur = span[i][1];
+            }
+        }
+    }
+}
+
 /* The sprite as a record (include/port/rnd.h) instead of its vertices: the corners at the whole pixels the packet
    gives them, the texels with its half-texel offset, a colour per corner, and the state of GS context ctx as the
    HUD has set it (gRndCtx). t: the texture entry, pal: the one whose palette it is drawn with, tex0 the TEX0 the
@@ -245,6 +468,19 @@ static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, Hu
         r.gsTex0 = tex0;
     }
     r.gsCtx = (u32)ctx;
+    if (!Rnd_TestsMarks() && HudSprite_PortStraight(v)) {
+        if ((r.st.flags & RND_MARK) && (r.st.flags & RND_NO_COLOUR) && r.st.mask == RND_MASK_NONE) {
+            if (uv != NULL) { /* a mask (it writes nothing else) */
+                HudSprite_PortMark(v, uv);
+                return 1;
+            }
+        } else if (r.st.mask == RND_IF_UNMARKED) {
+            s32 none[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+            r.st.mask = RND_MASK_NONE;
+            HudSprite_PortCut(&r, v, uv != NULL ? uv : none, rgba);
+            return 1;
+        }
+    }
     return Port_Quad(&r);
 }
 #endif
@@ -295,6 +531,9 @@ void HudSprite_DrawAlphaClear(HudCSprite *spr) {
     Rnd_SetMark(0, 0);                                                  /* FBA_1 0 */
     {
         u32 c[4] = {(u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ, (u32)GFX_CLEAR_RGBAQ};
+        f32 b[4];
+        HudSprite_PortBounds(v, b);
+        HudSprite_PortMarkRect(b, 0); /* (its alpha 0: the marks there cleared) */
         p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
         if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
             return;
@@ -357,6 +596,9 @@ void HudSprite_DrawAlphaSet(HudCSprite *spr) {
     Rnd_SetMark(0, 0);                                                  /* FBA_1 0 */
     {
         u32 c[4] = {0xFF000000u, 0xFF000000u, 0xFF000000u, 0xFF000000u};
+        f32 b[4];
+        HudSprite_PortBounds(v, b);
+        HudSprite_PortMarkRect(b, 1); /* (its alpha 0xFF: the pixels marked) */
         p[-12] |= 1ull << 15; /* (the A+D tag's EOP: the end of the packet if the record is taken) */
         if (HudSprite_PortQuad(0, v, NULL, NULL, NULL, 0, c, p)) {
             return;
@@ -390,6 +632,8 @@ void HudGfx_ClearAlpha(void) {
         static f32 v[4][4] = {{0, 0}, {GFX_WIDTH, 0}, {0, GFX_HEIGHT}, {GFX_WIDTH, GFX_HEIGHT}};
         u32 c[4] = {0, 0, 0, 0};
         RndState keep = gRndCtx[0];
+
+        sHudMarkCount = 0; /* (the alpha of the whole picture cleared) */
 
         PORT_PKT(p, 0, GIF_TAG(2, 1, 1), GIF_REG_AD);
         p += 2;

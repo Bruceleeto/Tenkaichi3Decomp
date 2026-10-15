@@ -118,6 +118,7 @@ int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
 int Port_ListRead(void);         /* 1: the display list is read for what only the PS2 needs (the PS2 reference): 0 = such
                                     packets need not be built (the Dreamcast; BT3_WALK=3 on PC) */
 int Port_Poly(const RndPoly *p); /* as Port_Quad */
+int Rnd_TestsMarks(void);        /* gs_draw.c: 0 = a draw's RndState.mask is not tested (the PVR): the caller cuts it */
 #ifdef PORT_GS_REF
 /* port/src/rnd_gs.c. The PS2 reference only (where the display list is read: Port_ListRead): the GS state the game
    sets, followed into gRndCtx from each packet the list gets as well (src/sys/dma.c: DMA CNT tags and their VIF
