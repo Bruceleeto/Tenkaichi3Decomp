@@ -8,6 +8,7 @@
  * primitive coordinate ((x + 0x700) << 4, (y + 0x720) << 4): the window origin is (1792, 1824).
  */
 #include "common.h"
+#include "sys/dma.h"
 #ifdef PORT
 #include "port/rnd.h"
 #endif
@@ -37,18 +38,23 @@ void Font_BeginPacket(CbFontOut *out) {
     out->p += 2;
     out->p[0] = 0;
     out->p[1] = 8;
+    PORT_AD(out->p, 0);
     out->p += 2;
     out->p[0] = 0;
     out->p[1] = 0x47;
+    PORT_AD(out->p, 0);
     out->p += 2;
     out->p[0] = 0x0000008000008080;
     out->p[1] = 0x3B;
+    PORT_AD(out->p, 0);
     out->p += 2;
     out->p[0] = 0x00000001310000E0;
     out->p[1] = 0x4E;
+    PORT_AD(out->p, 0);
     out->p += 2;
     out->p[0] = 0x156;
     out->p[1] = 0;
+    PORT_AD(out->p, 0);
     out->p += 2;
 #ifdef PORT
     Rnd_SetFlag(0, RND_REPEAT, 1);                                      /* CLAMP_1 0 */
