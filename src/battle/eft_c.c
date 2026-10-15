@@ -1769,6 +1769,9 @@ static inline void EftSurf_QueueTri(EftScreenPos *v0, EftScreenPos *v1, EftScree
     }
 #ifdef PORT
     if (Port_TakesRecords()) { /* the triangle as a record */
+        if (!Ot_RecRoom(Ot_RecBytes(3))) {
+            return; /* (no room left in the packet memory: not drawn) */
+        }
         p = Ot_NewRec(((u64)abe << 6) | 0x1B, 3);
         Ot_RecTex0(p, tex0);
         EftVram_PortRecTex(p, tex0);
