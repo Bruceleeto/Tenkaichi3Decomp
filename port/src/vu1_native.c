@@ -390,6 +390,8 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     return 1;
 }
 
+unsigned gVu1NativeStat[3][2];
+
 int Vu1Native_Prog4(const void *chain) {
     P4Walk wk;
 
@@ -398,8 +400,10 @@ int Vu1Native_Prog4(const void *chain) {
     }
     memset(&wk, 0, sizeof(wk));
     if (!walk(chain, p4_batch, &wk) || !wk.header) {
+        gVu1NativeStat[2][0]++;
         return 0;
     }
+    gVu1NativeStat[2][1]++;
     memset(&wk, 0, sizeof(wk));
     wk.draw = 1;
     walk(chain, p4_batch, &wk);
@@ -534,7 +538,12 @@ int Vu1Native_Takes(int prog, const void *chain) {
     }
     memset(&wk, 0, sizeof(wk));
     wk.prog = prog;
-    return walk(chain, fig_batch, &wk);
+    if (!walk(chain, fig_batch, &wk)) {
+        gVu1NativeStat[prog][0]++;
+        return 0;
+    }
+    gVu1NativeStat[prog][1]++;
+    return 1;
 }
 
 static void fig_draw(int prog, const void *chain, const void *consts) {

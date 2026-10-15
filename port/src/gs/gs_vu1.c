@@ -18,6 +18,8 @@
 #include <string.h>
 #include "gs_internal.h"
 
+extern unsigned gVu1NativeStat[3][2]; /* (port/src/vu1_native.c) */
+
 typedef union Reg {
     float f[4];
     uint32_t u[4];
@@ -784,7 +786,10 @@ void GsVu1_FrameEnd(void) {
     int k, i;
 
     if (getenv("BT3_GS_VERBOSE") != NULL && (gGsFrame < 4 || gGsFrame % 60 == 0)) {
-        fprintf(stderr, "vu1: frame %u: %u interpreted runs, %u instructions, %u kicks; %u calls served by shaders\n", gGsFrame, sStatRuns, sStatInstr, sStatKicks, sHle);
+        fprintf(stderr, "vu1: frame %u: %u interpreted runs, %u instructions, %u kicks; %u calls served by shaders; as records "
+                "(packets / records): program 0 %u / %u, 1 %u / %u, 4 %u / %u\n", gGsFrame, sStatRuns, sStatInstr, sStatKicks, sHle,
+                gVu1NativeStat[0][0], gVu1NativeStat[0][1], gVu1NativeStat[1][0], gVu1NativeStat[1][1], gVu1NativeStat[2][0],
+                gVu1NativeStat[2][1]);
         for (k = 0; k < 16 && sProg[k].size != 0; k++) {
             fprintf(stderr, "vu1:   program of %u instructions: %u runs, %u instructions (%u%%), %u kicks\n", sProg[k].size, sProg[k].runs,
                     sProg[k].instr, sStatInstr ? sProg[k].instr * 100 / sStatInstr : 0, sProg[k].kicks);
@@ -792,6 +797,7 @@ void GsVu1_FrameEnd(void) {
     }
     sStatRuns = sStatInstr = sStatKicks = 0;
     sHle = 0;
+    memset(gVu1NativeStat, 0, sizeof(gVu1NativeStat));
     memset(sProg, 0, sizeof(sProg));
     for (k = 0; k < 2; k++) {
         for (i = 0; i < 128; i++) {
