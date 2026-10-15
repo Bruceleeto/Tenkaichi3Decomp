@@ -858,6 +858,13 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
         } else {
             e = &gOtZ[z].layer[l];
         }
+#ifdef PORT
+        p = Ot_NewAd2(8, 0, 9, 0); /* CLAMP_1, CLAMP_2 = 0 (repeat): register writes in the packet's place */
+        if (p != NULL) {
+            e->tail->next = p;
+            e->tail = (EftAdOtPrim *)p;
+        }
+#else
         p = (EftMeshClampPkt *)gOtCur;
         gOtCur = (u8 *)(p + 1);
         p->dmaTag = 0x20000003;
@@ -872,6 +879,7 @@ void EftMesh_QueueTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Ef
         p->data1 = 0;
         e->tail->next = p;
         e->tail = (EftAdOtPrim *)p;
+#endif
     }
     if (hasTex) {
         EftMeshTexTriPkt *p = (EftMeshTexTriPkt *)gOtCur;
