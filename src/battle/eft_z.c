@@ -230,84 +230,115 @@ void EftLine_DrawSprite(EftYTask *task) {
         pk = (EftYStripPkt *)gOtCur;
         gOtCur = (u32 *)(pk + 1);
         if (pk != NULL) {
-            if (def->layer < 2) {
-                pk->prim = 0x5C;
-                pk->dmaTag = 0x20000008;
-                pk->vif0 = 0x10000000;
-                pk->vif1 = 0x50000008;
-                pk->gifTag = 0xE400000000008001;
-                pk->regs = 0x42142142142160;
-                pk->next = NULL;
-            } else {
-                pk->prim = 0x25C;
-                pk->dmaTag = 0x20000008;
-                pk->vif0 = 0x10000000;
-                pk->vif1 = 0x50000008;
-                pk->gifTag = 0xE400000000008001;
-                pk->regs = 0x42142142142170;
-                pk->next = NULL;
-            }
-            for (i = 0; i < 4; i++) {
-                f32 rhw = 1.0f / scr[i].w;
+#ifdef PORT
+            if (Port_TakesRecords()) { /* the strip as a record, in the packet's place (context 2 from layer 2 on) */
+                u32 rgba;
 
-                st[i].x = (i % 2) * w->du + w->u0;
-                st[i].y = (i / 2) * w->dv + w->v0;
-                st[i].z = 1.0f;
-                st[i].w = 0.0f;
-                Vec3_Scale(&stq[i], (EftYVec *)&st[i], rhw);
-            }
-            if (w->flags & 0x20) {
-                for (i = 3; i >= 0; i--) {
-                    scr[i].z = 0xFFFFFF;
+                gOtCur = (u32 *)pk;
+                pk = Ot_NewRec(def->layer < 2 ? 0x5C : 0x25C, 4);
+                for (i = 0; i < 4; i++) {
+                    f32 rhw = 1.0f / scr[i].w;
+
+                    st[i].x = (i % 2) * w->du + w->u0;
+                    st[i].y = (i / 2) * w->dv + w->v0;
+                    st[i].z = 1.0f;
+                    st[i].w = 0.0f;
+                    Vec3_Scale(&stq[i], (EftYVec *)&st[i], rhw);
                 }
+                if (w->flags & 0x20) {
+                    for (i = 3; i >= 0; i--) {
+                        scr[i].z = 0xFFFFFF;
+                    }
+                }
+                z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+                Vec4_ToInt(&col, &w->color);
+                rgba = (u8)col.r | (u8)col.g << 8 | (u8)col.b << 16 | (u32)(u8)col.a << 24;
+                Ot_RecTex0(pk, w->gsTex0);
+                for (i = 0; i < 4; i++) {
+                    Ot_RecVtx(pk, i, (u16)scr[i].x, (u16)scr[i].y, scr[i].z, stq[i].x, stq[i].y, stq[i].z, rgba);
+                }
+            } else
+#endif
+            {
+                if (def->layer < 2) {
+                    pk->prim = 0x5C;
+                    pk->dmaTag = 0x20000008;
+                    pk->vif0 = 0x10000000;
+                    pk->vif1 = 0x50000008;
+                    pk->gifTag = 0xE400000000008001;
+                    pk->regs = 0x42142142142160;
+                    pk->next = NULL;
+                } else {
+                    pk->prim = 0x25C;
+                    pk->dmaTag = 0x20000008;
+                    pk->vif0 = 0x10000000;
+                    pk->vif1 = 0x50000008;
+                    pk->gifTag = 0xE400000000008001;
+                    pk->regs = 0x42142142142170;
+                    pk->next = NULL;
+                }
+                for (i = 0; i < 4; i++) {
+                    f32 rhw = 1.0f / scr[i].w;
+
+                    st[i].x = (i % 2) * w->du + w->u0;
+                    st[i].y = (i / 2) * w->dv + w->v0;
+                    st[i].z = 1.0f;
+                    st[i].w = 0.0f;
+                    Vec3_Scale(&stq[i], (EftYVec *)&st[i], rhw);
+                }
+                if (w->flags & 0x20) {
+                    for (i = 3; i >= 0; i--) {
+                        scr[i].z = 0xFFFFFF;
+                    }
+                }
+                z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
+                Vec4_ToInt(&col, &w->color);
+                pk->v[0].rgbaq.r = col.r;
+                pk->v[0].rgbaq.g = col.g;
+                pk->v[0].rgbaq.b = col.b;
+                pk->v[0].rgbaq.a = col.a;
+                pk->v[0].rgbaq.q = stq[0].z;
+                pk->v[1].rgbaq.r = col.r;
+                pk->v[1].rgbaq.g = col.g;
+                pk->v[1].rgbaq.b = col.b;
+                pk->v[1].rgbaq.a = col.a;
+                pk->v[1].rgbaq.q = stq[1].z;
+                pk->v[2].rgbaq.r = col.r;
+                pk->v[2].rgbaq.g = col.g;
+                pk->v[2].rgbaq.b = col.b;
+                pk->v[2].rgbaq.a = col.a;
+                pk->v[2].rgbaq.q = stq[2].z;
+                pk->v[3].rgbaq.r = col.r;
+                pk->v[3].rgbaq.g = col.g;
+                pk->v[3].rgbaq.b = col.b;
+                pk->v[3].rgbaq.a = col.a;
+                pk->v[3].rgbaq.q = stq[3].z;
+                pk->v[0].st.s = stq[0].x;
+                pk->v[0].st.t = stq[0].y;
+                pk->v[1].st.s = stq[1].x;
+                pk->v[1].st.t = stq[1].y;
+                pk->v[2].st.s = stq[2].x;
+                pk->v[2].st.t = stq[2].y;
+                pk->v[3].st.s = stq[3].x;
+                pk->v[3].st.t = stq[3].y;
+                pk->v[0].xyz.x = scr[0].x;
+                pk->v[0].xyz.y = scr[0].y;
+                pk->v[0].xyz.z = scr[0].z;
+                pk->v[0].xyz.f = 0xFF;
+                pk->v[1].xyz.x = scr[1].x;
+                pk->v[1].xyz.y = scr[1].y;
+                pk->v[1].xyz.z = scr[1].z;
+                pk->v[1].xyz.f = 0xFF;
+                pk->v[2].xyz.x = scr[2].x;
+                pk->v[2].xyz.y = scr[2].y;
+                pk->v[2].xyz.z = scr[2].z;
+                pk->v[2].xyz.f = 0xFF;
+                pk->v[3].xyz.x = scr[3].x;
+                pk->v[3].xyz.y = scr[3].y;
+                pk->v[3].xyz.z = scr[3].z;
+                pk->v[3].xyz.f = 0xFF;
+                pk->tex0 = w->gsTex0;
             }
-            z = (scr[0].z + scr[1].z + scr[2].z + scr[3].z) >> 10;
-            Vec4_ToInt(&col, &w->color);
-            pk->v[0].rgbaq.r = col.r;
-            pk->v[0].rgbaq.g = col.g;
-            pk->v[0].rgbaq.b = col.b;
-            pk->v[0].rgbaq.a = col.a;
-            pk->v[0].rgbaq.q = stq[0].z;
-            pk->v[1].rgbaq.r = col.r;
-            pk->v[1].rgbaq.g = col.g;
-            pk->v[1].rgbaq.b = col.b;
-            pk->v[1].rgbaq.a = col.a;
-            pk->v[1].rgbaq.q = stq[1].z;
-            pk->v[2].rgbaq.r = col.r;
-            pk->v[2].rgbaq.g = col.g;
-            pk->v[2].rgbaq.b = col.b;
-            pk->v[2].rgbaq.a = col.a;
-            pk->v[2].rgbaq.q = stq[2].z;
-            pk->v[3].rgbaq.r = col.r;
-            pk->v[3].rgbaq.g = col.g;
-            pk->v[3].rgbaq.b = col.b;
-            pk->v[3].rgbaq.a = col.a;
-            pk->v[3].rgbaq.q = stq[3].z;
-            pk->v[0].st.s = stq[0].x;
-            pk->v[0].st.t = stq[0].y;
-            pk->v[1].st.s = stq[1].x;
-            pk->v[1].st.t = stq[1].y;
-            pk->v[2].st.s = stq[2].x;
-            pk->v[2].st.t = stq[2].y;
-            pk->v[3].st.s = stq[3].x;
-            pk->v[3].st.t = stq[3].y;
-            pk->v[0].xyz.x = scr[0].x;
-            pk->v[0].xyz.y = scr[0].y;
-            pk->v[0].xyz.z = scr[0].z;
-            pk->v[0].xyz.f = 0xFF;
-            pk->v[1].xyz.x = scr[1].x;
-            pk->v[1].xyz.y = scr[1].y;
-            pk->v[1].xyz.z = scr[1].z;
-            pk->v[1].xyz.f = 0xFF;
-            pk->v[2].xyz.x = scr[2].x;
-            pk->v[2].xyz.y = scr[2].y;
-            pk->v[2].xyz.z = scr[2].z;
-            pk->v[2].xyz.f = 0xFF;
-            pk->v[3].xyz.x = scr[3].x;
-            pk->v[3].xyz.y = scr[3].y;
-            pk->v[3].xyz.z = scr[3].z;
-            pk->v[3].xyz.f = 0xFF;
-            pk->tex0 = w->gsTex0;
             layer = def->layer;
             if (layer >= 2) {
                 layer -= 2;
