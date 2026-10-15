@@ -27,6 +27,9 @@
 #include "battle/btl_scene.h"
 #include "sys/randf.h"
 #include "sys/snd.h"
+#ifdef PORT
+#include "port/rnd.h"
+#endif
 
 s32 BtlStage_IsReady(void);
 f32 Stg_CalcYaw(f32, f32, f32, f32);
@@ -1365,6 +1368,84 @@ void ScrWarp_Step(ScrWarpObj *o) {
     }
 }
 
+#ifdef PORT
+/* ScrWarp_Draw as records, the same page and order: the region x0..x1 of the frame halved into 0x150 (tw x 224),
+   then each ring's two strips (pairs of corners: frame pixel, texel of the copy, colour) drawn from it over the
+   region, blended by their alpha. Then the state ScrWarp_BeginPacket leaves. */
+static void ScrWarp_PortDraw(s32 split, s32 view, s32 x0, s32 x1, s32 w, s32 tw) {
+    RndState st;
+    RndPoly r;
+    ScrWarpObj *o;
+    GsQword *q;
+    u64 *p;
+    s32 alpha[3];
+    s32 left;
+    s32 j;
+    s32 k;
+    s32 i;
+
+    Rnd_StateInit(&st, 0x150);
+    st.blend = RND_BLEND_NONE;
+    st.flags = RND_SMOOTH;
+    st.scissor[2] = tw - 1;
+    st.scissor[3] = 0xE0 - 1;
+    Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)tw, 224.0f,
+             (x0 << 4) + 8, 8, ((x0 + w) << 4) + 8, (0x1C0 << 4) + 8, 0x80808080);
+    memset(&r, 0, sizeof(r));
+    Rnd_StateInit(&r.st, GFX_FRAME_FBP());
+    r.st.flags = RND_SMOOTH | RND_GOURAUD;
+    r.st.scissor[0] = x0;
+    r.st.scissor[2] = x1 - 1;
+    r.tex = Rnd_TargetTex(0x150, 0x100, 0x100, 0) | RND_TEX_RGB;
+    r.n = 4;
+    o = gScrWarp->objs;
+    for (left = SCRWARP_MAX - 1; left >= 0; left--, o++) {
+        if (o->flags == 0 || (split != 0 && o->view != view)) {
+            continue;
+        }
+        alpha[1] = o->alpha * 255.0f;
+        alpha[0] = alpha[1] / 8;
+        alpha[2] = alpha[1] / 8;
+        for (j = 0; j < 2; j++) {
+            for (k = 0; k < SCRWARP_DIRS; k++) { /* (corners k and k + 1 of the ring, on its two edges j, j + 1) */
+                for (i = 0; i < 4; i++) {
+                    s32 m = (k + (i >> 1)) % SCRWARP_DIRS;
+                    s32 e = j + (i & 1);
+
+                    r.v[i].x = (f32)(s32)o->xy[m][e][0];
+                    r.v[i].y = (f32)(s32)o->xy[m][e][1];
+                    r.v[i].s = (f32)(s32)o->uv[m][e][0] / 256.0f;
+                    r.v[i].t = (f32)(s32)o->uv[m][e][1] / 256.0f;
+                    r.v[i].q = 1.0f;
+                    r.v[i].rgba = (u32)(alpha[e] << 24) | 0x808080;
+                }
+                Port_Poly(&r);
+            }
+        }
+    }
+    q = (GsQword *)Dma_BeginDirect();
+    Gfx_PutDefaultEnv(&q);
+    p = (u64 *)q;
+    p[0] = GIF_TAG(7, 1, 1);
+    p[1] = GIF_REG_AD;
+    p[2] = 0x30000;
+    p[3] = GS_TEST_1;
+    p[4] = GS_SET_ZBUF(0xE0, GS_PSMZ24, 1);
+    p[5] = GS_ZBUF_1;
+    p[6] = 0x60;
+    p[7] = GS_TEX1_1;
+    p[8] = !(gGfx.frame & 1) ? 0x80070 : 0x80000;
+    p[9] = GS_FRAME_1;
+    p[10] = GS_SET_SCISSOR(x0, x1 - 1, 0, 0x1C0 - 1);
+    p[11] = GS_SCISSOR_1;
+    p[12] = GS_SET_CLAMP(2, 2, 0, tw - 1, 0, 0xE0 - 1);
+    p[13] = GS_CLAMP_1;
+    p[14] = 0x220012A00ULL;
+    p[15] = GS_TEX0_1;
+    Dma_EndDirect(p + 16);
+}
+#endif
+
 /* Draws the rings of one view (or of both when not split): two strips of 21 vertex pairs per ring. */
 void ScrWarp_Draw(s32 split, s32 view) {
     s32 alpha[3];
@@ -1396,6 +1477,14 @@ void ScrWarp_Draw(s32 split, s32 view) {
         }
         x1 = x0 + w;
     }
+#ifdef PORT
+    if (Port_TakesRecords()) { /* (without frame buffers, Rnd_FxOn: nothing; the rings still grow, ScrWarp_Step) */
+        if (Rnd_FxOn()) {
+            ScrWarp_PortDraw(split, view, x0, x1, w, tw);
+        }
+        return;
+    }
+#endif
     ScrWarp_BeginPacket(&p, x0, x1, w, 0x1C0, tw, 0xE0);
     o = gScrWarp->objs;
     for (left = SCRWARP_MAX - 1; left >= 0; left--, o++) {
