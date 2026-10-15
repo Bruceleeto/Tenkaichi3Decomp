@@ -74,7 +74,12 @@ const char *Gs_Mode(void) {
     const char *m = getenv("BT3_GS");
 
     if (m == NULL) {
+#ifndef PORT_GS_REF
+        (void)gPortDataStripped;
+        return "gpu"; /* (the Dreamcast: no environment, always the PVR) */
+#else
         return gPortDataStripped == 1 ? "gpu" : NULL;
+#endif
     }
     return strcmp(m, "none") == 0 || strcmp(m, "off") == 0 || strcmp(m, "0") == 0 ? NULL : m;
 }

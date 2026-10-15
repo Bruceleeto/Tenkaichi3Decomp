@@ -2044,6 +2044,11 @@ int GsGpu_Init(void) {
     gsDraws = malloc(MAX_DRAWS * sizeof(GsDraw));
     /* BT3_GPU_API=vulkan|gl|auto picks the back end. Both are complete renderers of the same list, so a
        picture from either should be the same (see the frame-by-frame compare in the port's docs). */
+#ifdef __DREAMCAST__
+    if (api == NULL) {
+        api = "pvr"; /* (the only renderer there; GL and Vulkan are stubs) */
+    }
+#endif
     if (api == NULL || strcmp(api, "auto") == 0) {
         /* the settings window's choice (Renderer; Vulkan unless OpenGL was picked there) */
         sb = Port_Setting("gpu_api", 0) == 1 ? &sGlBackend : &sVulkanBackend;
