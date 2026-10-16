@@ -640,6 +640,8 @@ typedef struct FigWalk {
     const float *k;  /* the constants, when drawing */
     const float *sc; /* program 2: its block's screen and clip (VU 11..18, sP2 + 44) */
     int alt;         /* program 2: 2b */
+    int lit;         /* program 0: lightA, lightB made (once a draw, as the program's setup before its batches) */
+    float lightA[16], lightB[16];
 } FigWalk;
 
 /* The A+D tag of one register the batch starts with (no EOP: the strip's tag follows in the same kick). */
@@ -666,7 +668,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
     uint32_t prim[2], n, i, c, flags[3] = {0, 0, 0};
     uint64_t tex0[2] = {0, 0};
     int ctx[2];
-    float lightA[16], lightB[16];
+    float *lightA = wk->lightA, *lightB = wk->lightB;
     int32_t col[2][4];
 
     split(hdr, &nh, &vtx, &nv, 5);
@@ -704,7 +706,8 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         col[0][c] = vu_ftoi(k[88 + c], 1.0f);
         col[1][c] = vu_ftoi(k[92 + c], 1.0f);
     }
-    if (wk->prog == 0) { /* the setup's light * A and light * B: columns 0..2 the product, 3 the light's own */
+    if (wk->prog == 0 && !wk->lit) { /* the setup's light * A and light * B: columns 0..2 the product, 3 the light's own */
+        wk->lit = 1;
         for (c = 0; c < 3; c++) {
             mtx_apply(lightA + c * 4, k + 40, k[c * 4], k[c * 4 + 1], k[c * 4 + 2], k[c * 4 + 3]);
             mtx_apply(lightB + c * 4, k + 40, k[16 + c * 4], k[16 + c * 4 + 1], k[16 + c * 4 + 2], k[16 + c * 4 + 3]);
