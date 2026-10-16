@@ -414,8 +414,14 @@ void Snd_SendBank(SndBank *bank, s32 sync) {
     Dma_SendToIop(bank->hdIop, bank->hd, bank->hdSize);
     Dma_SendToIop(bank->seqIop, bank->seq, bank->seqSize);
     if (sync) {
+#ifdef PORT
+        /* (the samples straight into sound memory, where they are: the PS2 stages them in the IOP's own RAM first
+           (iopBuf), which here would be 0xA4800 bytes of the game's: on the Dreamcast, of its 32 MB) */
+        Snd_SpuTransfer(bank->body, bank->spuAddr, bank->bodySize);
+#else
         Dma_SendToIop(gSndMgr->iopBuf, bank->body, bank->bodySize);
         Snd_SpuTransfer(gSndMgr->iopBuf, bank->spuAddr, bank->bodySize);
+#endif
         Snd_SpuTransferWait();
     } else {
         bank->uploading = 0;
@@ -427,7 +433,9 @@ void Snd_SendBank(SndBank *bank, s32 sync) {
 void Snd_Init(void) {
     gSndMgr = Heap_Alloc(sizeof(SndMgr), 0x20, 0, 2);
     memset(gSndMgr, 0, sizeof(SndMgr));
-    gSndMgr->iopBuf = IopHeap_Alloc(0xA4800);
+#ifndef PORT
+    gSndMgr->iopBuf = IopHeap_Alloc(0xA4800); /* (the port has no staging buffer: Snd_SendBank) */
+#endif
     SpuHeap_Init();
     sceSdRemoteInit();
     func_00296B48(5);
@@ -489,8 +497,12 @@ void Snd_Update(void) {
                 void *buf;
 
                 bank->uploading = 1;
+#ifdef PORT
+                buf = bank->body; /* (as Snd_SendBank: no staging) */
+#else
                 buf = gSndMgr->iopBuf;
                 Dma_SendToIop(buf, bank->body, bank->bodySize);
+#endif
                 Snd_SpuTransfer(buf, bank->spuAddr, bank->bodySize);
                 break;
             }

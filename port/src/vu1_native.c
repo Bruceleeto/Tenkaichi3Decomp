@@ -11,6 +11,7 @@
  * the unit does. The chains' shape is the one the offline audit found in every asset (port/ps2_offline_audit.txt
  * section 2): one "ret" tag, UNPACK V4-32 of a header at TOPS + 0 and of the vertices behind it, MSCNT.
  */
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -21,6 +22,7 @@
 extern uint32_t *gDmaCur;                                                /* src/sys/dma.c: the display list's cursor */
 extern int Gs_Defers(void);                                              /* gs/gs_walk.c */
 extern void *Gs_DeferPush(uint32_t bytes, void (*fn)(const void *), uint32_t at);
+extern uint32_t Gs_DeferGen(void);
 
 /* ---------------------------------------------------------------------------------------------- arithmetic */
 
@@ -1059,44 +1061,61 @@ int Vu1Native_Prog8(const void *chain, const void *consts) {
 
 /* A draw queued with the list (gs/gs_walk.c Gs_DeferPush) and made when the list is, as the PS2's VU1 runs a chain
    when the list reaches it: the chain read then (the model's own data, there until the list is drawn, as the PS2's
-   DMA reads it then too), the constants and the followed GS state as they were when it was queued, the textures by
-   the handles they had then (Port_TexNotes). No triangles are kept: a frame's would be some MB. */
+   DMA reads it then too), the constants and the followed GS state as they were when it was queued (Vu1Body), the
+   textures by the handles they had then (Port_TexNotes). No triangles are kept: a frame's would be some MB. A draw
+   whose state and constants are those of one queued before it in the same list (a stage's meshes, all under the
+   constants of one Vu1Pkt_LoadProg4) keeps none of its own and names that one's (body): 40 bytes or so instead of
+   320 (a block queued stays where it is until the list is drawn). */
 typedef struct Vu1Defer {
     const void *chain;
-    RndSnap st;
+    const void *body; /* NULL: its Vu1Body follows; else the one of the draw it shares it with */
     uint8_t stat;   /* VU1N_ */
-    uint8_t notes;  /* RndTexNote behind the constants */
+    uint8_t notes;  /* RndTexNote at the end */
     uint16_t nk;    /* floats of constants */
-    float k[];
 } Vu1Defer;
 
 #define DEFER_MAX_K 108
-static union {
-    Vu1Defer d;
-    uint64_t align[(sizeof(Vu1Defer) + DEFER_MAX_K * 4 + NOTE_MAX * sizeof(RndTexNote)) / 8 + 2];
-} sStage;
+typedef struct Vu1Body {
+    RndSnap st;
+    float k[DEFER_MAX_K]; /* (nk of them kept) */
+} Vu1Body;
 
-static RndTexNote *notes_of(const Vu1Defer *m) {
-    return (RndTexNote *)((uintptr_t)((const uint8_t *)m->k + m->nk * 4 + 7) & ~(uintptr_t)7);
+#define HDR_BYTES ((sizeof(Vu1Defer) + 7) & ~(size_t)7)
+#define BODY_BYTES(nk) ((offsetof(Vu1Body, k) + (nk) * 4 + 7) & ~(size_t)7)
+
+static const Vu1Body *body_of(const Vu1Defer *m) {
+    return m->body != NULL ? (const Vu1Body *)m->body : (const Vu1Body *)((const uint8_t *)m + HDR_BYTES);
 }
 
-/* The walk of the draw m in mode (W_DRAW, W_NOTE). */
-static void run(const Vu1Defer *m, int mode) {
-    const float *k = m->k;
+static RndTexNote *notes_of(const Vu1Defer *m) {
+    return (RndTexNote *)((uint8_t *)m + HDR_BYTES + (m->body == NULL ? BODY_BYTES(m->nk) : 0));
+}
 
-    switch (m->stat) {
+/* The draw being queued, and the last one that kept its own Vu1Body: in which list (Gs_DeferGen), where. */
+static union {
+    Vu1Defer d;
+    uint64_t align[(HDR_BYTES + sizeof(Vu1Body) + NOTE_MAX * sizeof(RndTexNote)) / 8 + 1];
+} sStage;
+static Vu1Body sBody, sOwner;
+static const Vu1Body *sOwnerAt;
+static uint32_t sOwnerGen, sOwnerNk;
+static int sOwnerStat = -1;
+
+/* The walk of a draw of program stat (VU1N_) with constants k, in mode (W_DRAW, W_NOTE). */
+static void run(int stat, const void *chain, const float *k, int mode) {
+    switch (stat) {
     case VU1N_P0:
     case VU1N_P1:
     case VU1N_P2A:
     case VU1N_P2B: {
         FigWalk wk;
         memset(&wk, 0, sizeof(wk));
-        wk.prog = m->stat == VU1N_P0 ? 0 : m->stat == VU1N_P1 ? 1 : 2;
+        wk.prog = stat == VU1N_P0 ? 0 : stat == VU1N_P1 ? 1 : 2;
         wk.draw = mode;
         wk.k = k;
         wk.sc = k + 44;
-        wk.alt = m->stat == VU1N_P2B;
-        walk(m->chain, wk.prog == 2 ? p2_batch : fig_batch, &wk);
+        wk.alt = stat == VU1N_P2B;
+        walk(chain, wk.prog == 2 ? p2_batch : fig_batch, &wk);
         break;
     }
     case VU1N_P4:
@@ -1105,7 +1124,7 @@ static void run(const Vu1Defer *m, int mode) {
         memset(&wk, 0, sizeof(wk));
         wk.draw = mode;
         wk.c = k;
-        walk(m->chain, m->stat == VU1N_P4 ? p4_batch : p6_batch, &wk);
+        walk(chain, stat == VU1N_P4 ? p4_batch : p6_batch, &wk);
         break;
     }
     case VU1N_P7: {
@@ -1115,7 +1134,7 @@ static void run(const Vu1Defer *m, int mode) {
         memcpy(wk.cl, k + 16, sizeof(wk.cl));
         wk.alpha = k[32];
         wk.draw = mode;
-        walk(m->chain, p7_batch, &wk);
+        walk(chain, p7_batch, &wk);
         break;
     }
     case VU1N_P8: {
@@ -1124,7 +1143,7 @@ static void run(const Vu1Defer *m, int mode) {
         wk.draw = mode;
         wk.k = k;
         wk.sc = k + 40;
-        walk(m->chain, p8_batch, &wk);
+        walk(chain, p8_batch, &wk);
         break;
     }
     }
@@ -1133,39 +1152,55 @@ static void run(const Vu1Defer *m, int mode) {
 /* gs/gs_walk.c, where the list is drawn: the draw made, in the state it was queued in. */
 static void replay(const void *blob) {
     const Vu1Defer *m = (const Vu1Defer *)blob;
+    const Vu1Body *b = body_of(m);
     RndSnap now;
 
     Rnd_SnapTake(&now);
-    Rnd_SnapPut(&m->st);
+    Rnd_SnapPut(&b->st);
     Port_TexNotes(notes_of(m), m->notes);
-    run(m, W_DRAW);
+    run(m->stat, m->chain, b->k, W_DRAW);
     Port_TexNotes(NULL, 0);
     Rnd_SnapPut(&now);
 }
 
 static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2) {
     Vu1Defer *m = &sStage.d, *q;
-    uint32_t bytes;
+    uint32_t bytes, gen;
+    int shared;
 
-    m->chain = chain;
-    m->stat = (uint8_t)stat;
-    m->nk = (uint16_t)(nk + nk2);
-    memcpy(m->k, k, nk * 4);
+    memcpy(sBody.k, k, nk * 4);
     if (nk2 != 0) {
-        memcpy(m->k + nk, k2, nk2 * 4);
+        memcpy(sBody.k + nk, k2, nk2 * 4);
     }
-    m->notes = 0;
+    nk += nk2;
     if (Gs_Defers()) {
         sNoteN = sNoteFull = 0;
-        run(m, W_NOTE);
+        run(stat, chain, sBody.k, W_NOTE);
         if (!sNoteFull) {
-            Rnd_SnapTake(&m->st);
+            Rnd_SnapTake(&sBody.st);
+            gen = Gs_DeferGen();
+            shared = sOwnerStat == stat && sOwnerNk == nk && sOwnerGen == gen &&
+                     memcmp(&sOwner, &sBody, offsetof(Vu1Body, k) + nk * 4) == 0;
+            m->chain = chain;
+            m->body = shared ? sOwnerAt : NULL;
+            m->stat = (uint8_t)stat;
+            m->nk = (uint16_t)nk;
             m->notes = (uint8_t)sNoteN;
+            if (!shared) {
+                memcpy((uint8_t *)m + HDR_BYTES, &sBody, offsetof(Vu1Body, k) + nk * 4);
+            }
             memcpy(notes_of(m), sNote, sNoteN * sizeof(RndTexNote));
             bytes = (uint32_t)((const uint8_t *)(notes_of(m) + sNoteN) - (const uint8_t *)m);
             q = (Vu1Defer *)Gs_DeferPush(bytes, replay, Port_Addr(gDmaCur));
             if (q != NULL) { /* (NULL: no memory, said: made now) */
                 memcpy(q, m, bytes);
+                if (!shared) {
+                    memcpy(&sOwner, &sBody, offsetof(Vu1Body, k) + nk * 4);
+                    sOwnerAt = body_of(q);
+                    sOwnerStat = stat;
+                    sOwnerNk = nk;
+                    sOwnerGen = gen;
+                }
                 return;
             }
         } else {
@@ -1176,5 +1211,5 @@ static void submit(int stat, const void *chain, const float *k, unsigned nk, con
             }
         }
     }
-    run(m, W_DRAW);
+    run(stat, chain, sBody.k, W_DRAW);
 }

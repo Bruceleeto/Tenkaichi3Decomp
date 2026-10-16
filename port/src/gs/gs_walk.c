@@ -234,20 +234,31 @@ int Gs_TakesRecords(void) {
    queued is always the list being made: all of it goes to the walk when the list is handed over (Gs_RndTake), and
    it is dropped when the game starts the list again without sending it (Dma_ResetBuffers: Port_ListRestart). Two
    queues: the one the game fills, the one a walk (on the render thread, BT3_GS_THREAD) reads.
-   A draw made later (Gs_DeferPush: a model's mesh, port/src/vu1_native.c) is queued as what it needs to be made
-   (a block of the queue's own arena) and the function that makes it, called in its place when the queue is drawn:
-   its records drawn as they come (sReplay), none kept. */
+   Each entry is its place, its kind and its record, kept at its own size in the queue's chunks (an entry that held
+   the largest was 168 bytes, a frame's some MB on the Dreamcast with a model's every triangle): blocks of 32 KB
+   taken as the list grows and kept for the next lists, so that a record does not move once it is queued and the
+   queue is not copied to grow (two blocks at once, the old and the new).
+   A draw made later (Gs_DeferPush: a model's mesh, port/src/vu1_native.c) is queued as the function that makes it
+   and what it needs to be made, called in its place when the queue is drawn: its records drawn as they come
+   (sReplay), none kept. */
 typedef void (*RndDeferFn)(const void *);
 typedef struct RndCmd {
-    uint32_t at;       /* the address in the display list */
-    uint32_t kind;     /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value), 3 a draw made later */
-    union { RndQuad q; RndPoly p; uint64_t m[2]; struct { RndDeferFn fn; uint32_t ofs; } d; } r;
+    uint32_t at;      /* the address in the display list */
+    uint32_t kind;    /* 0 RndQuad, 1 RndPoly, 2 a marker (register, value), 3 a draw made later (its RndDeferFn,
+                         then its block) */
+    const uint8_t *d; /* its record */
 } RndCmd;
+#define CHUNK_DATA (32 * 1024 - 16)
+typedef struct RndChunk {
+    struct RndChunk *next;
+    uint32_t used;
+    uint64_t data[CHUNK_DATA / 8]; /* (8-aligned) */
+} RndChunk;
 typedef struct RndQueue {
     RndCmd *cmd;
     uint32_t n, cap, next; /* (next: the walk's) */
-    uint8_t *arena;        /* the blocks of the draws made later */
-    uint32_t used, size;
+    RndChunk *head, *cur;  /* its chunks; the one being filled (NULL: none yet in this list) */
+    uint32_t gen;          /* (the fill queue's: which list it holds, Gs_DeferGen) */
 } RndQueue;
 static RndQueue sRndFill, sRndWalk;
 static unsigned sMarksIn; /* markers queued (Port_Mark) since the last report */
@@ -259,36 +270,70 @@ void Port_BindUndo(void); /* port/src/gs_marker.c */
 void Port_BindKeep(void);
 void Port_ListRestart(void) {
     sRndFill.n = 0;
-    sRndFill.used = 0;
+    sRndFill.cur = NULL;
+    sRndFill.gen++;
     Port_BindUndo();
 }
 
-/* port/src/gs_marker.c Port_Quad, Port_Poly: record rec of kind (0 RndQuad, 1 RndPoly) at address `at` of the list
-   being made. 0 = not taken. */
-int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
+/* An entry of kind at `at` with `bytes` of the queue's chunks for its record (8-aligned); NULL: no memory (said). */
+static void *rnd_entry(int kind, uint32_t at, uint32_t bytes, const void *from) {
     RndQueue *f = &sRndFill;
+    RndChunk *c = f->cur;
+    uint32_t ofs;
+    if (bytes > CHUNK_DATA) {
+        sRndLost++;
+        Port_Lost("a record larger than a chunk of the queue (its bytes)", bytes, from);
+        return NULL;
+    }
+    if (f->n == f->cap) {
+        uint32_t cap = f->cap ? f->cap * 2 : 1024;
+        RndCmd *n = cap <= 1 << 20 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
+        if (n == NULL) {
+            sRndLost++;
+            Port_Lost("a record: the frame's queue is full (its records)", f->n, from);
+            return NULL;
+        }
+        f->cmd = n;
+        f->cap = cap;
+    }
+    if (c == NULL || ((c->used + 7) & ~7u) + bytes > CHUNK_DATA) { /* the next chunk: one kept, or a new one */
+        RndChunk *n = c != NULL ? c->next : f->head;
+        if (n == NULL) {
+            if ((n = malloc(sizeof(RndChunk))) == NULL) {
+                sRndLost++;
+                Port_Lost("a record: no memory for another chunk of the queue (its records)", f->n, from);
+                return NULL;
+            }
+            n->next = NULL;
+            if (c != NULL) { c->next = n; } else { f->head = n; }
+        }
+        n->used = 0;
+        f->cur = c = n;
+    }
+    ofs = (c->used + 7) & ~7u;
+    c->used = ofs + bytes;
+    f->cmd[f->n].at = at;
+    f->cmd[f->n].kind = (uint32_t)kind;
+    f->cmd[f->n].d = (const uint8_t *)c->data + ofs;
+    f->n++;
+    return (uint8_t *)c->data + ofs;
+}
+
+/* port/src/gs_marker.c Port_Quad, Port_Poly, Port_Mark: record rec of kind (0 RndQuad, 1 RndPoly, 2 a marker) at
+   address `at` of the list being made. 0 = not taken. */
+int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
+    uint32_t bytes = kind == 0 ? sizeof(RndQuad) : kind == 1 ? sizeof(RndPoly) : 16;
+    void *d;
     if (sReplay) {
         if (kind == 0) { GsGpu_Quad((const RndQuad *)rec); } else if (kind == 1) { GsGpu_Poly((const RndPoly *)rec); }
         else { Gs_Marker((uint32_t)((const uint64_t *)rec)[0], ((const uint64_t *)rec)[1]); }
         return 1;
     }
-    if (f->n == f->cap) {
-        uint32_t cap = f->cap ? f->cap * 2 : 1024;
-        RndCmd *c = cap <= 65536 ? realloc(f->cmd, cap * sizeof(RndCmd)) : NULL;
-        if (c == NULL) {
-            sRndLost++;
-            Port_Lost("a record: the frame's queue is full (its records)", f->n, __builtin_return_address(0));
-            return 0;
-        }
-        f->cmd = c;
-        f->cap = cap;
+    if ((d = rnd_entry(kind, at, bytes, __builtin_return_address(0))) == NULL) {
+        return 0;
     }
-    f->cmd[f->n].at = at;
-    f->cmd[f->n].kind = (uint32_t)kind;
-    if (kind == 0) { f->cmd[f->n].r.q = *(const RndQuad *)rec; } else if (kind == 1) { f->cmd[f->n].r.p = *(const RndPoly *)rec; }
-    else if (kind == 3) { /* (Gs_DeferPush fills it) */ }
-    else { memcpy(f->cmd[f->n].r.m, rec, 16); sMarksIn++; }
-    f->n++;
+    memcpy(d, rec, bytes);
+    sMarksIn += kind == 2;
     return 1;
 }
 
@@ -298,31 +343,22 @@ int Gs_Defers(void) {
     return sWalk == 3 && Gs_TakesRecords() && !sReplay;
 }
 
-/* A draw made later, at the address `at` of the list being made: `bytes` of the queue's arena for what it needs
-   (filled by the caller), fn called with them in its place when the queue is drawn. NULL: no memory (said). */
+/* A draw made later, at the address `at` of the list being made: `bytes` of the queue's chunks for what it needs
+   (filled by the caller; 8-aligned; there until the list is drawn), fn called with them in its place when the
+   queue is drawn. NULL: no memory (said). */
 void *Gs_DeferPush(uint32_t bytes, RndDeferFn fn, uint32_t at) {
-    RndQueue *f = &sRndFill;
-    uint32_t ofs = (f->used + 7) & ~7u;
-    if (ofs + bytes > f->size) {
-        uint32_t size = f->size ? f->size : 64 * 1024;
-        uint8_t *a;
-        while (ofs + bytes > size) { size *= 2; }
-        a = size <= 16 * 1024 * 1024 ? realloc(f->arena, size) : NULL;
-        if (a == NULL) {
-            sRndLost++;
-            Port_Lost("a draw made later: the frame's arena is full (its bytes)", f->used, __builtin_return_address(0));
-            return NULL;
-        }
-        f->arena = a;
-        f->size = size;
-    }
-    if (!Gs_RecordPush(NULL, 3, at)) {
+    uint8_t *d = rnd_entry(3, at, 8 + bytes, __builtin_return_address(0));
+    if (d == NULL) {
         return NULL;
     }
-    f->cmd[f->n - 1].r.d.fn = fn;
-    f->cmd[f->n - 1].r.d.ofs = ofs;
-    f->used = ofs + bytes;
-    return f->arena + ofs;
+    memcpy(d, &fn, sizeof(fn));
+    return d + 8;
+}
+
+/* Which list the queue being filled holds: another once it is handed over or started again (a list's blocks are
+   gone once it is drawn or started again: a block names only one of its own list). */
+uint32_t Gs_DeferGen(void) {
+    return sRndFill.gen;
 }
 
 /* The list at tadr is handed over: the queue being filled becomes the one the walk reads, as it is (its block
@@ -334,12 +370,14 @@ void Gs_RndTake(void) {
     *w = *f;
     w->next = 0;
     *f = t;
-    f->n = f->next = f->used = 0;
+    f->n = f->next = 0;
+    f->cur = NULL;
+    f->gen = w->gen + 1;
 }
 
 /* The walk has drawn the list, in the same call that handed it over (the Dreamcast; the PC's but for
-   gs_core.c's render thread): its block goes back to the queue to be filled, so that there is one (a frame's
-   records, a few MB on the Dreamcast) and not two. */
+   gs_core.c's render thread): its blocks go back to the queue to be filled, so that there is one of each and not
+   two. */
 static void rnd_walked(void) {
     RndQueue *f = &sRndFill, *w = &sRndWalk;
     if (f->n == 0 && w->cap > f->cap) {
@@ -349,23 +387,29 @@ static void rnd_walked(void) {
         w->cmd = NULL;
         w->cap = 0;
     }
-    if (f->used == 0 && w->size > f->size) {
-        free(f->arena);
-        f->arena = w->arena;
-        f->size = w->size;
-        w->arena = NULL;
-        w->size = 0;
+    if (f->n == 0 && f->head == NULL) { /* (the chunks to the queue to be filled; where it has its own, freed) */
+        f->head = w->head;
+    } else {
+        while (w->head != NULL) {
+            RndChunk *c = w->head;
+            w->head = c->next;
+            free(c);
+        }
     }
-    w->n = w->next = w->used = 0;
+    w->head = w->cur = NULL;
+    w->n = w->next = 0;
 }
 
 static void rnd_draw(const RndCmd *c) {
-    if (c->kind == 0) { GsGpu_Quad(&c->r.q); } else if (c->kind == 1) { GsGpu_Poly(&c->r.p); }
+    const uint8_t *d = c->d;
+    if (c->kind == 0) { GsGpu_Quad((const RndQuad *)d); } else if (c->kind == 1) { GsGpu_Poly((const RndPoly *)d); }
     else if (c->kind == 3) {
+        RndDeferFn fn;
+        memcpy(&fn, d, sizeof(fn));
         sReplay = 1;
-        c->r.d.fn(sRndWalk.arena + c->r.d.ofs);
+        fn(d + 8);
         sReplay = 0;
-    } else { Gs_Marker((uint32_t)c->r.m[0], c->r.m[1]); }
+    } else { Gs_Marker((uint32_t)((const uint64_t *)d)[0], ((const uint64_t *)d)[1]); }
 }
 
 /* The walk is at the DMA tag at tadr: the records queued in front of it. */
@@ -383,7 +427,8 @@ void Gs_RndRest(void) {
         rnd_draw(&w->cmd[w->next++]);
         sRndLate++;
     }
-    w->n = w->next = w->used = 0;
+    w->n = w->next = 0;
+    w->cur = NULL;
     if ((sRndLate != 0 || sRndLost != 0) && getenv("BT3_GS_VERBOSE") != NULL) {
         fprintf(stderr, "rnd: frame %u: %u records not met by the walk (drawn last), %u not queued (no memory)\n", sFrame, sRndLate, sRndLost);
     }

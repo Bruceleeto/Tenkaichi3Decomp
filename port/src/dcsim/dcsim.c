@@ -12,6 +12,8 @@
  *   BT3_DCSIM_MB=<n>   as if it had n MB (default 32: the 32 MB mod; the stock console has 16)
  *   BT3_DCSIM_LOG=1    every block of 32 KB or more, with who asked for it (addr2line -e port/build/bt3-dcsim)
  *
+ * At the first block refused: the blocks in use then, by who asked for them (live_dump).
+ *
  * Not counted: KallistiOS's blocks after the start (estimated in DCSIM_KOS_BYTES), newlib's own beyond the
  * buffer of an open file (charged here at fopen), the C library's blocks made inside it (strdup and the like).
  * After the idea of iortcw's DCSIM (SP/code/sys/dcsim_malloc.c).
@@ -148,9 +150,87 @@ static void init(void) {
     signal(SIGTERM, on_term);
 }
 
+/* The blocks in use and who asked for each (an open table by address; full: no longer kept). */
+#define LIVE_SLOTS 65536
+static struct { void *p; void *from; uint32_t size; } sLive[LIVE_SLOTS];
+static int sLiveFull;
+
+static unsigned live_slot(const void *p) {
+    return (unsigned)(((uintptr_t)p >> 3) * 2654435761u) & (LIVE_SLOTS - 1);
+}
+
+static void live_add(void *p, size_t size, void *from) {
+    unsigned i = live_slot(p), n;
+    for (n = 0; n < LIVE_SLOTS && sLive[i].p != NULL && sLive[i].p != (void *)1; n++) {
+        i = (i + 1) & (LIVE_SLOTS - 1);
+    }
+    if (n == LIVE_SLOTS) {
+        sLiveFull = 1;
+        return;
+    }
+    sLive[i].p = p;
+    sLive[i].from = from;
+    sLive[i].size = (uint32_t)size;
+}
+
+static void live_drop(const void *p) {
+    unsigned i = live_slot(p), n;
+    for (n = 0; n < LIVE_SLOTS && sLive[i].p != NULL; n++) {
+        if (sLive[i].p == p) {
+            sLive[i].p = (void *)1; /* (a tombstone) */
+            return;
+        }
+        i = (i + 1) & (LIVE_SLOTS - 1);
+    }
+}
+
+/* the blocks in use, summed by who asked for them, the largest sums first */
+static void live_dump(void) {
+    enum { CALLERS = 512 };
+    static struct { void *from; uint32_t bytes, count; } c[CALLERS];
+    unsigned i, j, n = 0, total = 0;
+    for (i = 0; i < LIVE_SLOTS; i++) {
+        if (sLive[i].p == NULL || sLive[i].p == (void *)1) {
+            continue;
+        }
+        total += sLive[i].size;
+        for (j = 0; j < n && c[j].from != sLive[i].from; j++) {
+        }
+        if (j == n && n < CALLERS) {
+            c[n].from = sLive[i].from;
+            c[n].bytes = c[n].count = 0;
+            n++;
+        }
+        if (j < n) {
+            c[j].bytes += sLive[i].size;
+            c[j].count++;
+        }
+    }
+    for (i = 0; i < n; i++) { /* (by bytes, largest first) */
+        for (j = i + 1; j < n; j++) {
+            if (c[j].bytes > c[i].bytes) {
+                void *f = c[i].from;
+                uint32_t b = c[i].bytes, k = c[i].count;
+                c[i] = c[j];
+                c[j].from = f;
+                c[j].bytes = b;
+                c[j].count = k;
+            }
+        }
+    }
+    printf("DCSIM: in use when it ran out: %u K in %u places%s\n", total >> 10, n, sLiveFull ? " (not all: the table was full)" : "");
+    for (i = 0; i < n && i < 24; i++) {
+        printf("DCSIM:   %6u bytes in %4u blocks for %p\n", (unsigned)c[i].bytes, (unsigned)c[i].count, c[i].from);
+    }
+    fflush(stdout);
+}
+
 /* a block that did not fit: said for the first ones (code that tries again each frame would fill the log) */
 static void refused(size_t size, void *from, const char *how) {
     static unsigned count;
+    if (count == 0) {
+        live_dump();
+    }
     if (count++ < 20) {
         printf("DCSIM: no block of %u bytes for %p%s (%u K in use)%s\n", (unsigned)size, from, how, (unsigned)(sInUse >> 10),
                count == 20 ? "; no more of these are said" : "");
@@ -164,6 +244,7 @@ static void *given(void *p, size_t size, void *from) {
         return NULL;
     }
     sInUse += dl_malloc_usable_size(p);
+    live_add(p, dl_malloc_usable_size(p), from);
     if (sInUse > sPeak) {
         sPeak = sInUse;
     }
@@ -175,6 +256,7 @@ static void *given(void *p, size_t size, void *from) {
 
 static void taken_back(void *p) {
     sInUse -= dl_malloc_usable_size(p);
+    live_drop(p);
 }
 
 void *dcsim_malloc(size_t size) {
@@ -214,10 +296,14 @@ void *dcsim_realloc(void *p, size_t size) {
                 refused(size, __builtin_return_address(0), " (a realloc)");
             } else {
                 sInUse -= was; /* (freed) */
+                live_drop(p);
             }
             return NULL;
         }
         sInUse -= was;
+        if (p != NULL) {
+            live_drop(p);
+        }
         return given(q, size, __builtin_return_address(0));
     }
 }

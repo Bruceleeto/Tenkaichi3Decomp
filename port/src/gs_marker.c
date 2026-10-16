@@ -29,7 +29,7 @@ int gRndCtxValid;
 
 /* What the renderer was handed on the records path and did not take, where the PS2 packet the game then builds is
    not read (Port_ListRead 0: the Dreamcast, BT3_WALK=3 on PC): it is not drawn. Never silent: an error on stderr
-   once per place it came from (`from`: the code that asked), and counted (gPortLost). `what` says what was lost,
+   once per place it came from (`from`: the code that asked) and what it says, and counted (gPortLost). `what` says what was lost,
    `why` the decliner's reason (its bits). Where the list is read the packet is drawn instead: nothing to say. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +40,7 @@ extern int dladdr(const void *addr, PortDlInfo *info);
 unsigned gPortLost;
 
 void Port_Lost(const char *what, uint32_t why, const void *from) {
-    static const void *seen[256];
+    static struct { const void *from; const char *what; } seen[256];
     static unsigned nSeen;
     char name[160];
     unsigned i;
@@ -50,12 +50,13 @@ void Port_Lost(const char *what, uint32_t why, const void *from) {
     }
     gPortLost++;
     for (i = 0; i < nSeen; i++) {
-        if (seen[i] == from) {
+        if (seen[i].from == from && seen[i].what == what) {
             return;
         }
     }
     if (nSeen < sizeof(seen) / sizeof(seen[0])) {
-        seen[nSeen++] = from;
+        seen[nSeen].from = from;
+        seen[nSeen++].what = what;
     }
     snprintf(name, sizeof(name), "0x%08x", (unsigned)(uintptr_t)from);
 #if defined(__linux__)

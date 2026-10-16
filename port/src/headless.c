@@ -122,7 +122,11 @@ int __wrap_Progress_Main(int arg) {
     port_stage_replace_init();
     path = getenv("BT3_REPLAY");
 
+#ifdef BT3_DC_DEMO /* (make -f Makefile.dc DC_DEMO=1: the Dreamcast has no environment to say it) */
+    if (0) {
+#else
     if (path == NULL && getenv("BT3_DEMO") == NULL) {
+#endif
         {
             int r;
             /* An online session (gs/net.c) goes straight to the versus mode's character select, with the game's

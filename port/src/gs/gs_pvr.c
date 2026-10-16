@@ -1326,6 +1326,8 @@ static void draw_log(int shown) {
 }
 
 extern unsigned gRndOtStat[4]; /* rnd_gs.c */
+static uint32_t sPalKept, sPalUsed, sPalUsedPeak; /* the palettes' colours: the blocks kept for them (pal_col_new), the
+                                                   slots in use, and the most */
 
 static void frame_end(void) {
     int i, shown;
@@ -1333,9 +1335,9 @@ static void frame_end(void) {
     GsGpu_TitlePoll();
     GsDraw_Events();
     if (getenv("BT3_GS_VERBOSE") != NULL && gGsFrame % 30 == 0) {
-        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing (%u whose palette was no longer at its CBP; %u bindings, at most %u); ordering table: %u packets, %u decoded, %u records, %u nodes read as GS packets\n",
+        fprintf(stderr, "pvr: frame %u: %u draws, %u vertices, %d targets, %d textures + %u native (%u KB in PVR memory, at most %u KB; %u palette banks taken in use), %d pipelines; not native: %u draws with nothing at the block, %u not converted, %u of another size, %u uploads, %u palette uploads (records: %u not 4/8-bit, %u packet, %u not in the pack, %u size, %u full); palettes made: %u from tex.pak, %u read out of GS memory; %u draws tinted; %u native let go of PVR memory; %u records from GS memory, %u by TEX0 alone, %u whose handle named nothing (%u whose palette was no longer at its CBP; %u bindings, at most %u); ordering table: %u packets, %u decoded, %u records, %u nodes read as GS packets; palettes' colours: %u KB kept, %u KB in use (at most %u)\n",
                 gGsFrame, gsDrawCount, gsVertCount + gsVuVertCount, gsTargetCount, gsTexCount, sNatLive, sTexBytes >> 10, sTexPeak >> 10, sNatSteal, sPipeCount,
-                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, gRndRebound, gRndBindLive, gRndBindPeak, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2], gRndOtStat[3]);
+                sNatMiss[0], sNatMiss[1], sNatMiss[2], sNatMiss[3], sPalMiss, sNatWhy[0], sNatWhy[1], sNatWhy[2], sNatWhy[3], sNatWhy[4], sPalMade[0], sPalMade[1], sTintDraws, sNatEvicted, gsRndFallback, gsRndByTex0, gsRndHandleMiss, gRndRebound, gRndBindLive, gRndBindPeak, gRndOtStat[0], gRndOtStat[1], gRndOtStat[2], gRndOtStat[3], sPalKept >> 10, sPalUsed >> 10, sPalUsedPeak >> 10);
         sTintDraws = 0;
         gRndOtStat[0] = gRndOtStat[1] = gRndOtStat[2] = gRndOtStat[3] = 0;
         gsRndFallback = gsRndByTex0 = gsRndHandleMiss = 0;
@@ -1416,7 +1418,9 @@ typedef struct NatTex {
     int isView;        /* an 8-bit view of a direct one: its pak the view's, vw x vh of it at the corner */
     uint32_t vw, vh;
     uint16_t gen;      /* the record's use: a handle names it with this (Port_TexNative), and outlives it */
+    uint8_t why;       /* none: why (NAT_*), for what Port_TexNative says */
 } NatTex;
+enum { NAT_MISSING, NAT_FORMAT, NAT_PACKET, NAT_SIZE, NAT_NO_PVR, NAT_UNREAD };
 #define KEY_DIRECT 0x9E3779B97F4A7C15ull /* (as port/tools/dc_tex.c) */
 #define KEY_T8     0xC2B2AE3D27D4EB4Full
 /* A texture's key: its upload's hash and the shape TEX0 reads it as (TBW, PSM, TW, TH): one upload drawn as two
@@ -1494,7 +1498,6 @@ static NatTex *nat_get(uint8_t *e) {
     uint64_t t0, key;
     NatTex *n;
     int k;
-    uint8_t *data;
 
     for (i = sNatHash[NAT_HASH(addr)]; i != 0; i = sNat[i - 1].next) {
         if (sNat[i - 1].e == addr) {
@@ -1521,10 +1524,10 @@ static NatTex *nat_get(uint8_t *e) {
     n->viewPak = -1;
     if (psm == 0x00 || psm == 0x01 || psm == 0x02 || psm == 0x0A) { /* 16-bit PVR texels, and its 8-bit view */
         uint32_t fmt, vb;
-        if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; return n; }
+        if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; n->why = NAT_PACKET; return n; }
         key = KEY_SHAPE(key, t0);
         if ((k = TexPak_Find(key ^ KEY_DIRECT, &w, &h, &bits)) < 0) { goto missing; }
-        if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != 16) { sNatWhy[3]++; return n; }
+        if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != 16) { sNatWhy[3]++; n->why = NAT_SIZE; return n; }
         fmt = TexPak_Psm(k) >> 6;
         n->direct = 1;
         n->pak = k;
@@ -1533,8 +1536,8 @@ static NatTex *nat_get(uint8_t *e) {
         n->t.pw = w; n->t.ph = h;
         n->t.fmt = (fmt == 0 ? PVR_TXRFMT_ARGB1555 : fmt == 1 ? PVR_TXRFMT_RGB565 : PVR_TXRFMT_ARGB4444) | PVR_TXRFMT_TWIDDLED;
         if ((n->viewPak = TexPak_Find(key ^ KEY_T8, &n->vw, &n->vh, &vb)) >= 0 && vb != 8) { n->viewPak = -1; }
-        if ((n->t.mem = pvr_alloc(n->t.bytes, "the direct entry", addr)) == NULL) { return n; }
-        if (!nat_fill(n)) { pvr_mem_free(n->t.mem); n->t.mem = NULL; return n; }
+        if ((n->t.mem = pvr_alloc(n->t.bytes, "the direct entry", addr)) == NULL) { n->why = NAT_NO_PVR; return n; }
+        if (!nat_fill(n)) { pvr_mem_free(n->t.mem); n->t.mem = NULL; n->why = NAT_UNREAD; return n; }
         n->t.base = n->t.mem;
         n->none = 0;
         sTexBytes += n->t.bytes;
@@ -1542,12 +1545,13 @@ static NatTex *nat_get(uint8_t *e) {
         if (sTexBytes > sTexPeak) { sTexPeak = sTexBytes; }
         return n;
     }
-    if (psm != 0x13 && psm != 0x14) { sNatWhy[0]++; return n; }
-    if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; return n; }
+    if (psm != 0x13 && psm != 0x14) { sNatWhy[0]++; n->why = NAT_FORMAT; return n; }
+    if (!pkt_key(Port_Ptr(rd32(e + 0x38)), rd32(e + 8), rd32(e + 0x18), &key, 0, NULL)) { sNatWhy[1]++; n->why = NAT_PACKET; return n; }
     key = KEY_SHAPE(key, t0);
     if ((k = TexPak_Find(key, &w, &h, &bits)) < 0) {
     missing:
         sNatWhy[2]++;
+        n->why = NAT_MISSING;
         if (getenv("BT3_TEX_LOG") != NULL) { /* (to find where it came from: its packet's bytes from 0x60) */
             const uint8_t *q = Port_Ptr(rd32(e + 0x38));
             uint32_t j, sz = rd32(e + 8);
@@ -1557,20 +1561,15 @@ static NatTex *nat_get(uint8_t *e) {
         }
         return n;
     }
-    if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != (psm == 0x14 ? 4u : 8u)) { sNatWhy[3]++; return n; }
+    if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != (psm == 0x14 ? 4u : 8u)) { sNatWhy[3]++; n->why = NAT_SIZE; return n; }
     bytes = bits == 4 ? w * h / 2 : 2048 + w * h; /* (8-bit: the codebook, then the indices) */
-    data = TexPak_Read(k);
-    n->t.mem = data != NULL ? pvr_alloc(bytes, bits == 4 ? "the 4-bit entry" : "the 8-bit entry", addr) : NULL;
-    if (n->t.mem == NULL) {
-        free(data);
-        return n;
-    }
-    pvr_txr_load(data, (uint8_t *)n->t.mem + (bits == 4 ? 0 : 2048), w * h * bits / 8);
-    free(data);
-    n->none = 0;
     n->pak = k;
     n->psm = psm; n->tw = tw; n->th = th; n->bits = bits;
-    n->t.w = w; n->t.h = h; n->t.format = GS_TEXFMT_RGBA8; n->t.bytes = bytes; n->t.base = n->t.mem;
+    n->t.w = w; n->t.h = h; n->t.format = GS_TEXFMT_RGBA8; n->t.bytes = bytes;
+    if ((n->t.mem = pvr_alloc(bytes, bits == 4 ? "the 4-bit entry" : "the 8-bit entry", addr)) == NULL) { n->why = NAT_NO_PVR; return n; }
+    if (!nat_fill(n)) { pvr_mem_free(n->t.mem); n->t.mem = NULL; n->why = NAT_UNREAD; return n; }
+    n->none = 0;
+    n->t.base = n->t.mem;
     n->t.pw = bits == 4 ? w : w * 2;
     n->t.ph = bits == 4 ? h : h * 2;
     n->t.fmt = bits == 4 ? PVR_TXRFMT_PAL4BPP | PVR_TXRFMT_TWIDDLED : PVR_TXRFMT_ARGB4444 | PVR_TXRFMT_TWIDDLED | PVR_TXRFMT_VQ_ENABLE;
@@ -1591,8 +1590,12 @@ int Port_TexNative(void *e, int tbp) {
     NatTex *n;
     if (!nat_on()) { return 0; }
     if ((n = nat_get(e)) == NULL || n->none) {
+        static const char *const kWhy[] = {
+            "a texture not in tex.pak (its entry's address)", "a texture of a format tex.pak does not have (its entry's address)",
+            "a texture whose upload packet was not read (its entry's address)", "a texture of another size in tex.pak (its entry's address)",
+            "a texture: no PVR memory for it (its entry's address)", "a texture: tex.pak could not be read (its entry's address)"};
         sNatMiss[3]++;
-        Port_Lost("a texture not in tex.pak (its entry's address)", Port_Addr(e), __builtin_return_address(0));
+        Port_Lost(n == NULL ? "a texture: no record for it (MAX_NAT; its entry's address)" : kWhy[n->why], Port_Addr(e), __builtin_return_address(0));
         return 0;
     }
     blocks = (uint32_t)(n - sNat + 1) | ((n->tw * n->th * n->bits / 8 + 255) / 256) << 16; /* (the blocks it covers) */
@@ -1619,6 +1622,43 @@ typedef struct NatPal {
                         + 1, at addr + 1 + k: the font's, src/battle/col_c.c Font_MakeTex0) */
 } NatPal;
 static NatPal sPal[MAX_PAL];
+
+/* The palettes' colours: out of blocks of PAL_BLOCK bytes kept for them, in slots of 1 KB (256 colours) and of 64
+   bytes (16), a free list for each; not a block of their own each (hundreds of small ones that chop the memory up).
+   sPalKept: the blocks taken (BT3_GS_VERBOSE says it). */
+#define PAL_BLOCK 16384
+static void *sPalFree[2];
+
+static uint32_t *pal_col_new(uint32_t n) {
+    int big = n == 256;
+    uint32_t size = big ? 1024 : 64, i;
+    void *p;
+    if (sPalFree[big] == NULL) {
+        uint8_t *b = malloc(PAL_BLOCK);
+        if (b == NULL) {
+            Port_Lost("a palette: no memory for another block of palettes' colours (PAL_BLOCK)", PAL_BLOCK, __builtin_return_address(0));
+            return NULL;
+        }
+        sPalKept += PAL_BLOCK;
+        for (i = 0; i < PAL_BLOCK; i += size) {
+            *(void **)(b + i) = sPalFree[big];
+            sPalFree[big] = b + i;
+        }
+    }
+    p = sPalFree[big];
+    sPalFree[big] = *(void **)p;
+    sPalUsed += size;
+    if (sPalUsed > sPalUsedPeak) { sPalUsedPeak = sPalUsed; }
+    return p;
+}
+
+static void pal_col_free(uint32_t *col, uint32_t n) {
+    if (col != NULL) {
+        sPalUsed -= n == 256 ? 1024 : 64;
+        *(void **)col = sPalFree[n == 256];
+        sPalFree[n == 256] = col;
+    }
+}
 static uint16_t sPalHash[MAX_PAL];
 static uint32_t sPalGen;
 #define PAL_HASH(addr) (((addr) >> 4) * 2654435761u >> 21 & (MAX_PAL - 1))
@@ -1645,7 +1685,7 @@ static void pal_split(NatPal *p) {
     uint32_t k, j;
     for (k = 0; k < 4; k++) {
         NatPal *q = pal_new(p->addr + 1 + k);
-        if (q == NULL || (q->col = malloc(16 * 4)) == NULL) { if (q != NULL) { Port_TexFreed(q->addr, q->addr + 1); } return; }
+        if (q == NULL || (q->col = pal_col_new(16)) == NULL) { if (q != NULL) { Port_TexFreed(q->addr, q->addr + 1); } return; }
         q->pak = p->pak;
         q->n = 16;
         for (j = 0; j < 16; j++) {
@@ -1701,7 +1741,18 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         }
         p->sample = pal_sample(pkt, (uint32_t)size);
         if (pkt_key(pkt, (uint32_t)size, blt, &key, 1, &img) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
-            (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63) && (p->col = TexPak_Read(k)) != NULL) {
+            (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63)) {
+            if ((p->col = pal_col_new(w)) == NULL || !TexPak_ReadInto(k, p->col, w * 4)) {
+                /* (no memory for it, said by pal_col_new, or the file failed: not kept, asked again next time) */
+                if (p->col != NULL && !sPalAsk) {
+                    Port_Lost("a palette: tex.pak could not be read (its packet's address)", addr, __builtin_return_address(0));
+                }
+                pal_col_free(p->col, w);
+                p->col = NULL;
+                Port_TexFreed(addr, addr + 1);
+                sPalMiss += !sPalAsk;
+                return 0;
+            }
             p->pak = k;
             p->n = w;
             if (TexPak_Psm(k) == 0 && img + 64 <= (const uint8_t *)pkt + size) { pal_alphas(p, img); }
@@ -1776,7 +1827,7 @@ void Port_TexFreed(uint32_t lo, uint32_t hi) {
         if (q->addr == 0 || q->addr < lo || q->addr >= hi) { continue; }
         for (p = &sPalHash[PAL_HASH(q->addr)]; *p != i + 1; p = &sPal[*p - 1].next) {}
         *p = q->next;
-        free(q->col);
+        pal_col_free(q->col, q->n);
         q->col = NULL;
         q->addr = 0;
     }
@@ -1802,25 +1853,41 @@ static int nat_evict(void) {
     return 1;
 }
 
-/* n's texels from the pack into its PVR memory (8-bit: after the codebook; a view: its vw x vh at the corner of
-   the draw's size, twiddled). 0 = not read. */
-static int nat_fill(NatTex *n) {
-    uint8_t *data = TexPak_Read(n->pak);
-    uint32_t off = n->direct || n->bits == 4 ? 0 : 2048;
-    if (data == NULL) { return 0; }
-    if (n->isView) {
-        uint8_t *tw = calloc(1, n->t.w * n->t.h);
-        uint32_t x, y;
-        if (tw == NULL) { free(data); return 0; }
-        for (y = 0; y < n->vh && y < n->t.h; y++) {
-            for (x = 0; x < n->vw && x < n->t.w; x++) { tw[twiddle_index(x, y, n->t.w, n->t.h)] = data[y * n->vw + x]; }
+/* the pack's pieces straight into PVR memory (ctx: where the data goes) */
+static void put_pvr(void *ctx, const uint8_t *piece, uint32_t at, uint32_t n) {
+    pvr_txr_load(piece, (uint8_t *)ctx + at, n);
+}
+
+/* an 8-bit view's rows (vw x vh, in pieces of whole pairs of rows) into the corner of its twiddled w x h: in a
+   twiddled 8-bit texture rows 2k and 2k + 1 of a column are side by side, one 16-bit write */
+typedef struct { uint8_t *mem; uint32_t w, h, vw; } ViewPut;
+static void put_view(void *ctx, const uint8_t *piece, uint32_t at, uint32_t n) {
+    ViewPut *v = ctx;
+    uint32_t y = at / v->vw, rows = n / v->vw, r, x;
+    for (r = 0; r < rows && y < v->h; r += 2, y += 2) {
+        const uint8_t *a = piece + r * v->vw, *b = r + 1 < rows ? a + v->vw : NULL;
+        for (x = 0; x < v->vw && x < v->w; x++) {
+            *(volatile uint16_t *)(v->mem + twiddle_index(x, y, v->w, v->h)) = (uint16_t)(a[x] | (b != NULL ? b[x] : 0) << 8);
         }
-        free(data);
-        data = tw;
     }
-    pvr_txr_load(data, (uint8_t *)n->t.mem + off, n->t.bytes - off);
-    free(data);
-    return 1;
+}
+
+/* n's texels from the pack into its PVR memory, a piece at a time (8-bit: after the codebook; a view: its vw x vh
+   at the corner of the draw's size, twiddled, the rest 0). 0 = not read (said). */
+static int nat_fill(NatTex *n) {
+    uint32_t off = n->direct || n->bits == 4 ? 0 : 2048, i;
+    uint8_t *mem = (uint8_t *)n->t.mem + off;
+    int ok;
+    if (n->isView) {
+        ViewPut v;
+        v.mem = mem; v.w = n->t.w; v.h = n->t.h; v.vw = n->vw;
+        for (i = 0; i < n->t.bytes - off; i += 4) { *(volatile uint32_t *)(mem + i) = 0; }
+        ok = TexPak_Bytes(n->pak) == n->vw * n->vh && TexPak_Stream(n->pak, 2 * n->vw, put_view, &v);
+    } else {
+        ok = TexPak_Bytes(n->pak) == n->t.bytes - off && TexPak_Stream(n->pak, 32, put_pvr, mem);
+    }
+    if (!ok) { Port_Lost("a texture: tex.pak could not be read, or not at the size the record has (its number in the pack)", (uint32_t)n->pak, __builtin_return_address(0)); }
+    return ok;
 }
 
 /* A native one that let go of its PVR memory, read again. 0 = no room. */

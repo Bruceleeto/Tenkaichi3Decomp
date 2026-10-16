@@ -214,7 +214,7 @@ DCSIM_O  := $(BUILD)/dcsim/dcsim.o
 DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o)
 $(BUILD)/dcsim/obj/gs_%.o: port/src/gs/%.c | $(GEN_GS)/.stamp
 	mkdir -p $(BUILD)/dcsim/obj
-	$(CC) $(GS_CFLAGS) -DBT3_DCSIM -DBT3_NO_RTT $< -o $@
+	$(CC) $(filter-out -DPORT_GS_REF,$(GS_CFLAGS)) -DBT3_DCSIM -DBT3_NO_RTT $< -o $@
 $(BUILD)/dcsim/obj/gs_gs_pvr.o: GS_CFLAGS += $(PVR_INC)
 $(DCSIM_O): port/src/dcsim/dcsim.c port/src/dcsim/dcsim_mallocr.inc $(DC_ELF)
 	mkdir -p $(BUILD)/dcsim
@@ -243,4 +243,4 @@ clean:
 distclean: clean
 	rm -rf asm disc $(VENV)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(DCSIM_GS:.o=.d)
