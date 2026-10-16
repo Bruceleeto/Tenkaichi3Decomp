@@ -647,6 +647,39 @@ int Rnd_DrawStrip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_
     return 1;
 }
 
+int Rnd_Direct(RndDirect *o, const RndPoly *h, int ctx, int abe, int gouraud, uint32_t tris, uint32_t verts) {
+    RndPoly p;
+    int r;
+
+    ctx &= 1;
+    if (!Port_StripTakes()) {
+        return 0;
+    }
+    if (!Port_TakesRecords()) {
+        return 0;
+    }
+    if (gRndCtxBad[ctx] != 0) {
+        return 0; /* (Rnd_DrawStrip's: it reports it) */
+    }
+    p = *h;
+    {
+        uint16_t vu = (uint16_t)(p.st.flags & RND_VU);
+        p.st = gRndCtx[ctx];
+        p.st.flags = (uint16_t)((p.st.flags & ~(RND_GOURAUD | RND_VU)) | (gouraud ? RND_GOURAUD : 0) | vu);
+    }
+    if (!abe) {
+        p.st.blend = RND_BLEND_NONE;
+    }
+    p.gsCtx = (uint32_t)ctx;
+    if ((r = Port_Direct(o, &p, tris, verts)) == 1) {
+        /* (Rnd_Vtx's offset, in pixels; from a 32-bit integer: a 64-bit one's conversion is libgcc's x87 one, whose
+           result a soft-float caller never pops) */
+        o->xo = (float)(int32_t)(sXyOff[ctx] & 0xFFFF) / 16.0f;
+        o->yo = (float)(int32_t)((sXyOff[ctx] >> 32) & 0xFFFF) / 16.0f;
+    }
+    return r;
+}
+
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
     o->x = (float)((x & 0xFFFF) - (int32_t)(sXyOff[ctx & 1] & 0xFFFF)) / 16.0f;
     o->y = (float)((y & 0xFFFF) - (int32_t)((sXyOff[ctx & 1] >> 32) & 0xFFFF)) / 16.0f;

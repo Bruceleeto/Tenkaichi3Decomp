@@ -327,6 +327,7 @@ int Port_Poly(const RndPoly *p) {
 extern int Gs_Replaying(void); /* gs/gs_walk.c */
 extern int GsGpu_StripTakes(void); /* gs/gs_draw.c */
 extern void GsGpu_Strip(const RndPoly *p, const RndVtx *v, const uint8_t *adc, uint32_t n);
+extern int GsGpu_Direct(RndDirect *o, const RndPoly *p, uint32_t tris, uint32_t verts);
 int Port_StripTakes(void) {
     return Gs_Replaying() && GsGpu_StripTakes();
 }
@@ -355,6 +356,30 @@ int Port_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n
     }
     GsGpu_Strip(&r, v, adc, n);
     return 1;
+}
+
+/* Port_Strip's texture, for a strip made straight into the renderer's vertices (Rnd_Direct) */
+int Port_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) {
+    RndPoly r = *h;
+    if (!Gs_TakesRecords()) {
+        return 0;
+    }
+    if (r.gsTex0 != 0) {
+        unsigned i = 0;
+        if (sNotes != NULL && r.tex == 0) {
+            for (; i < sNoteN && sNotes[i].tex0 != r.gsTex0; i++) {
+            }
+        }
+        if (sNotes != NULL && r.tex == 0 && i < sNoteN) {
+            r.tex = sNotes[i].tex;
+            r.pal = sNotes[i].pal;
+        } else if (sNotes != NULL && r.tex == 0) {
+            return 0; /* (Port_Strip's: it reports it) */
+        } else {
+            bind_resolve(&r.tex, &r.pal, r.gsTex0);
+        }
+    }
+    return GsGpu_Direct(o, &r, tris, verts);
 }
 
 extern int Gs_MarksQueued(void); /* gs/gs_walk.c */

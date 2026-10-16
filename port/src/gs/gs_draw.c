@@ -1797,6 +1797,55 @@ void GsGpu_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t
 #endif
 }
 
+int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) {
+#if GS_STRIPS && defined(BT3_PVR)
+    GsDraw d;
+    GsTex g = 0;
+    uint32_t tw = 1, th = 1;
+    int r;
+
+    if (sBackend != &sPvrBackend || GS_INTERP > 0) {
+        return 0;
+    }
+    if (GS_NO_PICTURE) {
+        gStatPoly += tris;
+        return 2;
+    }
+    if (!(h->st.flags & RND_GOURAUD) || (h->tex & RND_TEX_TARGET)) {
+        return 0;
+    }
+    rnd_check(&h->st, h->gsCtx, h->tex != 0 || h->gsTex0 != 0);
+    if ((h->tex != 0 || h->gsTex0 != 0) && (g = rnd_tex(h->tex, h->pal, h->gsTex0, &tw, &th)) == 0) {
+        return 0;
+    }
+    if (!rnd_draw_state(&d, &h->st, g, h->gsTex0)) {
+        gStatPoly += tris;
+        return 2;
+    }
+    if (d.misc[1] != 0.0f) {
+        return 0; /* (the destination alpha test: its snapshot, date_snapshot) */
+    }
+    if ((r = GsPvr_Direct(o, &d, tris, verts)) == 0) {
+        return 0;
+    }
+    gStatPoly += tris;
+    if (r == 1) {
+        /* put()'s depth (GsGpu_Strip's), and draw_one's: above the background plane */
+        o->zk = 1.0f / 16777215.0f;
+        o->zo = (depth_frac() ? 0.0f : (float)(0.5 + GS_Z_LEAD) * o->zk) + 0.001f;
+        o->z0 = 0.001f;
+        o->z1 = 1.001f;
+        gStatDraw++;
+        gsTargets[d.target].draws++;
+        gsTargets[d.target].gen = gGsPageGen[gsTargets[d.target].fbp & 511];
+    }
+    return r;
+#else
+    (void)o; (void)h; (void)tris; (void)verts;
+    return 0;
+#endif
+}
+
 /* Vertex program 6 as a shader: one strip of the ground under a fighter, textured with the shadow page (see
    shaders/vu6.vert). Vertices: four quadwords each (position with an integer "no draw" flag in w, normal, colour
    as floats, a slot the original fills with s, t). A flagged vertex means: the triangle that ends here is not

@@ -115,6 +115,8 @@ typedef struct GsDraw {
 /* The Dreamcast's (and make dcsim's) strip draws (gs_draw.c GsGpu_Strip, gs_pvr.c strip_draw): 1 = a strip begins
    at this vertex of gsVerts. */
 #if defined(__DREAMCAST__) || defined(BT3_DCSIM)
+struct RndDirect;
+int GsPvr_Direct(struct RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts); /* gs_pvr.c */
 #define GS_STRIPS 1
 extern uint8_t gsVertRun[MAX_VERTS];
 #else

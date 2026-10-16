@@ -29,11 +29,22 @@ extern uint32_t Gs_DeferGen(void);
 #define VU_MAX 3.4028235e38f
 
 /* An overflowed float: the largest of its sign, as the unit gives it, instead of an infinity. */
-static float vu_clamp(float v) {
+#if defined(__DREAMCAST__) || defined(BT3_DCSIM)
+#define VU1_DIRECT 1 /* the strips made straight into the PVR's vertices (Rnd_Direct) */
+#else
+#define VU1_DIRECT 0
+#endif
+
+static inline float vu_clamp(float v) {
     union {
         float f;
         uint32_t u;
     } x;
+#if VU1_DIRECT
+    if (__builtin_expect(__builtin_fabsf(v) <= 3.40282347e38f, 1)) {
+        return v; /* (a float compare: the SH4 moves a float to an integer register only through memory) */
+    }
+#endif
     x.f = v;
     if ((x.u & 0x7F800000u) == 0x7F800000u) {
         x.u = (x.u & 0x80000000u) | 0x7F7FFFFFu;
@@ -269,6 +280,69 @@ static void note(uint32_t prim, uint64_t tex0) {
     Port_TexNote(&sNote[sNoteN++], tex0);
 }
 
+#if VU1_DIRECT
+/* A strip's corners straight into the PVR's (include/port/rnd.h Rnd_Direct): s[i] the screen position as the
+   program divided it (window coordinates, not yet the GS's 12.4), (u[i], t[i]) the texture coordinate (s / q),
+   col[i * step] the colour's integers (0x80 = 1). 1 = drawn, or nothing to draw; 0 = not taken (put_strip). */
+static RndPvrVtx sDirect[256] __attribute__((aligned(32)));
+
+static inline uint32_t direct_unit(int32_t c) {
+    c &= 0xFF;
+    return c >= 0x80 ? 255u : (uint32_t)c * 2u;
+}
+
+static int direct_strip(const float (*s)[4], const float *u, const float *t, const int32_t (*col)[4], uint32_t step,
+                        const uint8_t *adc, uint32_t n, uint32_t prim, uint64_t tex0) {
+    RndPoly h;
+    RndDirect d;
+    uint32_t k, tris = 0, verts = 0, run = 0, argb = 0;
+    int r;
+
+    for (k = 2; k < n; k++) {
+        if (adc[k]) {
+            run = 0;
+            continue;
+        }
+        tris++;
+        verts += run ? 1 : 3;
+        run = 1;
+    }
+    if (tris == 0) {
+        return 1;
+    }
+    memset(&h, 0, sizeof(h));
+    h.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+    h.st.flags = RND_VU;
+    if ((r = Rnd_Direct(&d, &h, (int)(prim >> 9) & 1, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1, tris, verts)) != 1) {
+        return r == 2;
+    }
+    for (k = 0; k < n; k++) {
+        RndPvrVtx *o = &sDirect[k];
+        float z = s[k][2] * d.zk + d.zo;
+        if (k == 0 || step) {
+            const int32_t *c = col[k * step];
+            argb = (d.fixa >= 0 ? (uint32_t)d.fixa : direct_unit(c[3])) << 24 | direct_unit(c[0]) << 16 |
+                   direct_unit(c[1]) << 8 | direct_unit(c[2]);
+        }
+        o->x = (s[k][0] - d.xo) * d.sx;
+        o->y = (s[k][1] - d.yo) * d.sy;
+        o->z = z < d.z0 ? d.z0 : z > d.z1 ? d.z1 : z;
+        o->u = u[k] * d.us;
+        o->v = t[k] * d.vs;
+        o->argb = argb;
+    }
+    gStatVtx += n;
+    Port_DirectSend(sDirect, adc, n);
+    return 1;
+}
+
+/* The texture coordinate s / q of a corner whose ST and Q are (s, t, w) times q: as the renderer divides them
+   (a Q of 0 taken as 1) */
+static inline float direct_div(float a, float w, float q) {
+    return w == 1.0f ? a : w != 0.0f ? a / w : a * q;
+}
+#endif
+
 /* The triangles of a strip of n corners, those whose last corner is marked (ADC) left out; two that follow each
    other as one record of four corners (the GS's strip order: 0 1 2, 1 2 3). The texture: TEX0 tex0, or by the
    handle tex where there is one (0: none). */
@@ -419,7 +493,7 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
 static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[P4_MAXV];
     static uint8_t adc[P4_MAXV];
-    static float clip[P4_MAXV][4], scr[P4_MAXV][4];
+    static float clip[P4_MAXV][4], scr[P4_MAXV][4], qv[P4_MAXV], uv[2][P4_MAXV];
     static int32_t col[P4_MAXV][4];
     P4Walk *wk = (P4Walk *)arg;
     uint32_t prim, n, i, k, flags[3] = {0, 0, 0};
@@ -472,7 +546,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
             s[k] = vu_clamp(s[k] * q);
             col[i][k] = vu_ftoi(v[4 + k], 1.0f);
         }
-        put_vtx(&out[i], ctx, s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col[i]);
+        qv[i] = q;
         adc[i] = 0;
         flags[0] = flags[1];
         flags[1] = flags[2];
@@ -489,6 +563,21 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
             }
             adc[i] = 1;
         }
+    }
+#if VU1_DIRECT
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        uv[0][i] = direct_div(v[8], v[10], qv[i]);
+        uv[1][i] = direct_div(v[9], v[10], qv[i]);
+    }
+    if (direct_strip((const float (*)[4])scr, uv[0], uv[1], (const int32_t (*)[4])col, 1, adc, n, prim, tex0)) {
+        return 1;
+    }
+#endif
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        float q = qv[i];
+        put_vtx(&out[i], ctx, scr[i], vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col[i]);
     }
     put_strip(out, adc, n, prim, tex0, 0);
     return 1;
@@ -551,6 +640,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
     static RndVtx out[2][FIG_MAXV];
     static uint8_t adc[FIG_MAXV];
     static float pa[FIG_MAXV][4], pb[FIG_MAXV][4], ss[FIG_MAXV][4], cs[FIG_MAXV][4], la[FIG_MAXV][4], lb[FIG_MAXV][4];
+    static float qa[FIG_MAXV], ua[2][FIG_MAXV], ta[2][FIG_MAXV]; /* q; each layer's texture coordinate (s / q) */
     FigWalk *wk = (FigWalk *)arg;
     const float *k = wk->k;
     uint32_t prim[2], n, i, c, flags[3] = {0, 0, 0};
@@ -651,15 +741,38 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         for (c = 0; c < 4; c++) {
             s[c] = vu_clamp(s[c] * q);
         }
-        put_vtx(&out[0][i], ctx[0], s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col[0]);
-        put_vtx(&out[1][i], ctx[1], s, vu_clamp(u * q), vu_clamp(t * q), q, col[1]);
+        qa[i] = q;
+        ua[1][i] = u;
+        ta[1][i] = t;
         flags[0] = flags[1];
         flags[1] = flags[2];
         flags[2] = clip_flags(cl);
         adc[i] = (flags[0] | flags[1] | flags[2]) != 0; /* (the first two complete no triangle) */
     }
-    put_strip(out[0], adc, n, prim[0], tex0[0], 0);
-    put_strip(out[1], adc, n, prim[1], tex0[1], 0);
+    for (c = 0; c < 2; c++) { /* the two layers, in their order */
+#if VU1_DIRECT
+        if (c == 0) {
+            for (i = 0; i < n; i++) {
+                const float *v = (const float *)(vtx + i * 12);
+                ua[0][i] = direct_div(v[8], v[10], qa[i]);
+                ta[0][i] = direct_div(v[9], v[10], qa[i]);
+            }
+        }
+        if (direct_strip((const float (*)[4])ss, ua[c], ta[c], (const int32_t (*)[4])col[c], 0, adc, n, prim[c], tex0[c])) {
+            continue;
+        }
+#endif
+        for (i = 0; i < n; i++) {
+            const float *v = (const float *)(vtx + i * 12);
+            float q = qa[i];
+            if (c == 0) {
+                put_vtx(&out[0][i], ctx[0], ss[i], vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), col[0]);
+            } else {
+                put_vtx(&out[1][i], ctx[1], ss[i], vu_clamp(ua[1][i] * q), vu_clamp(ta[1][i] * q), q, col[1]);
+            }
+        }
+        put_strip(out[c], adc, n, prim[c], tex0[c], 0);
+    }
     return 1;
 }
 

@@ -32,7 +32,7 @@
 #include "../port_addr.h"
 #include "gs_draw.h"
 #include "ui.h"
-#include "../../../include/port/rnd.h" /* Rnd_FxOn */
+#include "../../../include/port/rnd.h" /* Rnd_FxOn, RndDirect */
 #ifndef __DREAMCAST__
 #include "pvr_host.h" /* gpu_pvr: the window the picture is shown in */
 #else
@@ -794,13 +794,13 @@ static void strip_draw(const GsDraw *d, const PvrTex *t, float x0, float y0, flo
 }
 #endif
 
-/* Draw n into the render being built; `t` its texture (a frame buffer's: the version it samples), or NULL. */
-static void draw_one(uint32_t n, const PvrTex *t) {
-    const GsDraw *d = &gsDraws[n];
+/* draw_one's polygons for draw d: their contexts (pass[0..n), n returned; 0 = nothing drawn) and *tp the texture as
+   they draw it (NULL: none); sUs, sVs, sFixA and the tint (sTintCur) the corners are made by */
+static int draw_head(const GsDraw *d, const PvrTex **tp, pvr_poly_cxt_t pass[2]) {
+    const PvrTex *t = *tp;
     uint32_t key = sPipeKey[d->pipeline], bkey, k;
-    pvr_poly_cxt_t cxt, pass[2];
-    pvr_poly_hdr_t hdr;
-    int np, p, tfx;
+    pvr_poly_cxt_t cxt;
+    int np, tfx;
 
     static int noTex = -1;
     if (noTex < 0) { noTex = getenv("BT3_PVR_NOTEX") != NULL; }
@@ -890,7 +890,7 @@ static void draw_one(uint32_t n, const PvrTex *t) {
     np = 1;
     if ((key >> 16 & 15) == 0) { /* nothing written but the depth (ObjDraw_SetLight's depth pass): the picture kept */
         if (!((key >> 12) & 1)) {
-            return;
+            return 0;
         }
         pass[0].blend.src = PVR_BLEND_ZERO;
         pass[0].blend.dst = PVR_BLEND_ONE;
@@ -908,6 +908,21 @@ static void draw_one(uint32_t n, const PvrTex *t) {
         pass[1].blend.dst = cxt.blend.dst == PVR_BLEND_INVDESTALPHA ? PVR_BLEND_INVSRCALPHA :
                             cxt.blend.dst == PVR_BLEND_DESTALPHA ? PVR_BLEND_SRCALPHA : cxt.blend.dst;
         np = 2;
+    }
+    *tp = t;
+    return np;
+}
+
+/* Draw n into the render being built; `t` its texture (a frame buffer's: the version it samples), or NULL. */
+static void draw_one(uint32_t n, const PvrTex *t) {
+    const GsDraw *d = &gsDraws[n];
+    uint32_t key = sPipeKey[d->pipeline], k;
+    pvr_poly_cxt_t pass[2];
+    pvr_poly_hdr_t hdr;
+    int np, p;
+
+    if ((np = draw_head(d, &t, pass)) == 0) {
+        return;
     }
     for (p = 0; p < np; p++) {
         pvr_poly_compile(&hdr, &pass[p]);
@@ -1270,6 +1285,95 @@ static int spill(void) {
     sSpills++;
     return 1;
 }
+
+#if GS_STRIPS
+/* A vertex program's strip sent straight to the screen's render (gs_draw.c GsGpu_Direct, include/port/rnd.h
+   Rnd_Direct): what is waiting in the lists sent first (spill), so the order is as made; then the strip's polygon,
+   its corners after it as the caller makes them (Port_DirectSend). Only what draw_one sends as one polygon over the
+   whole screen without a tint (else 0: the strip goes through the lists as before); 2 = nothing drawn, as
+   spill and draw_one leave it out. */
+int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
+    const PvrTex *t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
+    pvr_poly_cxt_t pass[2];
+    pvr_poly_hdr_t hdr;
+    uint32_t key;
+    float x0, y0, x1, y1;
+    int np;
+
+    if (!no_rtt() || d->mode[0] == 2) {
+        return 0;
+    }
+    if (!draw_kept(d, 0xFFFFFFFFu)) {
+        return 2;
+    }
+    spill();
+    gsVertCount = 0;
+    gsDrawCount = 0;
+    if (d->target != sStreamShown) {
+        return 2;
+    }
+    key = sPipeKey[d->pipeline];
+    if ((key >> 16 & 7) == 0) { sStreamTA = 0; }
+    if (sStreamTA && (key & 1) && ((key >> 7) & 3) == 1) {
+        return 2;
+    }
+    x0 = (float)d->scissor[0] / (float)SCALE * sSx;
+    y0 = (float)d->scissor[1] / (float)SCALE * sSy;
+    x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sSx;
+    y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sSy;
+    if (x0 > 0.0f || y0 > 0.0f || x1 < sRw || y1 < sRh) {
+        return 0; /* (a scissor inside the screen: draw_one clips to it) */
+    }
+    if ((np = draw_head(d, &t, pass)) == 0) {
+        return 2;
+    }
+    if (np != 1 || sTintCur != NULL) {
+        return 0;
+    }
+    strip_end();
+    if (sSent + sizeof(hdr) + verts * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
+        sDropped += tris;
+        return 2;
+    }
+    pvr_poly_compile(&hdr, &pass[0]);
+    pvr_prim(&hdr, sizeof(hdr));
+    sSent += sizeof(hdr) + verts * sizeof(pvr_vertex_t);
+    sTris += tris;
+    o->sx = sSx;
+    o->sy = sSy;
+    o->tex = t != NULL;
+    o->us = t != NULL ? sUs : 0.0f;
+    o->vs = t != NULL ? sVs : 0.0f;
+    o->fixa = sFixA >= 0.0f ? (int)(sFixA * 255.0f + 0.5f) : -1;
+    return 1;
+}
+
+/* The corners of a strip GsPvr_Direct took: each run of triangles not left out (adc) as one of the PVR's strips */
+void Port_DirectSend(const RndPvrVtx *v, const uint8_t *adc, uint32_t n) {
+    uint32_t k = 2, e, i;
+    while (k < n) {
+        if (adc[k]) {
+            k++;
+            continue;
+        }
+        for (e = k + 1; e < n && !adc[e]; e++) {
+        }
+        for (i = k - 2; i < e; i++) {
+            pvr_vertex_t *pv = (pvr_vertex_t *)pvr_dr_target();
+            pv->flags = i + 1 == e ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+            pv->x = v[i].x;
+            pv->y = v[i].y;
+            pv->z = v[i].z;
+            pv->u = v[i].u;
+            pv->v = v[i].v;
+            pv->argb = v[i].argb;
+            pv->oargb = 0;
+            pvr_dr_commit(pv);
+        }
+        k = e;
+    }
+}
+#endif
 
 static void frame_render(int shown) {
     uint32_t n;

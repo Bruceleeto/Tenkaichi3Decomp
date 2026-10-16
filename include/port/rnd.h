@@ -151,6 +151,26 @@ int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud);
    Port_StripTakes: the Dreamcast's, while a draw made later is made) it is one draw; elsewhere triangles and pairs of
    them through Rnd_Draw, as before. */
 int Rnd_DrawStrip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n, int ctx, int abe, int gouraud);
+
+/* A vertex program's strip made straight into the renderer's own vertices (the Dreamcast's PVR; one pass from the
+   program's maths, no GS integers between), its state as Rnd_DrawStrip has it. Rnd_Direct: 1 = taken (its polygon
+   begun; the caller makes the corners by o and sends them by Port_DirectSend), 0 = not (Rnd_DrawStrip as before),
+   2 = nothing to draw. tris, verts: the strip's triangles (adc as Rnd_DrawStrip's) and the vertices they send. */
+typedef struct RndDirect {
+    float xo, yo, sx, sy; /* screen x = (the program's window x - xo) * sx, y so */
+    float us, vs;         /* u = s / q * us, v so (0 when untextured) */
+    float zk, zo, z0, z1; /* depth = the program's z * zk + zo, held to z0..z1 */
+    int tex;              /* textured */
+    int fixa;             /* the alpha: -1 the corners' (0..255 after Rnd_DirectUnit), else this */
+} RndDirect;
+typedef struct RndPvrVtx { /* the PVR's vertex (KOS pvr_vertex_t) */
+    uint32_t flags;
+    float x, y, z, u, v;
+    uint32_t argb, oargb;
+} RndPvrVtx;
+int Rnd_Direct(RndDirect *o, const RndPoly *h, int ctx, int abe, int gouraud, uint32_t tris, uint32_t verts);
+int Port_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts); /* Rnd_Direct's, state set */
+void Port_DirectSend(const RndPvrVtx *v, const uint8_t *adc, uint32_t n); /* the strip's corners, made by o */
 /* A corner from what a GS packet gives: x, y in sixteenths of a pixel (XYOFFSET of context ctx at 0, 0), the
    24-bit depth, s t q, r g b a. */
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);

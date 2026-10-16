@@ -97,6 +97,9 @@ struct RndVtx;
    takes them (the PVR's, on the Dreamcast and make dcsim). */
 void GsGpu_Strip(const struct RndPoly *p, const struct RndVtx *v, const uint8_t *adc, uint32_t n);
 int GsGpu_StripTakes(void);
+/* A vertex program's strip straight to the renderer (include/port/rnd.h Rnd_Direct; p its state and texture) */
+struct RndDirect;
+int GsGpu_Direct(struct RndDirect *o, const struct RndPoly *p, uint32_t tris, uint32_t verts);
 void GsGpu_FrameEnd(void);
 /* The game is re-running frames it has already shown (online play after a late input; the save / restore test):
    nothing of them is to be seen or heard. The frame's list is still walked, because it also carries the texture
