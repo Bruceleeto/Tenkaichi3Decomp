@@ -41,8 +41,9 @@ static inline float vu_clamp(float v) {
         uint32_t u;
     } x;
 #if VU1_DIRECT
-    if (__builtin_expect(__builtin_fabsf(v) <= 3.40282347e38f, 1)) {
-        return v; /* (a float compare: the SH4 moves a float to an integer register only through memory) */
+    if (__builtin_expect(__builtin_fabsf(v) < __builtin_inff(), 1)) {
+        return v; /* (a float compare: the SH4 moves a float to an integer register only through memory; < infinity,
+                     the same as <= FLT_MAX for every value, NaN too, is one fcmp/gt where <= is fcmp/gt and fcmp/eq) */
     }
 #endif
     x.f = v;
@@ -124,6 +125,15 @@ static void mtx_run(float (*o)[4], const float *m, const float (*in)[4], uint32_
     shz_xmtrx_load_unaligned_4x4(m);
     for (i = 0; i < n; i++) {
         shz_vec4_t r = shz_xmtrx_transform_vec4(shz_vec4_init(in[i][0], in[i][1], in[i][2], in[i][3]));
+        float sum = r.x + r.y + r.z + r.w;
+        if (__builtin_expect(sum - sum == 0.0f, 1)) { /* (all four finite: an infinity or a NaN, or a sum too big,
+                                                         makes it a NaN; then each clamped, the same values) */
+            o[i][0] = r.x;
+            o[i][1] = r.y;
+            o[i][2] = r.z;
+            o[i][3] = r.w;
+            continue;
+        }
         o[i][0] = vu_clamp(r.x);
         o[i][1] = vu_clamp(r.y);
         o[i][2] = vu_clamp(r.z);
