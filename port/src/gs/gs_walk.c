@@ -400,15 +400,19 @@ static void rnd_walked(void) {
     w->n = w->next = 0;
 }
 
+static uint64_t sMeshNs; /* this frame's time making the queued meshes (Gs_FramePace) */
+
 static void rnd_draw(const RndCmd *c) {
     const uint8_t *d = c->d;
     if (c->kind == 0) { GsGpu_Quad((const RndQuad *)d); } else if (c->kind == 1) { GsGpu_Poly((const RndPoly *)d); }
     else if (c->kind == 3) {
         RndDeferFn fn;
+        uint64_t t0 = Gs_NowNs();
         memcpy(&fn, d, sizeof(fn));
         sReplay = 1;
         fn(d + 8);
         sReplay = 0;
+        sMeshNs += Gs_NowNs() - t0;
     } else { Gs_Marker((uint32_t)((const uint64_t *)d)[0], ((const uint64_t *)d)[1]); }
 }
 
@@ -445,8 +449,19 @@ uint64_t Gs_NowNs(void) {
 
 /* The frame's work ends here (its list handed over at tChain): timed (BT3_GS_VERBOSE: per frame over the budget, per
    60 frames where the time went), and BT3_BURN_MS (testing) makes the machine slower. */
+/* the time report every 60 frames: BT3_GS_VERBOSE or BT3_FRAME_TIME; always on the Dreamcast (no environment) */
+static int time_report(void) {
+#ifdef __DREAMCAST__
+    return 1;
+#else
+    static int on = -1;
+    if (on < 0) { on = getenv("BT3_GS_VERBOSE") != NULL || getenv("BT3_FRAME_TIME") != NULL; }
+    return on;
+#endif
+}
+
 void Gs_FramePace(uint64_t tChain) {
-    static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, perMin = ~0ull, perMax;
+    static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, sumMesh, perMin = ~0ull, perMax;
     static unsigned n, over;
     uint64_t t;
 
@@ -472,8 +487,10 @@ void Gs_FramePace(uint64_t tChain) {
             sumTex += gGpuTexNs;
             sumPipe += gGpuPipeNs;
             sumEnd += gGpuEndNs;
+            sumMesh += sMeshNs;
             gGpuNewTex = gGpuNewTexPixels = gGpuNewPipes = 0;
             gGpuTexNs = gGpuPipeNs = gGpuEndNs = 0;
+            sMeshNs = 0;
         }
         if (getenv("BT3_BURN_MS") != NULL) { /* testing: a slower machine, by burning time in every frame */
             uint64_t until = Gs_NowNs() + (uint64_t)atoi(getenv("BT3_BURN_MS")) * 1000000ull;
@@ -484,18 +501,19 @@ void Gs_FramePace(uint64_t tChain) {
         if (work > worst) { worst = work; }
         if (work > 33366700ull) { over++; }
         if (++n == 60) {
-            if (getenv("BT3_GS_VERBOSE") != NULL) {
+            if (time_report()) {
                 fprintf(stderr, "time: frame %u: work per frame: average %.1f ms, worst %.1f ms, %u of 60 over the 33.4 ms budget\n",
                         sFrame, (double)sum / 60e6, (double)worst / 1e6, over);
-                fprintf(stderr, "time:   of the average: game code %.1f ms, display list %.1f ms (of which: texture decoding %.1f, "
-                                "pipeline creation %.1f, ending and submitting the frame %.1f)\n",
-                        (double)sumGame / 60e6, (double)sumList / 60e6, (double)sumTex / 60e6, (double)sumPipe / 60e6, (double)sumEnd / 60e6);
+                fprintf(stderr, "time:   of the average: game code %.1f ms, display list %.1f ms (of which: the models' meshes %.1f, texture "
+                                "decoding %.1f, pipeline creation %.1f, ending and submitting the frame %.1f)\n",
+                        (double)sumGame / 60e6, (double)sumList / 60e6, (double)sumMesh / 60e6, (double)sumTex / 60e6, (double)sumPipe / 60e6,
+                        (double)sumEnd / 60e6);
             }
-            if (getenv("BT3_GS_VERBOSE") != NULL) {
+            if (time_report()) {
                 fprintf(stderr, "time:   frames lasted %.1f to %.1f ms (33.4 in a fight, 16.7 in the menus)\n", (double)perMin / 1e6, (double)perMax / 1e6);
             }
             n = 0; sum = 0; worst = 0; over = 0;
-            sumGame = sumList = sumTex = sumPipe = sumEnd = 0;
+            sumGame = sumList = sumTex = sumPipe = sumEnd = sumMesh = 0;
             perMin = ~0ull;
             perMax = 0;
         }
