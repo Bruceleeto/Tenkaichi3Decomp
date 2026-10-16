@@ -9,7 +9,7 @@ import pathlib, re, subprocess, sys
 def link(exe, objs, extra):
     # (SH ELF names C symbols with a leading underscore: --defsym takes the symbol's own name, --wrap the C one)
     cmd = ["kos-cc", "-fno-lto", "-o", str(exe), *objs, *extra, "-Wl,--defsym=_D_3BE71C=0x3BE71C",
-           "-Wl,--wrap=Progress_Main", f"-Wl,-Map={exe}.map", "-lpthread", "-lm"]
+           "-Wl,--wrap=Progress_Main", f"-Wl,-Map={exe}.map", "-lsh4zam", "-lpthread", "-lm"]  # (sh4zam: KOS's port, kos-ports/sh4zam)
     return subprocess.run(cmd, capture_output=True, text=True)
 
 

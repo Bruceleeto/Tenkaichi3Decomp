@@ -65,11 +65,18 @@ PVR_CXX_OBJ := $(foreach f,$(PVR_CXX_SRC),$(OBJ)/cxx_pvrlib_$(basename $(notdir 
 PVR_C_OBJ   := $(foreach f,$(PVR_C_SRC),$(OBJ)/gs_pvrlib_$(basename $(notdir $(f))).o)
 PVR_OBJ     := $(if $(filter 1,$(PVR)),$(PVR_CXX_OBJ) $(PVR_C_OBJ))
 
+# sh4zam (port/third_party/sh4zam, a git submodule: git submodule update --init), its C back-end: the vector and
+# matrix maths the Dreamcast does with the SH4's, there from KOS's port (kos-ports/sh4zam, Makefile.dc). Named gs_shz_
+# as the port's (make_state.py).
+SHZ_DIR   := port/third_party/sh4zam
+SHZ_SRC   := $(addprefix $(SHZ_DIR)/source/,shz_matrix.c shz_quat.c shz_version.c shz_xmtrx.c sw/shz_complex_sw.c sw/shz_xmtrx_sw.c)
+SHZ_OBJ   := $(foreach f,$(SHZ_SRC),$(OBJ)/gs_shz_$(basename $(notdir $(f))).o)
+
 # AUDIO=none: the sound output that has none (port/src/null)
 NULL_OBJ  := $(if $(filter none,$(AUDIO)),$(OBJ)/pc_audio_null.o) $(if $(filter 0,$(NET)),$(OBJ)/pc_net_null.o) \
              $(if $(filter 0,$(TEXPACK)),$(OBJ)/pc_texpack_null.o)
 
-OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ) $(NULL_OBJ)
+OBJS      := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(CXX_OBJ) $(PC_OBJ) $(PVR_OBJ) $(NULL_OBJ) $(SHZ_OBJ)
 
 # ------------------------------------------------------------------------------------------------------ the flags
 
@@ -97,6 +104,8 @@ PC_HARD     := plat_libm plat_fastvec vu1_native
 # (BT3_RND=0); the Dreamcast build has the front end without it (gs_walk.c)
 GAME_CFLAGS += -DPORT_GS_REF
 GS_CFLAGS   += -DPORT_GS_REF
+GS_CFLAGS   += -I$(SHZ_DIR)/include
+PC_CFLAGS   += -I$(SHZ_DIR)/include
 PC_CFLAGS   += -DPORT_GS_REF
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
@@ -181,6 +190,11 @@ $(OBJ)/cxx_pvrlib_kos_pvr.o: $(PVR_DIR)/kos_pvr.cpp | $(OBJ)
 	$(CXX) $(PVR_FLAGS) -std=c++17 -I$(PVR_DIR) -c $< -o $@
 $(PVR_C_OBJ): $(OBJ)/gs_pvrlib_%.o: $(PVR_DIR)/%.c | $(OBJ)
 	$(CC) $(PVR_FLAGS) $(PVR_INC) -c $< -o $@
+
+$(filter-out %_sw.o,$(SHZ_OBJ)): $(OBJ)/gs_shz_%.o: $(SHZ_DIR)/source/%.c | $(OBJ)
+	$(CC) -m32 -O2 -g -fno-pic -msse2 -mfpmath=sse -I$(SHZ_DIR)/include -c $< -o $@
+$(filter %_sw.o,$(SHZ_OBJ)): $(OBJ)/gs_shz_%.o: $(SHZ_DIR)/source/sw/%.c | $(OBJ)
+	$(CC) -m32 -O2 -g -fno-pic -msse2 -mfpmath=sse -I$(SHZ_DIR)/include -c $< -o $@
 
 $(OBJ)/cxx_%.o: port/third_party/imgui/%.cpp | $(OBJ) $(GEN_GS)/.stamp
 	$(CXX) $(CXXFLAGS) $< -o $@
