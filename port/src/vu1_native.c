@@ -63,6 +63,37 @@ static int32_t vu_ftoi(float v, float scale) {
 
 /* o = m * (x, y, z, w) for a matrix of four column quadwords (c0 * x + c1 * y + c2 * z + c3 * w), summed in the
    order of the programs' mula / madda / madd. */
+#if defined(__DREAMCAST__) || defined(BT3_DCSIM)
+/* The Dreamcast: the SH4's ftrv, the matrix in XMTRX (sh4zam); its sum is the same order, at the instruction's own
+   precision, and only the result is held to the largest float (an overflow inside the sum is not). make dcsim: the
+   instruction modelled bit for bit (port/third_party/sh4_fpu_approx). */
+#ifdef BT3_DCSIM
+#include "../third_party/sh4_fpu_approx/sh4_fpu_approx.h"
+static void mtx_apply(float o[4], const float *m, float x, float y, float z, float w) {
+    uint32_t mx[16], fv[4];
+    float v[4] = {x, y, z, w};
+    int i;
+    memcpy(mx, m, 64);
+    memcpy(fv, v, 16);
+    sh4_ftrv(mx, fv, 0);
+    memcpy(v, fv, 16);
+    for (i = 0; i < 4; i++) {
+        o[i] = vu_clamp(v[i]);
+    }
+}
+#else
+#include <sh4zam/shz_sh4zam.h>
+static void mtx_apply(float o[4], const float *m, float x, float y, float z, float w) {
+    shz_vec4_t r;
+    shz_xmtrx_load_unaligned_4x4(m);
+    r = shz_xmtrx_transform_vec4(shz_vec4_init(x, y, z, w));
+    o[0] = vu_clamp(r.x);
+    o[1] = vu_clamp(r.y);
+    o[2] = vu_clamp(r.z);
+    o[3] = vu_clamp(r.w);
+}
+#endif
+#else
 static void mtx_apply(float o[4], const float *m, float x, float y, float z, float w) {
     int i;
     for (i = 0; i < 4; i++) {
@@ -72,6 +103,7 @@ static void mtx_apply(float o[4], const float *m, float x, float y, float z, flo
         o[i] = vu_clamp(a + m[12 + i] * w);
     }
 }
+#endif
 
 /* CLIP: which of the six planes x, y, z = +|w| / -|w| the point is outside (bit 0 x > +|w|, 1 x < -|w|, 2 y > +|w|,
    3 y < -|w|, 4 z > +|w|, 5 z < -|w|). */

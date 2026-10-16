@@ -225,7 +225,7 @@ $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link.py
 # (the renderer's objects as the Dreamcast build makes them: its lists' sizes, gs/gs_draw.h, and DC_RTT=0's switches)
 DC_ELF   := $(BUILD)/dc/bt3.elf
 DCSIM_O  := $(BUILD)/dcsim/dcsim.o
-DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o) $(addprefix $(BUILD)/dcsim/obj/pc_,vu0_native.o vu0_a.o vu0_b.o)
+DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o) $(addprefix $(BUILD)/dcsim/obj/pc_,vu0_native.o vu0_a.o vu0_b.o vu1_native.o)
 $(BUILD)/dcsim/obj/gs_%.o: port/src/gs/%.c | $(GEN_GS)/.stamp
 	mkdir -p $(BUILD)/dcsim/obj
 	$(CC) $(filter-out -DPORT_GS_REF,$(GS_CFLAGS)) -DBT3_DCSIM -DBT3_NO_RTT $< -o $@
@@ -239,6 +239,10 @@ $(BUILD)/dcsim/obj/pc_vu0_native.o: port/src/vu0_native.c port/third_party/sh4_f
 	mkdir -p $(BUILD)/dcsim/obj
 	$(CC) $(filter-out -fno-builtin,$(PC_CFLAGS)) -DBT3_DCSIM -msse2 -mfpmath=sse -mno-fp-ret-in-387 -fno-math-errno -MMD -MP $< -o $@
 	objcopy --redefine-sym sinf=Port_sinf --redefine-sym cosf=Port_cosf $@
+# the VU1 programs as the Dreamcast has them (vu1_native.c's mtx_apply: the SH4's ftrv, modelled)
+$(BUILD)/dcsim/obj/pc_vu1_native.o: port/src/vu1_native.c port/third_party/sh4_fpu_approx/sh4_fpu_approx.h Makefile
+	mkdir -p $(BUILD)/dcsim/obj
+	$(CC) $(PC_CFLAGS) -msse2 -mfpmath=sse -DBT3_DCSIM -MMD -MP $< -o $@
 $(BUILD)/dcsim/obj/pc_vu0_%.o: $(OBJ)/pc_vu0_%.o
 	mkdir -p $(BUILD)/dcsim/obj
 	objcopy --weaken $< $@
