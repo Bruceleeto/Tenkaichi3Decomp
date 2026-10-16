@@ -98,7 +98,9 @@ def dcsim_objs(objs):
                 continue
         res.append(o)
     print("dcsim: the Dreamcast's memory for " + " ".join(moved))
-    return res + [os.environ["BT3_DCSIM"]]
+    names = {pathlib.Path(o).name for o in objs}
+    extra = [str(o) for o in sorted(own.glob("*.o")) if o.name not in names]  # (its own: port/src/vu0_native.c)
+    return res + extra + [os.environ["BT3_DCSIM"]]
 
 def main():
     objs = [str(o) for o in sorted(OBJ.glob("*.o")) + sorted(DATA.glob("*.o"))]

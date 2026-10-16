@@ -54,9 +54,9 @@ OBJS     := $(GAME_OBJ) $(NL_OBJ) $(GS_OBJ) $(PC_OBJ) $(DC_OBJ)
 
 # ------------------------------------------------------------------------------------------------------ the flags
 
-# kos-cc adds KOS's own (-m4-single -ml ...); LTO off (as iortcw's), and C's float rules rather than KOS's
-# -ffast-math, so the game's maths is the PC build's in what it means; -Os (the program's size is RAM the 32 MB
-# Dreamcast does not have), the renderer -O3 (RENDER_OBJ)
+# kos-cc adds KOS's own (-m4-single -ml -ffast-math ...); LTO off (as iortcw's), and C's float rules rather than
+# -ffast-math, so the game's maths is the PC build's in what it means (sh4zam emits its fsca / fsrra / fipr / ftrv by
+# inline asm without it); -Os (the program's size is RAM the 32 MB Dreamcast does not have), the renderer -O3 (RENDER_OBJ)
 DC_FLAGS    := -fno-lto -Os -g -fno-fast-math -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
 # (game code without -w: a call to a function not declared is an error, see Makefile)
 GAME_CFLAGS := $(DC_FLAGS) -Wno-attributes -Werror=implicit-function-declaration -std=gnu89 -c -fcommon -fno-builtin -include port_libm.h -iquote include -Iport/include -include port_compat.h
@@ -64,7 +64,7 @@ NL_CFLAGS   := $(DC_FLAGS) -w -std=gnu89 -c -fno-builtin -Iport/include -Iport/t
 GS_CFLAGS   := $(DC_FLAGS) -w -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
 PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -fno-builtin -iquote include -Iport/include -Iport/src -Iport/src/dc
 PC_SOFT     := -DSF_FAST_CALLS -include math.h -include stdlib.h -include port_libm.h
-PC_HARD     := plat_libm plat_fastvec vu1_native
+PC_HARD     := plat_libm plat_fastvec vu1_native vu0_native
 
 CC_EE := $(PYTHON) port/tools/cc_ee.py
 
@@ -131,8 +131,10 @@ $(OBJ)/pc_headless.o: $(if $(filter 1,$(DC_DEMO)),$(OBJ)/.demo_on,$(OBJ)/.demo_o
 $(OBJ)/.demo_on $(OBJ)/.demo_off:
 	mkdir -p $(OBJ) && rm -f $(OBJ)/.demo_on $(OBJ)/.demo_off && touch $@
 
-$(OBJ)/pc_vu0_%.o: src/port/vu0_%.c | $(OBJ)
+# (weak: a routine port/src/vu0_native.c has, the SH4's own, is linked in its place)
+$(OBJ)/pc_vu0_%.o: src/port/vu0_%.c Makefile.dc | $(OBJ)
 	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
+	$(KOS_OBJCOPY) --weaken $@
 $(OBJ)/pc_%.o: port/src/%.c | $(OBJ)
 	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))
 

@@ -47,7 +47,7 @@ GS_SRC    := $(filter-out $(if $(filter none,$(AUDIO)),port/src/gs/audio_sdl.c) 
                $(sort $(wildcard port/src/gs/*.c)))
 CXX_SRC   := $(sort $(wildcard port/third_party/imgui/*.cpp port/src/gs/*.cpp))
 VU0_SRC   := src/port/vu0_a.c src/port/vu0_b.c
-PC_SRC    := $(sort $(wildcard port/src/*.c))
+PC_SRC    := $(filter-out port/src/vu0_native.c,$(sort $(wildcard port/src/*.c))) # (vu0_native: the Dreamcast's, make dcsim's)
 
 # object names as undefined.py gives them (link.py and make_state.py go by them): src/sys/x.c -> sys_x.o, ...
 GAME_OBJ  := $(foreach f,$(GAME_SRC),$(OBJ)/$(subst /,_,$(patsubst src/%.c,%,$(f))).o)
@@ -225,11 +225,23 @@ $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link.py
 # (the renderer's objects as the Dreamcast build makes them: its lists' sizes, gs/gs_draw.h, and DC_RTT=0's switches)
 DC_ELF   := $(BUILD)/dc/bt3.elf
 DCSIM_O  := $(BUILD)/dcsim/dcsim.o
-DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o)
+DCSIM_GS := $(addprefix $(BUILD)/dcsim/obj/gs_,gs_draw.o gs_pvr.o gs_walk.o) $(addprefix $(BUILD)/dcsim/obj/pc_,vu0_native.o vu0_a.o vu0_b.o)
 $(BUILD)/dcsim/obj/gs_%.o: port/src/gs/%.c | $(GEN_GS)/.stamp
 	mkdir -p $(BUILD)/dcsim/obj
 	$(CC) $(filter-out -DPORT_GS_REF,$(GS_CFLAGS)) -DBT3_DCSIM -DBT3_NO_RTT $< -o $@
 $(BUILD)/dcsim/obj/gs_gs_pvr.o: GS_CFLAGS += $(PVR_INC)
+# the vector library as the Dreamcast has it: port/src/vu0_native.c, the reference's objects weak under it; its maths
+# on the FPU, its floats returned in eax as the game's -msoft-float objects read them (-mno-fp-ret-in-387); so the
+# floats it gets back are read from eax too: sqrtf and fabsf inline, sinf and cosf the game's own (soft-float) ones.
+# Its sums in SSE, rounded to 32 bits at each step as the SH4 rounds them (the x87 keeps 80); the SH4's approximate
+# instructions modelled bit for bit (vu0_native.c under BT3_DCSIM)
+$(BUILD)/dcsim/obj/pc_vu0_native.o: port/src/vu0_native.c port/third_party/sh4_fpu_approx/sh4_fpu_approx.h Makefile
+	mkdir -p $(BUILD)/dcsim/obj
+	$(CC) $(filter-out -fno-builtin,$(PC_CFLAGS)) -DBT3_DCSIM -msse2 -mfpmath=sse -mno-fp-ret-in-387 -fno-math-errno -MMD -MP $< -o $@
+	objcopy --redefine-sym sinf=Port_sinf --redefine-sym cosf=Port_cosf $@
+$(BUILD)/dcsim/obj/pc_vu0_%.o: $(OBJ)/pc_vu0_%.o
+	mkdir -p $(BUILD)/dcsim/obj
+	objcopy --weaken $< $@
 $(DCSIM_O): port/src/dcsim/dcsim.c port/src/dcsim/dcsim_mallocr.inc $(DC_ELF)
 	mkdir -p $(BUILD)/dcsim
 	$(CC) -m32 -O2 -c -DDCSIM_HEAP_START=0x$$(/opt/toolchains/dc/sh-elf/bin/sh-elf-nm $(DC_ELF) | awk '$$3 == "_end" { print $$1 }')u $< -o $@
