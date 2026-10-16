@@ -602,6 +602,51 @@ uint64_t *Rnd_OtRecPacket(const RndOtRec *r, uint64_t *dst) {
     return dst;
 }
 
+int Rnd_DrawStrip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n, int ctx, int abe, int gouraud) {
+    RndPoly p;
+    uint32_t k = 2;
+
+    if (Port_StripTakes()) {
+        ctx &= 1;
+        if (!Port_TakesRecords()) {
+            return 0;
+        }
+        if (gRndCtxBad[ctx] != 0) {
+            Port_Lost("a strip drawn in a state no record says (RND_BAD_)", gRndCtxBad[ctx], __builtin_return_address(0));
+            return 0;
+        }
+        p = *h;
+        {
+            uint16_t vu = (uint16_t)(p.st.flags & RND_VU);
+            p.st = gRndCtx[ctx];
+            p.st.flags = (uint16_t)((p.st.flags & ~(RND_GOURAUD | RND_VU)) | (gouraud ? RND_GOURAUD : 0) | vu);
+        }
+        if (!abe) {
+            p.st.blend = RND_BLEND_NONE;
+        }
+        p.gsCtx = (uint32_t)ctx;
+        return Port_Strip(&p, v, adc, n);
+    }
+    while (k < n) {
+        if (adc[k]) {
+            k++;
+            continue;
+        }
+        p = *h;
+        if (k + 1 < n && !adc[k + 1]) {
+            memcpy(p.v, &v[k - 2], 4 * sizeof(RndVtx));
+            p.n = 4;
+            k += 2;
+        } else {
+            memcpy(p.v, &v[k - 2], 3 * sizeof(RndVtx));
+            p.n = 3;
+            k++;
+        }
+        Rnd_Draw(&p, ctx, abe, gouraud);
+    }
+    return 1;
+}
+
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
     o->x = (float)((x & 0xFFFF) - (int32_t)(sXyOff[ctx & 1] & 0xFFFF)) / 16.0f;
     o->y = (float)((y & 0xFFFF) - (int32_t)((sXyOff[ctx & 1] >> 32) & 0xFFFF)) / 16.0f;

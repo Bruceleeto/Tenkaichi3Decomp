@@ -337,6 +337,11 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     return 1;
 }
 
+/* A draw made later is being made (its records go straight to the renderer) */
+int Gs_Replaying(void) {
+    return sReplay;
+}
+
 /* Whether a draw can be made later (Gs_DeferPush): where the queue is drawn in the call that hands the list over
    (BT3_WALK=3, the Dreamcast), so the state a draw is made with is set again (by its caller) on the same thread. */
 int Gs_Defers(void) {

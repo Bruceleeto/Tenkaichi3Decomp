@@ -105,6 +105,26 @@ static void mtx_apply(float o[4], const float *m, float x, float y, float z, flo
 }
 #endif
 
+/* o[i] = m * in[i] for n points: on the Dreamcast the matrix loaded into XMTRX once for all of them (the same sums
+   as mtx_apply's, point by point) */
+static void mtx_run(float (*o)[4], const float *m, const float (*in)[4], uint32_t n) {
+    uint32_t i;
+#if defined(__DREAMCAST__) && !defined(BT3_DCSIM)
+    shz_xmtrx_load_unaligned_4x4(m);
+    for (i = 0; i < n; i++) {
+        shz_vec4_t r = shz_xmtrx_transform_vec4(shz_vec4_init(in[i][0], in[i][1], in[i][2], in[i][3]));
+        o[i][0] = vu_clamp(r.x);
+        o[i][1] = vu_clamp(r.y);
+        o[i][2] = vu_clamp(r.z);
+        o[i][3] = vu_clamp(r.w);
+    }
+#else
+    for (i = 0; i < n; i++) {
+        mtx_apply(o[i], m, in[i][0], in[i][1], in[i][2], in[i][3]);
+    }
+#endif
+}
+
 /* CLIP: which of the six planes x, y, z = +|w| / -|w| the point is outside (bit 0 x > +|w|, 1 x < -|w|, 2 y > +|w|,
    3 y < -|w|, 4 z > +|w|, 5 z < -|w|). */
 static unsigned clip_flags(const float c[4]) {
@@ -253,30 +273,13 @@ static void note(uint32_t prim, uint64_t tex0) {
    other as one record of four corners (the GS's strip order: 0 1 2, 1 2 3). The texture: TEX0 tex0, or by the
    handle tex where there is one (0: none). */
 static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t prim, uint64_t tex0, uint32_t tex) {
-    int ctx = (int)(prim >> 9) & 1;
-    uint32_t k = 2;
-    RndPoly p;
+    RndPoly h;
 
-    while (k < n) {
-        if (adc[k]) {
-            k++;
-            continue;
-        }
-        memset(&p, 0, sizeof(p));
-        if (k + 1 < n && !adc[k + 1]) {
-            memcpy(p.v, &v[k - 2], 4 * sizeof(RndVtx));
-            p.n = 4;
-            k += 2;
-        } else {
-            memcpy(p.v, &v[k - 2], 3 * sizeof(RndVtx));
-            p.n = 3;
-            k++;
-        }
-        p.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
-        p.tex = (prim >> 4) & 1 ? tex : 0;
-        p.st.flags = RND_VU;
-        Rnd_Draw(&p, ctx, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
-    }
+    memset(&h, 0, sizeof(h));
+    h.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+    h.tex = (prim >> 4) & 1 ? tex : 0;
+    h.st.flags = RND_VU;
+    Rnd_DrawStrip(&h, v, adc, n, (int)(prim >> 9) & 1, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 4 */
@@ -416,7 +419,7 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
 static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[P4_MAXV];
     static uint8_t adc[P4_MAXV];
-    static float clip[P4_MAXV][4];
+    static float clip[P4_MAXV][4], scr[P4_MAXV][4];
     static int32_t col[P4_MAXV][4];
     P4Walk *wk = (P4Walk *)arg;
     uint32_t prim, n, i, k, flags[3] = {0, 0, 0};
@@ -455,12 +458,15 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         note(prim, tex0);
         return 1;
     }
+    for (i = 0; i < n; i++) { /* (the positions as points: the matrices' runs read them from there) */
+        memcpy(scr[i], vtx + i * 12, 16);
+    }
+    mtx_run(clip, wk->c + 16, (const float (*)[4])scr, n);
+    mtx_run(scr, wk->c, (const float (*)[4])scr, n);
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position, colour, s t q */
-        float s[4], q;
+        float *s = scr[i], q;
 
-        mtx_apply(s, wk->c, v[0], v[1], v[2], v[3]);
-        mtx_apply(clip[i], wk->c + 16, v[0], v[1], v[2], v[3]);
         q = vu_div(1.0f, s[3]);
         for (k = 0; k < 4; k++) {
             s[k] = vu_clamp(s[k] * q);
@@ -544,6 +550,7 @@ static int ad_tex0(const uint32_t *ad, int ctx, uint64_t *tex0) {
 static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[2][FIG_MAXV];
     static uint8_t adc[FIG_MAXV];
+    static float pa[FIG_MAXV][4], pb[FIG_MAXV][4], ss[FIG_MAXV][4], cs[FIG_MAXV][4], la[FIG_MAXV][4], lb[FIG_MAXV][4];
     FigWalk *wk = (FigWalk *)arg;
     const float *k = wk->k;
     uint32_t prim[2], n, i, c, flags[3] = {0, 0, 0};
@@ -595,27 +602,49 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         memcpy(lightA + 12, k + 52, 16);
         memcpy(lightB + 12, k + 52, 16);
     }
+    /* each matrix run over the batch's corners at once (mtx_run): the corner relative to bone A's pivot and to B's,
+       through A and B, blended by the weight; through the screen and the clip; the normal through the light(s) */
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        pa[i][0] = vu_clamp(v[0] - k[32]);
+        pa[i][1] = vu_clamp(v[1] - k[33]);
+        pa[i][2] = vu_clamp(v[2] - k[34]);
+        pa[i][3] = 1.0f;
+        pb[i][0] = vu_clamp(v[0] - k[36]);
+        pb[i][1] = vu_clamp(v[1] - k[37]);
+        pb[i][2] = vu_clamp(v[2] - k[38]);
+        pb[i][3] = 1.0f;
+        memcpy(cs[i], v + 4, 12); /* (the normal) */
+        cs[i][3] = 1.0f;
+    }
+    if (wk->prog == 0) {
+        mtx_run(la, lightA, (const float (*)[4])cs, n);
+        mtx_run(lb, lightB, (const float (*)[4])cs, n);
+    } else {
+        mtx_run(la, k + 40, (const float (*)[4])cs, n);
+    }
+    mtx_run(pa, k, (const float (*)[4])pa, n);
+    mtx_run(pb, k + 16, (const float (*)[4])pb, n);
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        for (c = 0; c < 3; c++) {
+            ss[i][c] = vu_clamp(pb[i][c] + vu_clamp(vu_clamp(pa[i][c] - pb[i][c]) * v[3]));
+        }
+        ss[i][3] = 1.0f; /* (the screen and the clip take the blend's x y z with w 1) */
+    }
+    mtx_run(cs, k + 72, (const float (*)[4])ss, n);
+    mtx_run(ss, k + 56, (const float (*)[4])ss, n);
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position (w: bone A's weight), normal, s t q */
-        float pa[4], pb[4], p[4], s[4], cl[4], l[4], q, u, t;
+        float *s = ss[i], *cl = cs[i], l[4], q, u, t;
 
-        mtx_apply(pa, k, vu_clamp(v[0] - k[32]), vu_clamp(v[1] - k[33]), vu_clamp(v[2] - k[34]), 1.0f);
-        mtx_apply(pb, k + 16, vu_clamp(v[0] - k[36]), vu_clamp(v[1] - k[37]), vu_clamp(v[2] - k[38]), 1.0f);
-        for (c = 0; c < 4; c++) {
-            p[c] = vu_clamp(pb[c] + vu_clamp(vu_clamp(pa[c] - pb[c]) * v[3]));
-        }
-        mtx_apply(s, k + 56, p[0], p[1], p[2], 1.0f);
-        mtx_apply(cl, k + 72, p[0], p[1], p[2], 1.0f);
         q = vu_div(1.0f, s[3]);
         if (wk->prog == 0) { /* u = 0.5 + 0.5 * (light * the normal blended by the weight).x */
-            float la[4], lb[4];
-            mtx_apply(la, lightA, v[4], v[5], v[6], 1.0f);
-            mtx_apply(lb, lightB, v[4], v[5], v[6], 1.0f);
-            l[0] = vu_clamp(lb[0] + vu_clamp(vu_clamp(la[0] - lb[0]) * v[3]));
+            l[0] = vu_clamp(lb[i][0] + vu_clamp(vu_clamp(la[i][0] - lb[i][0]) * v[3]));
             u = vu_clamp(vu_clamp(l[0] * 0.5f) + 0.5f);
             t = 0.0f;
         } else { /* (u, v) = 0.5 * (1 + (light * normal).xy) */
-            mtx_apply(l, k + 40, v[4], v[5], v[6], 1.0f);
+            memcpy(l, la[i], 16);
             u = vu_clamp(vu_clamp(1.0f + l[0]) * 0.5f);
             t = vu_clamp(vu_clamp(1.0f + l[1]) * 0.5f);
         }

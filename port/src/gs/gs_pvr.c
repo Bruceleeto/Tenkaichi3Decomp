@@ -434,25 +434,29 @@ static NatTint sTintNow;
 static const NatTint *sTintCur; /* the draw being sent: &sTintNow, or NULL */
 static int sTintFlat;           /* and it is a decal (the vertex colour not taken): its vertices as white */
 
+/* (written where the TA takes it, KOS's direct rendering: the store queue, no copy; the list's pvr_list_begin has
+   them pointed at the TA) */
 static void put_vertex(const ClipV *c, int last) {
-    pvr_vertex_t pv;
-    pv.flags = last ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-    pv.x = c->x;
-    pv.y = c->y;
-    pv.z = c->z;
-    pv.u = c->u;
-    pv.v = c->v;
-    pv.argb = (uint32_t)(c->c[3] + 0.5f) << 24 | (uint32_t)(c->c[0] + 0.5f) << 16 | (uint32_t)(c->c[1] + 0.5f) << 8 | (uint32_t)(c->c[2] + 0.5f);
-    pv.oargb = 0;
+    pvr_vertex_t *pv = (pvr_vertex_t *)pvr_dr_target();
+    uint32_t argb = (uint32_t)(c->c[3] + 0.5f) << 24 | (uint32_t)(c->c[0] + 0.5f) << 16 | (uint32_t)(c->c[1] + 0.5f) << 8 | (uint32_t)(c->c[2] + 0.5f);
+    uint32_t oargb = 0;
     if (sTintCur != NULL) {
         const NatTint *t = sTintCur;
         float r = sTintFlat ? 255.0f : c->c[0], g = sTintFlat ? 255.0f : c->c[1], b = sTintFlat ? 255.0f : c->c[2];
         float a = sTintFlat ? 255.0f : c->c[3];
         if (t->alpha >= 0) { a = a * (float)t->alpha / 255.0f; }
-        pv.argb = (uint32_t)(a + 0.5f) << 24 | (uint32_t)(r * t->k[0] + 0.5f) << 16 | (uint32_t)(g * t->k[1] + 0.5f) << 8 | (uint32_t)(b * t->k[2] + 0.5f);
-        pv.oargb = (uint32_t)(t->o[0] * r / 255.0f + 0.5f) << 16 | (uint32_t)(t->o[1] * g / 255.0f + 0.5f) << 8 | (uint32_t)(t->o[2] * b / 255.0f + 0.5f);
+        argb = (uint32_t)(a + 0.5f) << 24 | (uint32_t)(r * t->k[0] + 0.5f) << 16 | (uint32_t)(g * t->k[1] + 0.5f) << 8 | (uint32_t)(b * t->k[2] + 0.5f);
+        oargb = (uint32_t)(t->o[0] * r / 255.0f + 0.5f) << 16 | (uint32_t)(t->o[1] * g / 255.0f + 0.5f) << 8 | (uint32_t)(t->o[2] * b / 255.0f + 0.5f);
     }
-    pvr_prim(&pv, sizeof(pv));
+    pv->flags = last ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+    pv->x = c->x;
+    pv->y = c->y;
+    pv->z = c->z;
+    pv->u = c->u;
+    pv->v = c->v;
+    pv->argb = argb;
+    pv->oargb = oargb;
+    pvr_dr_commit(pv);
 }
 
 /* A triangle (or what is left of it) in screen pixels, clipped against the scissor rectangle and sent as a fan. */
@@ -690,9 +694,14 @@ static int sSecAlpha; /* this render has written the GS's alpha alone into the s
 static int draw_kept(const GsDraw *d, uint32_t n) {
     uint32_t key;
     if (d->native || d->pipeline < 0 || d->pipeline >= sPipeCount) { return 0; }
-    if (getenv("BT3_PVR_SKIP") != NULL) { /* BT3_PVR_SKIP=<lo>-<hi>: those draws left out (finding a wrong one) */
-        unsigned lo = 0, hi = 0;
-        if (sscanf(getenv("BT3_PVR_SKIP"), "%u-%u", &lo, &hi) == 2 && n >= lo && n <= hi) { return 0; }
+    {   /* BT3_PVR_SKIP=<lo>-<hi>: those draws left out (finding a wrong one) */
+        static int read;
+        static unsigned lo = 1, hi = 0;
+        if (!read) {
+            read = 1;
+            if (getenv("BT3_PVR_SKIP") == NULL || sscanf(getenv("BT3_PVR_SKIP"), "%u-%u", &lo, &hi) != 2) { lo = 1; hi = 0; }
+        }
+        if (n >= lo && n <= hi) { return 0; }
     }
     key = sPipeKey[d->pipeline];
     if (((key >> 10) & 3) == 0 || ((key >> 22) & 1)) { return 0; } /* depth test NEVER; a table pass */
@@ -708,6 +717,83 @@ static int draw_kept(const GsDraw *d, uint32_t n) {
     return 1;
 }
 
+#if GS_STRIPS
+/* A corner of gsVerts as draw_one's triangles have it; 1 = inside the scissor */
+static inline int strip_corner(const Vtx *v, const PvrTex *t, ClipV *o, float x0, float y0, float x1, float y1) {
+    float r = 1.0f / v->q; /* (never 0: gs_draw.c strip_vtx) */
+    o->x = v->x * sSx;
+    o->y = v->y * sSy;
+    o->z = PVR_Z(clampf(v->z, 0.0f, 1.0f));
+    o->u = t != NULL ? v->s * r * sUs : 0.0f;
+    o->v = t != NULL ? v->t * r * sVs : 0.0f;
+    o->c[0] = (float)gs_unit(v->r);
+    o->c[1] = (float)gs_unit(v->g);
+    o->c[2] = (float)gs_unit(v->b);
+    o->c[3] = sFixA >= 0.0f ? sFixA * 255.0f : (float)gs_unit(v->a);
+    return o->x >= x0 && o->x <= x1 && o->y >= y0 && o->y <= y1;
+}
+
+/* A strip draw (gs_draw.c GsGpu_Strip): its strips as the PVR's, a triangle with a corner outside the scissor
+   clipped and sent alone (emit_poly), the strip going on after it */
+static void strip_draw(const GsDraw *d, const PvrTex *t, float x0, float y0, float x1, float y1) {
+    uint32_t i = d->first, e = d->first + d->count;
+    while (i < e) {
+        uint32_t a = i, j;
+        ClipV w[3];
+        int in[3], on = 0;
+        for (i++; i < e && !gsVertRun[i]; i++) {
+        }
+        if (i - a < 3) {
+            continue;
+        }
+        /* (the window of three corners a ring: w[r0], w[r1], w[r2] the triangle's in order) */
+        int r0 = 0, r1 = 1, r2 = 2;
+        in[0] = strip_corner(&gsVerts[a], t, &w[0], x0, y0, x1, y1);
+        in[1] = strip_corner(&gsVerts[a + 1], t, &w[1], x0, y0, x1, y1);
+        for (j = a + 2; j < i; j++) {
+            in[r2] = strip_corner(&gsVerts[j], t, &w[r2], x0, y0, x1, y1);
+            if (in[0] && in[1] && in[2]) {
+                if (on && sStrip.n > 0) {
+                    if (sSent + sizeof(pvr_vertex_t) <= SCENE_BUDGET) {
+                        strip_add(&w[r2]);
+                        sSent += sizeof(pvr_vertex_t);
+                        sTris++;
+                    } else {
+                        sDropped++;
+                        strip_end();
+                        on = 0;
+                    }
+                } else {
+                    strip_end();
+                    if (sSent + 3 * sizeof(pvr_vertex_t) <= SCENE_BUDGET) {
+                        strip_add(&w[r0]);
+                        strip_add(&w[r1]);
+                        strip_add(&w[r2]);
+                        sSent += 3 * sizeof(pvr_vertex_t);
+                        sTris++;
+                        on = 1;
+                    } else {
+                        sDropped++;
+                    }
+                }
+            } else {
+                ClipV c[12];
+                strip_end();
+                on = 0;
+                c[0] = w[r0];
+                c[1] = w[r1];
+                c[2] = w[r2];
+                emit_poly(c, 3, x0, y0, x1, y1);
+            }
+            r0 = r1;
+            r1 = r2;
+            r2 = 3 - r0 - r1;
+        }
+        strip_end();
+    }
+}
+#endif
+
 /* Draw n into the render being built; `t` its texture (a frame buffer's: the version it samples), or NULL. */
 static void draw_one(uint32_t n, const PvrTex *t) {
     const GsDraw *d = &gsDraws[n];
@@ -716,7 +802,9 @@ static void draw_one(uint32_t n, const PvrTex *t) {
     pvr_poly_hdr_t hdr;
     int np, p, tfx;
 
-    if (d->vu && getenv("BT3_PVR_NOTEX") != NULL) { t = NULL; } /* 3D in its colours only */
+    static int noTex = -1;
+    if (noTex < 0) { noTex = getenv("BT3_PVR_NOTEX") != NULL; }
+    if (d->vu && noTex) { t = NULL; } /* 3D in its colours only */
     sUs = sVs = 1.0f;
     if (t != NULL && t->mem != NULL) {
         pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)t->fmt, (int)t->pw, (int)t->ph, t->base,
@@ -838,6 +926,12 @@ static void draw_one(uint32_t n, const PvrTex *t) {
             vu_draw((int)((key >> 20) & 3), &gsVuUni[d->uniform], &gsVuIdx[d->first], d->count, x0, y0, x1, y1);
             continue;
         }
+#if GS_STRIPS
+        if (d->strip) {
+            strip_draw(d, t, x0, y0, x1, y1);
+            continue;
+        }
+#endif
         for (k = 0; k + 2 < d->count; k += 3) {
             ClipV a[12];
             int j, inside = 1;

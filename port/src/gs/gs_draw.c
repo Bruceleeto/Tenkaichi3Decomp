@@ -953,7 +953,7 @@ void Port_WallMesh(const void *key, int second, int culled, const float *screen,
 /* Two draws can be merged into one call when everything they need is the same. `scissor` is compared as
    four ints (the scissor a draw has recorded). */
 static int same_state(const GsDraw *a, const GsDraw *b) {
-    return !a->native && a->vu == b->vu && a->vurec == b->vurec && a->wall == b->wall && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
+    return !a->native && a->vu == b->vu && a->vurec == b->vurec && a->strip == b->strip && a->wall == b->wall && a->target == b->target && a->tex == b->tex && a->sampler == b->sampler && a->pipeline == b->pipeline &&
            memcmp(a->mode, b->mode, sizeof(a->mode)) == 0 && a->misc[0] == b->misc[0] && a->misc[1] == b->misc[1] &&
            a->misc[2] == b->misc[2] && a->misc[3] == b->misc[3] && a->blendc == b->blendc &&
            memcmp(a->rect, b->rect, sizeof(a->rect)) == 0 && memcmp(a->orig, b->orig, sizeof(a->orig)) == 0 &&
@@ -1681,6 +1681,120 @@ void GsGpu_Poly(const RndPoly *p) {
     d.first = gsVertCount;
     rnd_put(&p->st, n, z, x, y, s, t, q, rgba);
     draw_end(&d, 0, 0, (rgba[0] >> 24) != 0);
+}
+
+#if GS_STRIPS
+uint8_t gsVertRun[MAX_VERTS];
+
+/* A strip's corner into gsVerts as put() makes one (its depth in float: no double on the SH4) */
+static inline void strip_vtx(const RndVtx *c, int start, float zk, float zo) {
+    Vtx *o = &gsVerts[gsVertCount];
+    gsVertRun[gsVertCount++] = (uint8_t)start;
+    o->x = c->x; /* (whole sixteenths already: Rnd_Vtx) */
+    o->y = c->y;
+    o->z = (float)c->z * zk + zo;
+    o->r = (uint8_t)c->rgba;
+    o->g = (uint8_t)(c->rgba >> 8);
+    o->b = (uint8_t)(c->rgba >> 16);
+    o->a = (uint8_t)(c->rgba >> 24);
+    o->s = c->s;
+    o->t = c->t;
+    o->q = c->q != 0.0f ? c->q : 1.0f;
+}
+
+/* The strip as GsGpu_Poly's triangles and pairs (what the renderer cannot take whole: a frame buffer as texture, a
+   texture not made, one colour a triangle) */
+static void strip_polys(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n) {
+    RndPoly p;
+    uint32_t k = 2;
+    while (k < n) {
+        if (adc[k]) {
+            k++;
+            continue;
+        }
+        p = *h;
+        if (k + 1 < n && !adc[k + 1]) {
+            memcpy(p.v, &v[k - 2], 4 * sizeof(RndVtx));
+            p.n = 4;
+            k += 2;
+        } else {
+            memcpy(p.v, &v[k - 2], 3 * sizeof(RndVtx));
+            p.n = 3;
+            k++;
+        }
+        gStatPoly--; /* (counted already) */
+        GsGpu_Poly(&p);
+    }
+}
+#endif
+
+int GsGpu_StripTakes(void) {
+#if GS_STRIPS && defined(BT3_PVR)
+    return sBackend == &sPvrBackend;
+#else
+    return 0;
+#endif
+}
+
+void GsGpu_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n) {
+#if GS_STRIPS
+    GsDraw d;
+    GsTex g = 0;
+    uint32_t tw = 1, th = 1, k, need = 0, tris = 0;
+    int run = 0;
+    float zk = 1.0f / 16777215.0f, zo;
+
+    for (k = 2; k < n; k++) {
+        if (adc[k]) {
+            run = 0;
+            continue;
+        }
+        tris++;
+        need += run ? 1 : 3;
+        run = 1;
+    }
+    gStatPoly += tris;
+    if (GS_NO_PICTURE || tris == 0) {
+        return;
+    }
+    if (!(h->st.flags & RND_GOURAUD) || (h->tex & RND_TEX_TARGET)) {
+        strip_polys(h, v, adc, n);
+        return;
+    }
+    if (!lists_room(need, 3, __builtin_return_address(0))) {
+        return;
+    }
+    rnd_check(&h->st, h->gsCtx, h->tex != 0 || h->gsTex0 != 0);
+    if ((h->tex != 0 || h->gsTex0 != 0) && (g = rnd_tex(h->tex, h->pal, h->gsTex0, &tw, &th)) == 0) {
+        strip_polys(h, v, adc, n);
+        return;
+    }
+    if (!rnd_draw_state(&d, &h->st, g, h->gsTex0)) {
+        return;
+    }
+    d.strip = 1;
+    date_snapshot(&d);
+    d.first = gsVertCount;
+    /* put()'s depth: the whole number plus a half and GS_Z_LEAD steps towards the eye, over the largest */
+    zo = depth_frac() ? 0.0f : (float)(0.5 + GS_Z_LEAD) * zk;
+    gsZMax = depth_frac() ? 0.0f : 16777215.0f;
+    run = 0;
+    for (k = 2; k < n; k++) {
+        if (adc[k]) {
+            run = 0;
+            continue;
+        }
+        if (!run) {
+            strip_vtx(&v[k - 2], 1, zk, zo);
+            strip_vtx(&v[k - 1], 0, zk, zo);
+        }
+        strip_vtx(&v[k], 0, zk, zo);
+        run = 1;
+    }
+    draw_end(&d, 0, 0, 1);
+#else
+    (void)h; (void)v; (void)adc; (void)n;
+#endif
 }
 
 /* Vertex program 6 as a shader: one strip of the ground under a fighter, textured with the shadow page (see
@@ -3555,7 +3669,7 @@ static uint32_t interp_prims(InterpPrim *out) {
         /* Not the passes that draw one buffer into another (the glow's and the explosions' smaller copies, the
            blur): their rectangles are in the coordinates of whichever buffer they fill, and a rectangle of one pass
            blended with that of another is a square of garbage. They stay this picture's. */
-        if (d->vu != 0 || d->native != 0 || d->count % 3 != 0 || d->tex_is_target) {
+        if (d->vu != 0 || d->native != 0 || d->strip || d->count % 3 != 0 || d->tex_is_target) {
             continue;
         }
         /* Which buffer it draws into, in a way that is the same next picture: the game shows its two frame buffers

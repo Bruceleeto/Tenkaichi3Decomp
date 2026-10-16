@@ -324,6 +324,39 @@ int Port_Poly(const RndPoly *p) {
     return Gs_RecordPush(&r, 1, Port_Addr(gDmaCur));
 }
 
+extern int Gs_Replaying(void); /* gs/gs_walk.c */
+extern int GsGpu_StripTakes(void); /* gs/gs_draw.c */
+extern void GsGpu_Strip(const RndPoly *p, const RndVtx *v, const uint8_t *adc, uint32_t n);
+int Port_StripTakes(void) {
+    return Gs_Replaying() && GsGpu_StripTakes();
+}
+
+/* A strip whole (Rnd_DrawStrip): its texture resolved as Port_Poly resolves a polygon's, once */
+int Port_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n) {
+    RndPoly r = *h;
+    if (!Gs_TakesRecords()) {
+        return 0;
+    }
+    if (r.gsTex0 != 0) {
+        unsigned i = 0;
+        if (sNotes != NULL && r.tex == 0) {
+            for (; i < sNoteN && sNotes[i].tex0 != r.gsTex0; i++) {
+            }
+        }
+        if (sNotes != NULL && r.tex == 0 && i < sNoteN) {
+            r.tex = sNotes[i].tex;
+            r.pal = sNotes[i].pal;
+        } else {
+            if (sNotes != NULL && r.tex == 0) {
+                Port_Lost("a draw made later: a TEX0 its notes do not have (its low word; resolved as things are now)", (uint32_t)r.gsTex0, __builtin_return_address(0));
+            }
+            bind_resolve(&r.tex, &r.pal, r.gsTex0);
+        }
+    }
+    GsGpu_Strip(&r, v, adc, n);
+    return 1;
+}
+
 extern int Gs_MarksQueued(void); /* gs/gs_walk.c */
 int Port_Mark(uint32_t addr, uint64_t d) {
     uint64_t m[2];

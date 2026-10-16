@@ -108,7 +108,18 @@ typedef struct GsDraw {
     int wall;       /* triangles of the wall at the edge of the map (gs_draw.c, Port_WallMesh): in-between pictures draw it anew */
     int vurec;      /* records of a vertex program (RND_VU): drawn as the VU1's draws are (gs_pvr.c) */
     uint64_t tint;  /* its palette's tint this frame (gGsTint: gs_pvr.c Port_ClutTint); 0 = none */
+    int strip;      /* gsVerts as strips, not triangles (GsGpu_Strip, the Dreamcast's): a strip begins at a vertex
+                       gsVertRun marks, each vertex after the first two makes a triangle with the two before it */
 } GsDraw;
+
+/* The Dreamcast's (and make dcsim's) strip draws (gs_draw.c GsGpu_Strip, gs_pvr.c strip_draw): 1 = a strip begins
+   at this vertex of gsVerts. */
+#if defined(__DREAMCAST__) || defined(BT3_DCSIM)
+#define GS_STRIPS 1
+extern uint8_t gsVertRun[MAX_VERTS];
+#else
+#define GS_STRIPS 0
+#endif
 
 /* The formats a texture pack's replacement can be in (matches gs_texpack.h's TexPackImage.format). */
 #define GS_TEXFMT_RGBA8 0

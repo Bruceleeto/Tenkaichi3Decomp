@@ -91,6 +91,12 @@ struct RndQuad;
 struct RndPoly;
 void GsGpu_Quad(const struct RndQuad *q); /* a quad the game handed over (include/port/rnd.h), from the queue (gs_walk.c) */
 void GsGpu_Poly(const struct RndPoly *p); /* a polygon, the same */
+struct RndVtx;
+/* A vertex program's strip as one draw (include/port/rnd.h Rnd_DrawStrip): corners v[0..n), triangle k (corners k - 2,
+   k - 1, k) left out where adc[k]; p its state and texture (its corners unused). GsGpu_StripTakes: 1 = the renderer
+   takes them (the PVR's, on the Dreamcast and make dcsim). */
+void GsGpu_Strip(const struct RndPoly *p, const struct RndVtx *v, const uint8_t *adc, uint32_t n);
+int GsGpu_StripTakes(void);
 void GsGpu_FrameEnd(void);
 /* The game is re-running frames it has already shown (online play after a late input; the save / restore test):
    nothing of them is to be seen or heard. The frame's list is still walked, because it also carries the texture

@@ -112,6 +112,8 @@ typedef struct RndPoly {
 } RndPoly; /* 160 bytes */
 
 /* port/src/gs_marker.c */
+int Port_StripTakes(void);       /* 1: Port_Strip draws a strip now */
+int Port_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n); /* Rnd_DrawStrip's, state set */
 int Port_Quad(const RndQuad *q); /* queues the quad at the display list's cursor; 0 = not taken (the software renderer,
                                     which draws only GS packets: the caller sends its packet as before) */
 int Port_TakesRecords(void);     /* 1: Port_Quad takes them now */
@@ -144,6 +146,11 @@ extern uint32_t gRndCtxBad[2];
    or not, its colours blended between the corners (gouraud) or not; its texture by p->tex / p->gsTex0. 0 = not
    taken (the software renderer, or a state gRndCtxBad says): the caller sends its packet. */
 int Rnd_Draw(RndPoly *p, int ctx, int abe, int gouraud);
+/* A strip of n corners as Rnd_Draw draws them, triangle k (corners k - 2, k - 1, k; k from 2) left out where adc[k]:
+   h its texture and flags (its corners unused). Where the renderer takes a strip whole (port/src/gs_marker.c
+   Port_StripTakes: the Dreamcast's, while a draw made later is made) it is one draw; elsewhere triangles and pairs of
+   them through Rnd_Draw, as before. */
+int Rnd_DrawStrip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n, int ctx, int abe, int gouraud);
 /* A corner from what a GS packet gives: x, y in sixteenths of a pixel (XYOFFSET of context ctx at 0, 0), the
    24-bit depth, s t q, r g b a. */
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
