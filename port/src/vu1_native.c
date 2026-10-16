@@ -157,13 +157,23 @@ static void put_vtx(RndVtx *o, int ctx, const float scr[4], float s, float t, fl
 
 /* ---------------------------------------------------------------------------------------------- the chains */
 
+/* Words copied as words: the SH-4 loads nothing unaligned, so gcc makes a memcpy of 8 bytes from a uint32_t * (or
+   of floats) a call to newlib's, byte by byte at the end; these are loads and stores (profiled: 15% of a frame). */
+static inline uint64_t ld64(const uint32_t *p) { return p[0] | (uint64_t)p[1] << 32; }
+static inline void cp32(void *d, const void *s, unsigned n) { /* n words */
+    uint32_t *o = (uint32_t *)d;
+    const uint32_t *i = (const uint32_t *)s;
+    unsigned j;
+    for (j = 0; j < n; j++) { o[j] = i[j]; }
+}
+
 /* A GIF tag of a strip or fan as the programs send them: PRIM from the tag (PRE), packed, the registers ST, RGBAQ,
    XYZF2, the end of the packet (EOP) where eop asks for it, the type asked for, texture coordinates as s t q and
    no fog (what a record can draw). */
 static int tag_ok(const uint32_t *tag, unsigned type, int eop) {
     uint64_t lo, hi, prim;
-    memcpy(&lo, tag, 8);
-    memcpy(&hi, tag + 2, 8);
+    lo = ld64(tag);
+    hi = ld64(tag + 2);
     prim = (lo >> 47) & 0x7FF;
     return (!eop || ((lo >> 15) & 1)) && ((lo >> 46) & 1) && ((lo >> 58) & 3) == 0 && ((lo >> 60) & 15) == 3 && (hi & 0xFFF) == 0x412 &&
            (prim & 7) == type && !((prim >> 5) & 1) && !((prim >> 8) & 1) && (lo & 0x7FFF) != 0;
@@ -172,7 +182,7 @@ static int tag_ok(const uint32_t *tag, unsigned type, int eop) {
 /* The PRIM a tag carries, as the GS draws by it (with PRMODECONT 0 the attributes are PRMODE's: Rnd_Prim). */
 static uint32_t tag_prim(const uint32_t *tag) {
     uint64_t lo;
-    memcpy(&lo, tag, 8);
+    lo = ld64(tag);
     return Rnd_Prim((uint32_t)(lo >> 47) & 0x7FF);
 }
 
@@ -512,7 +522,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         return wk->draw != W_CHECK || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
     }
     split(hdr, &nh, &vtx, &nv, 3);
-    memcpy(&lo, hdr, 8);
+    lo = ld64(hdr);
     /* +0 a tag of one NOP register (its quadword +1 is thrown away by the GIF), +2 the strip's tag */
     if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 || (hdr[2] & 15) != 15 ||
         !tag_ok(hdr + 8, 4, 1)) {
@@ -533,7 +543,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         return 1;
     }
     for (i = 0; i < n; i++) { /* (the positions as points: the matrices' runs read them from there) */
-        memcpy(scr[i], vtx + i * 12, 16);
+        cp32(scr[i], vtx + i * 12, 4);
     }
     mtx_run(clip, wk->c + 16, (const float (*)[4])scr, n);
     mtx_run(scr, wk->c, (const float (*)[4])scr, n);
@@ -625,14 +635,14 @@ typedef struct FigWalk {
 /* The A+D tag of one register the batch starts with (no EOP: the strip's tag follows in the same kick). */
 static int ad_tag_ok(const uint32_t *tag) {
     uint64_t lo, hi;
-    memcpy(&lo, tag, 8);
-    memcpy(&hi, tag + 2, 8);
+    lo = ld64(tag);
+    hi = ld64(tag + 2);
     return (lo & 0x7FFF) == 1 && ((lo >> 58) & 3) == 0 && ((lo >> 60) & 15) == 1 && (hi & 15) == 14;
 }
 
 /* An A+D quadword's value, when it writes TEX0 of context ctx (TEX0_1 0x06, TEX0_2 0x07). */
 static int ad_tex0(const uint32_t *ad, int ctx, uint64_t *tex0) {
-    memcpy(tex0, ad, 8);
+    *tex0 = ld64(ad);
     return (ad[2] & 0xFF) == (uint32_t)(6 + ctx);
 }
 
@@ -673,7 +683,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         return gRndCtxBad[ctx[0]] == 0 && gRndCtxBad[ctx[1]] == 0 ? 1 : refuse(__LINE__ | (gRndCtxBad[ctx[0]] | gRndCtxBad[ctx[1]]) << 16);
     }
     if (wk->prog == 1) {
-        memcpy(&tex0[1], k + 104, 8); /* constant 26: TEX0_2 of the fade texture, as ObjDraw_DrawParts writes it */
+        tex0[1] = ld64((const uint32_t *)(k + 104)); /* constant 26: TEX0_2 of the fade texture, as ObjDraw_DrawParts writes it */
     }
     if (wk->draw == W_NOTE) {
         note(prim[0], tex0[0]);
@@ -689,8 +699,8 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
             mtx_apply(lightA + c * 4, k + 40, k[c * 4], k[c * 4 + 1], k[c * 4 + 2], k[c * 4 + 3]);
             mtx_apply(lightB + c * 4, k + 40, k[16 + c * 4], k[16 + c * 4 + 1], k[16 + c * 4 + 2], k[16 + c * 4 + 3]);
         }
-        memcpy(lightA + 12, k + 52, 16);
-        memcpy(lightB + 12, k + 52, 16);
+        cp32(lightA + 12, k + 52, 4);
+        cp32(lightB + 12, k + 52, 4);
     }
     /* each matrix run over the batch's corners at once (mtx_run): the corner relative to bone A's pivot and to B's,
        through A and B, blended by the weight; through the screen and the clip; the normal through the light(s) */
@@ -704,7 +714,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         pb[i][1] = vu_clamp(v[1] - k[37]);
         pb[i][2] = vu_clamp(v[2] - k[38]);
         pb[i][3] = 1.0f;
-        memcpy(cs[i], v + 4, 12); /* (the normal) */
+        cp32(cs[i], v + 4, 3); /* (the normal) */
         cs[i][3] = 1.0f;
     }
     if (wk->prog == 0) {
@@ -734,7 +744,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
             u = vu_clamp(vu_clamp(l[0] * 0.5f) + 0.5f);
             t = 0.0f;
         } else { /* (u, v) = 0.5 * (1 + (light * normal).xy) */
-            memcpy(l, la[i], 16);
+            cp32(l, la[i], 4);
             u = vu_clamp(vu_clamp(1.0f + l[0]) * 0.5f);
             t = vu_clamp(vu_clamp(1.0f + l[1]) * 0.5f);
         }
@@ -935,7 +945,7 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     int ctx;
 
     if (!wk->header) { /* the first MSCNT: the fans' tag (NLOOP 0: the clipper writes it) */
-        memcpy(&lo, hdr, 8);
+        lo = ld64(hdr);
         if (nh != 1 || vtx != NULL || !((lo >> 15) & 1) || !((lo >> 46) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 3 ||
             (hdr[2] & 0xFFF) != 0x412 || (tag_prim(hdr) & 0x127) != 5) {
             return 0;
@@ -947,7 +957,7 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         }
         return wk->draw != W_CHECK || gRndCtxBad[(wk->fanPrim >> 9) & 1] == 0;
     }
-    memcpy(&lo, hdr, 8);
+    lo = ld64(hdr);
     /* +0 a tag of one register (+1 its quadword: neither is sent), +2 the strip's tag; the vertices behind */
     if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 58) & 3) != 0 || !tag_ok(hdr + 8, 4, 1)) {
         return 0;
@@ -1052,7 +1062,7 @@ static int p7_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     int ctx;
 
     split(hdr, &nh, &vtx, &nv, 3);
-    memcpy(&lo, hdr, 8);
+    lo = ld64(hdr);
     /* +0 a tag of one NOP register (its quadword +1 is thrown away by the GIF), +2 the strip's tag */
     if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 15) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 ||
         (hdr[2] & 15) != 15 || !tag_ok(hdr + 8, 4, 1)) {
@@ -1139,7 +1149,7 @@ void Vu1Native_SetProg8(const void *consts) {
 static int hdr_tex0(const uint32_t *hdr, int ctx, uint64_t *tex0) {
     uint32_t reg = hdr[2] & 15;
     if (reg == (uint32_t)(6 + ctx) || (reg == 14 && (hdr[6] & 0xFF) == (uint32_t)(6 + ctx))) {
-        memcpy(tex0, hdr + 4, 8);
+        *tex0 = ld64(hdr + 4);
         return 1;
     }
     return 0;
@@ -1161,7 +1171,7 @@ static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
     int ctx;
 
     split(hdr, &nh, &vtx, &nv, 3);
-    memcpy(&lo, hdr, 8);
+    lo = ld64(hdr);
     /* +0 a tag of one register, no end of packet (+1 its value), +2 the strip's tag */
     if (nh != 3 || vtx == NULL || (lo & 0x7FFF) != 1 || ((lo >> 15) & 1) || ((lo >> 58) & 3) != 0 || ((lo >> 60) & 15) != 1 ||
         !tag_ok(hdr + 8, 4, 1)) {

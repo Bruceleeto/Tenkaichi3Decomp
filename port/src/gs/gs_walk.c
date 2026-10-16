@@ -477,6 +477,9 @@ void Gs_FramePace(uint64_t tChain) {
     uint64_t t;
 
     t = Gs_NowNs();
+#if defined(__DREAMCAST__) && defined(BT3_PROF)
+    { extern void Prof_Frame(void); Prof_Frame(); } /* (port/src/dc/dc_prof.c: Makefile.dc DC_PROF=1) */
+#endif
     if (fpsFrom == 0) { fpsFrom = t; }
     if (++fpsN, t - fpsFrom >= 5000000000ull) { /* frames a second, every 5 seconds */
         printf("fps: %.1f; a frame: %u meshes, %u vertices, %u polygons, %u draws\n", (double)fpsN * 1e9 / (double)(t - fpsFrom),

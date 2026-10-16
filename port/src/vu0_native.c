@@ -160,8 +160,12 @@ static inline V4 nat_normalize3(V4 v) {
 
 /* atan2: the game's own (as the PS2's Vec3_DirToEuler calls libm's). sh4zam's shz_atan2f is off by up to 0.01 rad,
  * and the game turns the camera's direction into angles and back each frame: the error grew until the camera was lost */
+#ifdef __DREAMCAST__
+static inline float nat_atan2f(float y, float x) { return atan2f(y, x); } /* (newlib's: the Dreamcast has no bridge) */
+#else
 float Port_atan2f(float, float);
 static inline float nat_atan2f(float y, float x) { return Port_atan2f(y, x); }
+#endif
 
 /* a / b as the PS2 divides: a zero divisor gives +/-FLT_MAX with the sign of sign(a) xor sign(b) */
 static inline float div_ps2(float a, float b) {
