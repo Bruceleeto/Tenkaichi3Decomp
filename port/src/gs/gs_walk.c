@@ -401,6 +401,9 @@ static void rnd_walked(void) {
 }
 
 static uint64_t sMeshNs; /* this frame's time making the queued meshes (Gs_FramePace) */
+/* counted for the fps line: meshes made, their vertices (vu1_native.c), polygons the renderer took and draws it
+   began (gs_draw.c GsGpu_Poly, draw_end: a polygon in the previous draw's state joins it) */
+unsigned gStatMesh, gStatVtx, gStatPoly, gStatDraw;
 
 static void rnd_draw(const RndCmd *c) {
     const uint8_t *d = c->d;
@@ -410,6 +413,7 @@ static void rnd_draw(const RndCmd *c) {
         uint64_t t0 = Gs_NowNs();
         memcpy(&fn, d, sizeof(fn));
         sReplay = 1;
+        gStatMesh++;
         fn(d + 8);
         sReplay = 0;
         sMeshNs += Gs_NowNs() - t0;
@@ -470,7 +474,9 @@ void Gs_FramePace(uint64_t tChain) {
     t = Gs_NowNs();
     if (fpsFrom == 0) { fpsFrom = t; }
     if (++fpsN, t - fpsFrom >= 5000000000ull) { /* frames a second, every 5 seconds */
-        printf("fps: %.1f\n", (double)fpsN * 1e9 / (double)(t - fpsFrom));
+        printf("fps: %.1f; a frame: %u meshes, %u vertices, %u polygons, %u draws\n", (double)fpsN * 1e9 / (double)(t - fpsFrom),
+               gStatMesh / fpsN, gStatVtx / fpsN, gStatPoly / fpsN, gStatDraw / fpsN);
+        gStatMesh = gStatVtx = gStatPoly = gStatDraw = 0;
         fflush(stdout);
         fpsFrom = t;
         fpsN = 0;

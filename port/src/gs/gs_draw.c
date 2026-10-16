@@ -1240,6 +1240,7 @@ static void draw_prim(int type, const GsRegs *r, const GsVertex *v) {
 /* The end of a primitive recorded as draw d (its vertices from d->first on): seen as the HUD's, narrowed for a wide
    picture, and merged with the draw before it. art: 2D art (a sprite, or texel coordinates); sprite: a sprite;
    lit: not wholly transparent. */
+extern unsigned gStatPoly, gStatDraw; /* gs/gs_walk.c (the fps line) */
 static void draw_end(GsDraw *d, int art, int sprite, int lit) {
     GsDraw *last;
 
@@ -1317,6 +1318,7 @@ static void draw_end(GsDraw *d, int art, int sprite, int lit) {
     if (last != NULL && same_state(last, d)) {
         last->count += d->count; /* same state as the previous primitive: one draw call */
     } else {
+        gStatDraw++;
         gsDraws[gsDrawCount++] = *d;
     }
 }
@@ -1630,6 +1632,7 @@ void GsGpu_Poly(const RndPoly *p) {
     uint32_t tw = 1, th = 1, z[4], rgba[4];
     int i, n = p->n == 4 ? 4 : 3, tgt = 0;
 
+    gStatPoly++;
     if (GS_NO_PICTURE) {
         return;
     }

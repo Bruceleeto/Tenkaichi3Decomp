@@ -115,7 +115,9 @@ static unsigned clip_flags(const float c[4]) {
 
 /* A corner as the program stores it for the GS (XYZF2 from the screen position already divided, ST and Q, RGBAQ
    from the colour's integers) and as the GS reads that: x, y 12.4, the depth from bit 4 of the third word. */
+extern unsigned gStatVtx; /* gs/gs_walk.c (the fps line) */
 static void put_vtx(RndVtx *o, int ctx, const float scr[4], float s, float t, float q, const int32_t col[4]) {
+    gStatVtx++;
     uint32_t z = ((uint32_t)vu_ftoi(scr[2], 16.0f) >> 4) & 0xFFFFFF;
     uint32_t rgba = ((uint32_t)col[0] & 0xFF) | ((uint32_t)col[1] & 0xFF) << 8 | ((uint32_t)col[2] & 0xFF) << 16 |
                     ((uint32_t)col[3] & 0xFF) << 24;
