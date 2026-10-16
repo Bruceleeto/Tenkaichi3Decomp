@@ -463,9 +463,18 @@ static int time_report(void) {
 void Gs_FramePace(uint64_t tChain) {
     static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, sumMesh, perMin = ~0ull, perMax;
     static unsigned n, over;
+    static uint64_t fpsFrom;
+    static unsigned fpsN;
     uint64_t t;
 
     t = Gs_NowNs();
+    if (fpsFrom == 0) { fpsFrom = t; }
+    if (++fpsN, t - fpsFrom >= 5000000000ull) { /* frames a second, every 5 seconds */
+        printf("fps: %.1f\n", (double)fpsN * 1e9 / (double)(t - fpsFrom));
+        fflush(stdout);
+        fpsFrom = t;
+        fpsN = 0;
+    }
     if (start != 0) {
         extern unsigned long long gPortSleptNs;
         uint64_t waited = (uint64_t)gPortSleptNs;
