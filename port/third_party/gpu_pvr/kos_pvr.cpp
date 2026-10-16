@@ -580,7 +580,10 @@ extern "C" int kos_pvr_init(void)
 	for (int l = 0; l < 5; l++)
 		ol_base_size += opb_words[l] * 4 * NTILES;
 	next_opb_init = OL_BASE + ol_base_size;
-	ol_limit = OL_BASE + ol_base_size * (1 + OPB_OVERFLOW);
+	/* (an OPB overflow writes the shared End-of-List word AT TA_OL_LIMIT, which "cannot be used for other data":
+	 * one 64-byte block short of the region array, else it lands on tile 0's entry, sets z_clear / last / flush,
+	 * and every render after shows only what that left) */
+	ol_limit = OL_BASE + ol_base_size * (1 + OPB_OVERFLOW) - 64;
 	frame32[0] = SET_END;
 	frame32[1] = 0x400000u + SET_END;
 	if (SET_END + FRAME_BYTES > 0x400000u || TEX_BASE >= VRAM_SIZE) {
