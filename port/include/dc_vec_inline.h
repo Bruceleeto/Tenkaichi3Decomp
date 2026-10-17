@@ -42,7 +42,18 @@ static inline __attribute__((always_inline)) float dcv_recip(float w) {
     return shz_invf(w);
 }
 
-static inline __attribute__((always_inline)) void dcv_Vec4_Copy(void *dst, const void *src) { *(DcvV4 *)dst = *(const DcvV4 *)src; }
+/* (the PS2's lq / sq: four words, loaded then stored; a struct copy here is a memcpy call at -Os, and sh4zam's
+   shz_memcpy4 a call too, its SHZ_INLINE only a hint) */
+static inline __attribute__((always_inline)) void dcv_Vec4_Copy(void *dst, const void *src) {
+    const uint32_t *s = (const uint32_t *)src;
+    uint32_t *d = (uint32_t *)dst;
+    uint32_t a = s[0], b = s[1], c = s[2], e = s[3];
+
+    d[0] = a;
+    d[1] = b;
+    d[2] = c;
+    d[3] = e;
+}
 static inline __attribute__((always_inline)) void dcv_Vec3_Copy(void *dst, const void *src) {
     DcvV4 s = *(const DcvV4 *)src;
     DcvV4 *d = (DcvV4 *)dst;
