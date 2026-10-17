@@ -656,7 +656,7 @@ void EftMesh_DrawTriClip(EftMeshOut *v, s32 hasTex, s32 blend, s32 flag1, s32 fl
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftMeshOut portPoly[16];
-    __builtin_memcpy(portPoly, v, 3 * sizeof(EftMeshOut));
+    PORT_COPY(portPoly, v, 3);
     v = portPoly;
 #endif
     EftAdScr scr[9];
@@ -710,7 +710,7 @@ void EftMesh_DrawNowTriClip(EftMeshOut *v, u64 tex0, s32 abe) {
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftMeshOut portPoly[16];
-    __builtin_memcpy(portPoly, v, 3 * sizeof(EftMeshOut));
+    PORT_COPY(portPoly, v, 3);
     v = portPoly;
 #endif
     EftAdScr scr[9];
@@ -1047,7 +1047,7 @@ void EftMesh_SendTri(EftAdScr *p0, EftAdScr *p1, EftAdScr *p2, EftAdVec *c0, Eft
         pp[0] = p0; pp[1] = p1; pp[2] = p2;
         cc[0] = c0; cc[1] = c1; cc[2] = c2;
         tt[0] = t0; tt[1] = t1; tt[2] = t2;
-        memset(&r, 0, sizeof(r));
+        PORT_ZERO(&r);
         for (k = 0; k < 3; k++) {
             u8 cr = cc[k]->x, cg = cc[k]->y, cb = cc[k]->z, ca = cc[k]->w; /* (as the packet's bytes take them) */
             Rnd_Vtx(&r.v[k], 0, pp[k]->x, pp[k]->y, (u32)pp[k]->z & 0xFFFFFF, tt[k]->x, tt[k]->y, tt[k]->z,

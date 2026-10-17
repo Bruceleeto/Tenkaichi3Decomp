@@ -500,7 +500,7 @@ static s32 HudSprite_PortQuad(s32 ctx, f32 (*v)[4], s32 (*uv)[2], HudCTex *t, Hu
         return 0;
     }
     Dma_EndDirect(end);
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     r.st = gRndCtx[ctx];
     for (i = 0; i < 4; i++) {
         r.xy[i][0] = (f32)(s32)v[i][0];

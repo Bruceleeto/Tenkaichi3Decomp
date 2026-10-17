@@ -1422,7 +1422,7 @@ static void ScrWarp_PortDraw(s32 split, s32 view, s32 x0, s32 x1, s32 w, s32 tw)
     st.scissor[3] = 0xE0 - 1;
     Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)tw, 224.0f,
              (x0 << 4) + 8, 8, ((x0 + w) << 4) + 8, (0x1C0 << 4) + 8, 0x80808080);
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     Rnd_StateInit(&r.st, GFX_FRAME_FBP());
     r.st.flags = RND_SMOOTH | RND_GOURAUD;
     r.st.scissor[0] = x0;

@@ -78,7 +78,7 @@ static s32 EftBurst_PortQuad(u64 **pkt, EftBurstTex *tex, u64 tex0, u64 rgbaq, E
         return 0;
     }
     Dma_EndDirect(*pkt);
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     for (i = 0; i < 4; i++) {
         s32 a = n == 2 ? (i & 1) : i, b = n == 2 ? (i >> 1) : i, c = n == 2 ? 1 : i; /* (x, y and depth from) */
         u64 xa = (s64)scr[a][0] | ((s64)scr[a][1] << 16) | ((s64)scr[a][2] << 32);
@@ -103,7 +103,7 @@ static void EftBurst_PortTri(s32 ctx, EftBurstTex *tex, u64 tex0, u64 *rgbaq, s3
     RndPoly r;
     s32 k;
 
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     for (k = 0; k < 3; k++) {
         u64 xyz = (s64)scr[k][0] | ((s64)scr[k][1] << 16) | ((s64)scr[k][2] << 32);
         u32 qb = (u32)(rgbaq[k * stride] >> 32);
@@ -515,7 +515,7 @@ void EftBurst_ClearAlphaPlane(void) {
         RndPoly r;
         s32 i;
         Dma_EndDirect(p);
-        memset(&r, 0, sizeof(r));
+        PORT_ZERO(&r);
         for (i = 0; i < 4; i++) {
             Rnd_Vtx(&r.v[i], 1, i & 1 ? 0x9000 : 0x7000, i & 2 ? 0x8E00 : 0x7200, 0, 0.0f, 0.0f, 1.0f, 0);
         }

@@ -429,7 +429,7 @@ static void StgHaze_PortDraw(StgHaze *haze, s32 x0, s32 x1, s32 width, s32 width
     st.scissor[3] = 0xDF;
     Rnd_Blit(&st, Rnd_TargetTex(GFX_FRAME_FBP(), 0x200, 0x200, 0) | RND_TEX_RGB, 0.0f, 0.0f, (f32)widthPx, 224.0f,
              x0 << 4, 0, (x0 + width) << 4, 0x1C0 << 4, 0x80808080);
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     Rnd_StateInit(&r.st, GFX_FRAME_FBP());
     r.st.flags = RND_SMOOTH | RND_DEST_ALPHA;
     r.st.scissor[0] = x0;
@@ -1066,7 +1066,7 @@ static void StgBlur_PortRing(const RndState *st, u32 tex, s32 v[10][5], s32 xOff
     s32 k;
     s32 j;
 
-    memset(&r, 0, sizeof(r));
+    PORT_ZERO(&r);
     r.n = 4;
     r.tex = tex;
     r.st = *st;

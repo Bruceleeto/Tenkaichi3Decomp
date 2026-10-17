@@ -402,7 +402,7 @@ void EftSurf_DrawTriDirect(EftScrPos *scr0, EftScrPos *scr1, EftScrPos *scr2, Ve
 #ifdef PORT
         {   /* the triangle as a record (include/port/rnd.h), under the state context i has in the display list */
             RndPoly r;
-            __builtin_memset(&r, 0, sizeof(r));
+            PORT_ZERO(&r);
             Rnd_Vtx(&r.v[0], i, scr0->x, scr0->y, (u32)scr0->z & 0xFFFFFF, st0->x, st0->y, st0->z,
                     (u8)c[0] | (u32)(u8)c[1] << 8 | (u32)(u8)c[2] << 16 | (u32)(u8)c[3] << 24);
             Rnd_Vtx(&r.v[1], i, scr1->x, scr1->y, (u32)scr1->z & 0xFFFFFF, st1->x, st1->y, st1->z,

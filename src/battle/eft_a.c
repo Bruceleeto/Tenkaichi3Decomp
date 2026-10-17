@@ -1570,7 +1570,7 @@ void EftGfx_DrawPolyAvgZ(EftGfxVert *verts, s32 arg1, s32 arg2, s32 arg3, s32 fl
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftGfxVert portPoly[16];
-    __builtin_memcpy(portPoly, verts, 3 * sizeof(EftGfxVert));
+    PORT_COPY(portPoly, verts, 3);
     verts = portPoly;
 #endif
     EftGfxScr scr[9];
@@ -1606,7 +1606,7 @@ void EftGfx_DrawPolyFixedZ(EftGfxVert *verts, s32 arg1, s32 arg2, s32 arg3, s32 
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftGfxVert portPoly[16];
-    __builtin_memcpy(portPoly, verts, 3 * sizeof(EftGfxVert));
+    PORT_COPY(portPoly, verts, 3);
     verts = portPoly;
 #endif
     EftGfxScr scr[9];
@@ -1642,7 +1642,7 @@ void EftGfx_DrawPolyAvgZFront(EftGfxVert *verts, s32 arg1, s32 arg2, s32 arg3, s
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftGfxVert portPoly[16];
-    __builtin_memcpy(portPoly, verts, 3 * sizeof(EftGfxVert));
+    PORT_COPY(portPoly, verts, 3);
     verts = portPoly;
 #endif
     EftGfxScr scr[9];
@@ -1680,7 +1680,7 @@ void EftGfx_DrawPolyScaledZ(EftGfxVert *verts, s32 arg1, s32 arg2, s32 arg3, s32
        the PS2 the extra corners land in the caller's other locals; on PC they reach the return address (the
        crash in EftRibbon_DrawStrip). The work is done on a copy with room. */
     EftGfxVert portPoly[16];
-    __builtin_memcpy(portPoly, verts, 3 * sizeof(EftGfxVert));
+    PORT_COPY(portPoly, verts, 3);
     verts = portPoly;
 #endif
     EftGfxScr scr[9];

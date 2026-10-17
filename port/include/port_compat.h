@@ -34,6 +34,28 @@ typedef float f32;
 #define PORT_STR(x) PORT_STR_(x)
 #define ASM_NAME(name) __asm__(PORT_STR(__USER_LABEL_PREFIX__) name)
 
+/* Copying / clearing a 4-aligned struct as words: on the SH-4 a struct copy or memset of more than a few words is a
+   call into newlib. (The barrier keeps gcc from making the loop a memcpy / memset call again.) PORT_ZERO(&x) and
+   PORT_COPY(d, s, n) (n of *d) check that the size is whole words. */
+static inline __attribute__((always_inline)) void Port_Zero32(void *d, unsigned bytes) {
+    unsigned *o = (unsigned *)d, j;
+    for (j = 0; j < bytes / 4; j++) {
+        o[j] = 0;
+        __asm__("" ::: "memory");
+    }
+}
+static inline __attribute__((always_inline)) void Port_Copy32(void *d, const void *s, unsigned bytes) {
+    unsigned *o = (unsigned *)d, j;
+    const unsigned *i = (const unsigned *)s;
+    for (j = 0; j < bytes / 4; j++) {
+        o[j] = i[j];
+        __asm__("" ::: "memory");
+    }
+}
+#define PORT_WORDS_(x) (sizeof(x) + 0 * sizeof(char[sizeof(x) % 4 == 0 ? 1 : -1]))
+#define PORT_ZERO(p) Port_Zero32((p), PORT_WORDS_(*(p)))
+#define PORT_COPY(d, s, n) Port_Copy32((d), (s), (n) * PORT_WORDS_(*(d)))
+
 /* C library calls of the game that must not go to the host's versions (see port/src/plat_mem.c). */
 #define malloc Port_Malloc
 
