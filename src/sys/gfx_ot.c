@@ -184,8 +184,50 @@ void Ot_Link(OtEntry *entry, s32 count) {
     }
 }
 
+#ifdef PORT
+/* Ot_Link and Ot_ResetEntries in one pass: a used chain linked and emptied as it is passed, an empty one only read
+   (tail = head already). The table is 64 KB, four times the SH4's data cache: two passes over it were two misses a
+   line; the lines ahead fetched as it goes. Ot_Send walks the packets, not the table, so the chains are emptied
+   before it as well as after. */
+static void Ot_LinkReset(OtEntry *entry, s32 count) {
+    OtPrim *head = NULL;
+    OtPrim *tail = NULL;
+    s32 i;
+
+    for (i = 0; i < count; i++, entry++) {
+        if ((i & 3) == 0) {
+            __builtin_prefetch(entry + 16);
+        }
+        if (entry->tail != entry->head) {
+            if (tail == NULL) {
+                head = entry->head;
+            } else {
+                tail->next = entry->head;
+            }
+            tail = entry->tail;
+            entry->tail = entry->head;
+        }
+    }
+    gOtHead = head;
+    gOtTail = tail;
+}
+#endif
+
 /* Draws what was queued this frame (unless the battle hides it) and empties the table. */
 s32 Ot_Draw(void) {
+#ifdef PORT
+    Ot_LinkReset(gOtFirst->layer, OT_ENTRY_COUNT);
+    if (BtlStage_IsReady()) {
+        Ot_Send();
+    }
+    /* Ot_Reset but for its Ot_ResetEntries (done above) */
+    gOt->cur = 0;
+    gOtFirst = gOt->slots[0];
+    gOtZ = gOt->slots[1];
+    gOtLast = gOt->slots[2];
+    Ot_ResetCursor();
+    return 1;
+#endif
     Ot_Link(gOtFirst->layer, OT_ENTRY_COUNT);
     if (BtlStage_IsReady()) {
         Ot_Send();

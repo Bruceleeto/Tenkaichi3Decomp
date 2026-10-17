@@ -22,6 +22,8 @@ void Port_GsMarker(int effect) {
 
 extern int Gs_TakesRecords(void);                                       /* gs/gs_walk.c */
 extern int Gs_RecordPush(const void *rec, int kind, uint32_t at); /* gs/gs_walk.c */
+extern void *Gs_RecordAt(int kind, uint32_t at);
+extern int Gs_Replaying(void);
 extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
 
 RndState gRndCtx[2] __attribute__((aligned(4))); /* (copied as words: rnd_gs.c) */
@@ -305,6 +307,19 @@ int Port_Quad(const RndQuad *q) {
     if (q->gsTex0 == 0) {
         return Gs_RecordPush(q, 0, Port_Addr(gDmaCur));
     }
+    if (!Gs_Replaying()) { /* (written where it is queued: one copy, not two) */
+        uint32_t tex = q->tex;
+        uint32_t pal = q->pal;
+        RndQuad *d;
+        bind_resolve(&tex, &pal, q->gsTex0); /* (before its room is taken, as it was) */
+        if ((d = Gs_RecordAt(0, Port_Addr(gDmaCur))) == NULL) {
+            return 0;
+        }
+        cpw(d, q, sizeof(*d));
+        d->tex = tex;
+        d->pal = pal;
+        return 1;
+    }
     cpw(&r, q, sizeof(r));
     bind_resolve(&r.tex, &r.pal, r.gsTex0);
     return Gs_RecordPush(&r, 0, Port_Addr(gDmaCur));
@@ -331,6 +346,19 @@ int Port_Poly(const RndPoly *p) {
     }
     if (p->gsTex0 == 0) {
         return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
+    }
+    if (!Gs_Replaying() && (sNotes == NULL || p->tex != 0)) { /* (written where it is queued: one copy, not two) */
+        uint32_t tex = p->tex;
+        uint32_t pal = p->pal;
+        RndPoly *d;
+        bind_resolve(&tex, &pal, p->gsTex0); /* (before its room is taken, as it was) */
+        if ((d = Gs_RecordAt(1, Port_Addr(gDmaCur))) == NULL) {
+            return 0;
+        }
+        cpw(d, p, sizeof(*d));
+        d->tex = tex;
+        d->pal = pal;
+        return 1;
     }
     cpw(&r, p, sizeof(r));
     if (sNotes != NULL && r.tex == 0) {

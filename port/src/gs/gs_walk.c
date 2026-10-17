@@ -341,6 +341,13 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     return 1;
 }
 
+/* Room for a record of kind 0 (RndQuad) or 1 (RndPoly) at address `at` of the list being made, for the caller to fill
+   in place: Gs_RecordPush without its copy (Port_Quad / Port_Poly, whose records are their callers' with the texture
+   resolved). Not when a draw made later is being made (Gs_Replaying: Gs_RecordPush draws it). NULL = not taken. */
+void *Gs_RecordAt(int kind, uint32_t at) {
+    return rnd_entry(kind, at, kind == 0 ? sizeof(RndQuad) : sizeof(RndPoly), __builtin_return_address(0));
+}
+
 /* A draw made later is being made (its records go straight to the renderer) */
 int Gs_Replaying(void) {
     return sReplay;
