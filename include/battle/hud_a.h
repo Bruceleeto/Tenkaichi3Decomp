@@ -63,8 +63,8 @@ struct HudNode {
     /* 0x24 */ HudSprite **sprites;
     /* 0x28 */ u32 childCount;
     /* 0x2C */ HudNode **children;
-    /* 0x30 */ void (*update)(); /* called without arguments; a callee that wants the node reads $a0, which
-                                    still holds it (HudTeam_UpdateRoot) */
+    /* 0x30 */ void (*update)(HudNode *node); /* called with the node; most callees take nothing (HudCaption_Update),
+                                                 HudTeam_UpdateRoot takes it */
     /* 0x34 */ void (*draw)(HudNode *node);
 }; /* size 0x38 */
 

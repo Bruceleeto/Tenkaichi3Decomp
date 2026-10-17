@@ -1331,7 +1331,11 @@ s32 BtlAct_SwitchLeave(BtlActHChr *chr, s32 phase) {
 
 /* Not the libc prototype on purpose: with the real one the compiler expands the 8-byte clears inline, and the
  * original calls memset. */
+#ifdef PORT
+extern void *memset(void *dst, s32 c, u32 n); /* (the C library's, as <string.h> has it) */
+#else
 extern void *memset(void *dst, s32 c, s32 n);
+#endif
 
 extern BtlActIRoster *gBtlChars;
 

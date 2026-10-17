@@ -50,11 +50,14 @@ extern void Fade_Init(void);
 extern void PadWatch_Init(void);
 extern void Sys_InitIopHeap(void);
 
-extern void Progress_Main(s32); /* DBZP.BIN entry: menu / mode dispatcher */
+extern s32 Progress_Main(s32); /* DBZP.BIN entry: menu / mode dispatcher (src/menu/menu_a_b.c) */
+#ifdef PORT
+extern int Port_ProgressMain(int arg);
+#endif
 extern void Battle_Main(s32);
 
 extern OverlayEntry gOverlayTbl[];
-extern u8 MainMenu_StartBallLoops[]; /* overlay load address */
+extern void MainMenu_StartBallLoops(void); /* overlay load address: its first function */
 
 /* Program entry called by crt0: runs the game, which never returns. (The compiler adds the call to __main, the static
  * constructor runner, by itself.) */
@@ -74,7 +77,7 @@ s32 Overlay_Load(s32 idx) {
     size = sceLseek(fd, 0, SCE_SEEK_END);
     sceLseek(fd, 0, SCE_SEEK_SET);
     FlushCache(0);
-    while (sceRead(fd, MainMenu_StartBallLoops, size) != size) {
+    while (sceRead(fd, (void *)MainMenu_StartBallLoops, size) != size) {
     }
     FlushCache(2);
     sceClose(fd);
@@ -166,7 +169,11 @@ void Game_Main(void) {
 #endif
     for (;;) {
         Overlay_Load(0);
+#ifdef PORT
+        Port_ProgressMain(0); /* (port/src/headless.c: the port's set-up around the real one) */
+#else
         Progress_Main(0);
+#endif
         Battle_Main(0);
     }
 }

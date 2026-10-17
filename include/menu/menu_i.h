@@ -279,7 +279,7 @@ void Logo_Show(u32 *pack, s32 section, s32 frames, s32 fade, s32 skip, s32 inBla
 void Logo_ShowAll(u32 *pack);
 void FirstRun_WaitPartition(s32 pt);
 s32 FirstRun_Main(void);
-s32 FirstRun_WaitPad();
+s32 FirstRun_WaitPad(s32 unused0, s32 unused1); /* (called with 0, 0; neither read) */
 
 /* ---- EntrySel (menu_i_d.c): the entrant select of the tournament mode (mode 34): what its first half needs
    beyond menu_j.h. ---- */

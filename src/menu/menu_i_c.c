@@ -205,7 +205,7 @@ s32 FirstRun_Main(void) {
 }
 
 /* Runs empty frames until controller port 0 has a usable controller. Returns 1. */
-s32 FirstRun_WaitPad() {
+s32 FirstRun_WaitPad(s32 unused0, s32 unused1) {
     Pad_Update();
     if (gPad[0].status == PAD_STATUS_NONE) {
         do {

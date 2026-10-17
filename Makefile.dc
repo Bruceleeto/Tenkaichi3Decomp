@@ -54,12 +54,17 @@ OBJS     := $(GAME_OBJ) $(GS_OBJ) $(PC_OBJ) $(DC_OBJ)
 
 # ------------------------------------------------------------------------------------------------------ the flags
 
-# kos-cc adds KOS's own (-m4-single -ml -ffast-math ...); LTO off (as iortcw's), and C's float rules rather than
+# kos-cc adds KOS's own (-m4-single -ml -ffast-math ...); C's float rules rather than
 # -ffast-math, so the game's maths is the PC build's in what it means (sh4zam emits its fsca / fsrra / fipr / ftrv by
 # inline asm without it); -Os (the program's size is RAM the 32 MB Dreamcast does not have), the renderer -O3 (RENDER_OBJ); -fno-math-errno: sqrtf the SH4's fsqrt, not a call (the same value: errno unread)
-DC_FLAGS    := -fno-lto -Os -g -fno-fast-math -fno-math-errno -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
+# link-time optimisation over the whole program (DC_LTO=0: without, every object rebuilt; the link's files in $(BUILD)/tmp)
+DC_LTO      ?= 1
+LTO_FLAG    := $(if $(filter 1,$(DC_LTO)),-flto=8,-fno-lto)
+DC_FLAGS    := $(LTO_FLAG) -Os -g -fno-fast-math -fno-math-errno -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
 # (game code without -w: a call to a function not declared is an error, see Makefile)
-GAME_CFLAGS := $(DC_FLAGS) -Wno-attributes -Werror=implicit-function-declaration -std=gnu89 -c -fcommon -Drand=Port_Rand -Dsrand=Port_Srand -iquote include -Iport/include -include port_compat.h
+GAME_CFLAGS := $(DC_FLAGS) -Wno-attributes -Werror=implicit-function-declaration -std=gnu23 -fgnu89-inline -Wno-error=incompatible-pointer-types -Wno-error=return-mismatch -c -fcommon -Drand=Port_Rand -Dsrand=Port_Srand -iquote include -Iport/include -include port_compat.h -include dc_vec_inline.h
+# (the game's C as C23: what sh4zam's headers need, in dc_vec_inline.h; -fgnu89-inline: inline as the PS2's compiler
+# took it, an external copy too (EftMesh_IsOffScreen); the two errors C99 made of gnu89's warnings warnings again)
 NL_CFLAGS   := $(DC_FLAGS) -w -std=gnu89 -c -fno-builtin -Iport/include -Iport/third_party/newlib_libm -include newlib_shim.h
 GS_CFLAGS   := $(DC_FLAGS) -w -std=gnu99 -c -I$(GEN_GS) -Iport/src/dc -MMD -MP
 PC_CFLAGS   := $(DC_FLAGS) -std=gnu99 -c -iquote include -Iport/include -Iport/src -Iport/src/dc
@@ -84,13 +89,13 @@ $(DATA)/.stamp: port/build/gen/data port/tools/dc_data.py
 	touch $@
 
 $(OBJ)/main.o: src/main.c | $(OBJ)
-	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+	$(CC_EE) --game --dc-inline port/include/dc_vec_inline.h $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
 $(OBJ)/sys_%.o: src/sys/%.c | $(OBJ)
-	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+	$(CC_EE) --game --dc-inline port/include/dc_vec_inline.h $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
 $(OBJ)/battle_%.o: src/battle/%.c | $(OBJ)
-	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+	$(CC_EE) --game --dc-inline port/include/dc_vec_inline.h $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
 $(OBJ)/menu_%.o: src/menu/%.c | $(OBJ)
-	$(CC_EE) --game $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
+	$(CC_EE) --game --dc-inline port/include/dc_vec_inline.h $@ $< -- $(CC) $(GAME_CFLAGS) -I$(<D)
 
 $(OBJ)/nl_%.o: port/third_party/newlib_libm/%.c | $(OBJ)
 	$(CC_EE) $@ $< -- $(CC) $(NL_CFLAGS)
@@ -149,10 +154,12 @@ $(OBJ)/pc_headless.o: $(if $(filter 1,$(DC_DEMO)),$(OBJ)/.demo_on,$(OBJ)/.demo_o
 $(OBJ)/.demo_on $(OBJ)/.demo_off:
 	mkdir -p $(OBJ) && rm -f $(OBJ)/.demo_on $(OBJ)/.demo_off && touch $@
 
-# (weak: a routine port/src/vu0_native.c has, the SH4's own, is linked in its place)
-$(OBJ)/pc_vu0_%.o: src/port/vu0_%.c Makefile.dc | $(OBJ)
-	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
-	$(KOS_OBJCOPY) --weaken $@
+# (weak: a routine port/src/vu0_native.c has, the SH4's own, is linked in its place; #pragma weak for each of the
+# names vu0_names.h gives them, which LTO keeps, as objcopy --weaken on the object did not)
+$(OBJ)/vu0_weak.h: port/src/vu0_names.h | $(OBJ)
+	sed -n 's/^#define Ref_[A-Za-z0-9_]* \([A-Za-z0-9_]*\)$$/#pragma weak \1/p' $< > $@
+$(OBJ)/pc_vu0_%.o: src/port/vu0_%.c $(OBJ)/vu0_weak.h Makefile.dc | $(OBJ)
+	$(CC) $(PC_CFLAGS) $(PC_SOFT) -include vu0_names.h -include $(OBJ)/vu0_weak.h -DREF_VU0_EXTERN_ARITH -MMD -MP $< -o $@
 $(OBJ)/pc_%.o: port/src/%.c | $(OBJ)
 	$(if $(filter $*,$(PC_HARD)),$(CC) $(PC_CFLAGS) -MMD -MP $< -o $@,$(CC_EE) $@ $< -- $(CC) $(PC_CFLAGS) $(PC_SOFT))
 
@@ -163,9 +170,14 @@ $(OBJ)/dc_%_null.o: port/src/null/%_null.c | $(OBJ)
 
 # the link, with a stub for each symbol still missing
 # (link_dc.py links every object of the folder: those of sources no longer built are removed first)
+LTO_STAMP := $(BUILD)/lto_$(DC_LTO).stamp
+$(LTO_STAMP): | $(OBJ)
+	rm -f $(BUILD)/lto_*.stamp
+	touch $@
+$(OBJS): $(LTO_STAMP)
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 	rm -f $(filter-out $(OBJS),$(wildcard $(OBJ)/*.o))
-	$(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
+	mkdir -p $(BUILD)/tmp && TMPDIR=$(abspath $(BUILD)/tmp) BT3_LTO_FLAG=$(LTO_FLAG) $(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
 
 # the disc's textures as the PVR takes them (port/tools/dc_tex.c), from the data `make extract` wrote; run it
 # again to convert them again

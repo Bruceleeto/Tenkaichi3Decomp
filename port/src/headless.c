@@ -34,9 +34,9 @@ static int sFromMenu;
 #define GAME_PTR *
 #endif
 
-/* Linked with --wrap=Progress_Main: the game's call in Game_Main comes here. BT3_REPLAY or BT3_DEMO: the battle is
+/* Game_Main's call of Progress_Main on the port (src/main.c) comes here. BT3_REPLAY or BT3_DEMO: the battle is
    set up without menus (below); otherwise the real menus run (the overlay's Progress_Main, src/menu/menu_a_b.c). */
-extern int __real_Progress_Main(int arg);
+extern int Progress_Main(int arg);
 int gPortMenuMode;
 /* A menu screen that is a 3D scene (the character reference's model viewer) asks, every frame, to be shown as a
    fight is while it runs: the wide projection, 2D kept in proportion. Only between the two lines of Progress_Main
@@ -111,7 +111,7 @@ static void port_stage_replace_init(void) {
 
 extern void Port_NetRules(int *type, int *dp, int *time); /* gs/net.c */
 
-int __wrap_Progress_Main(int arg) {
+int Port_ProgressMain(int arg) {
     const char *path;
     PortStages_Init();
     PortSongs_Init();
@@ -178,7 +178,7 @@ int __wrap_Progress_Main(int arg) {
                 }
             }
             gPortMenuMode = 1; /* the renderer treats all 2D as one centred 4:3 page while the menus run */
-            r = __real_Progress_Main(arg);
+            r = Progress_Main(arg);
             gPortMenuMode = 0;
             sFromMenu = 1; /* a battle set up by the real menus follows: the traces apply to it too */
             return r;

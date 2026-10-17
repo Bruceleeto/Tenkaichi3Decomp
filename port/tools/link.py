@@ -33,7 +33,7 @@ def mac_segments(exe):
 
 def link_mac(objs, extra):
     """ld64 through clang: SDL3 from Homebrew, the C++ library for the settings window, entry point __wrap_main
-    (plat_mem.c: what --wrap=main does elsewhere); --wrap=Progress_Main and --defsym are done by macwin.py."""
+    (plat_mem.c: what --wrap=main does elsewhere); --defsym is done by macwin.py."""
     sdl = os.environ.get("BT3_SDL3", "/opt/homebrew/opt/sdl3")
     cmd = ["clang", "-arch", "arm64", "-mmacosx-version-min=11.0", "-w", "-o", str(EXE)] + extra + objs + \
           [f"-L{sdl}/lib", "-lSDL3", "-lc++", f"-Wl,-rpath,{sdl}/lib", "-Wl,-rpath,@executable_path/lib",
@@ -50,7 +50,7 @@ def link_mac(objs, extra):
 def link(objs, extra):
     if MAC:
         return link_mac(objs, extra)
-    common = ["-Wl,--defsym=D_3BE71C=0x3BE71C", "-Wl,--wrap=Progress_Main", f"-Wl,-Map={EXE}.map"]
+    common = ["-Wl,--defsym=D_3BE71C=0x3BE71C", f"-Wl,-Map={EXE}.map"]
     if WIN:
         # Windows: the program at a fixed address below 4 GB (no relocation: the game's 4-byte pointers and the
         # 32-bit addresses in its data tables depend on it), the game's main() wrapped for a low stack (plat_mem.c),

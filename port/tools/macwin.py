@@ -19,8 +19,8 @@ def plugin():
                     "-undefined", "dynamic_lookup", str(SRC), "-o", str(PLUGIN)] + flags, check=True)
     return PLUGIN
 
-# GNU ld's --wrap and --defsym of link.py's `common` flags, applied by the pass (ld64 has neither)
-WRAP = ["Progress_Main"]
+# GNU ld's --wrap and --defsym of link.py's `common` flags, applied by the pass (ld64 has neither); none wrapped now
+WRAP = []
 ABS = {"D_3BE71C": 0x3BE71C}
 
 SIGS = ROOT / "port/build/mac_sigs.txt"  # every function the program defines, with its kinds (the top of macwin.cpp)
@@ -34,14 +34,14 @@ def defs(ll):
     fixed = BITCAST.sub(r"\1addrspacecast \2 to \3", text)
     if fixed != text:
         ll.write_text(fixed)
-    return opt(ll, "bt3-window", ["-bt3-wrap=" + ",".join(WRAP), "-bt3-defs=" + str(ll.with_suffix(".defs")), "-disable-output", str(ll)])
+    return opt(ll, "bt3-window", (["-bt3-wrap=" + ",".join(WRAP)] if WRAP else []) + ["-bt3-defs=" + str(ll.with_suffix(".defs")), "-disable-output", str(ll)])
 
 def sigs(lls):
     SIGS.write_text("".join(pathlib.Path(ll).with_suffix(".defs").read_text() for ll in lls))
 
 def run(ll, port=False):
     """Second step, once SIGS lists the whole program: the pass, then LLVM's optimisations, on ll in place."""
-    opts = ["-bt3-wrap=" + ",".join(WRAP), "-bt3-abs=" + ",".join(f"{k}={v:#x}" for k, v in ABS.items()), "-bt3-sigs=" + str(SIGS)] + (["-bt3-port"] if port else [])
+    opts = (["-bt3-wrap=" + ",".join(WRAP)] if WRAP else []) + ["-bt3-abs=" + ",".join(f"{k}={v:#x}" for k, v in ABS.items()), "-bt3-sigs=" + str(SIGS)] + (["-bt3-port"] if port else [])
     if os.environ.get("BT3_MACWIN_REPORT"):  # (bring-up: list host pointers made into integers)
         opts.append("-bt3-report")
     r = opt(ll, "bt3-window,default<O2>", opts + ["-S", str(ll), "-o", str(ll)])
