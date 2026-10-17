@@ -15,6 +15,8 @@
 /* Program 4 (the stage): the 12 quadwords Vu1Pkt_LoadProg4 puts at VU address 0 (screen matrix, clip matrix,
    clip -> screen matrix), kept for the calls that follow. */
 void Vu1Native_SetProg4(const void *consts);
+/* The memory lo..hi freed or read over: the chains kept there forgotten (from Port_TexFreed). */
+void Vu1Native_Freed(unsigned lo, unsigned hi);
 /* A mesh's chain drawn by program 4 with them; 1 = taken. */
 int Vu1Native_Prog4(const void *chain);
 

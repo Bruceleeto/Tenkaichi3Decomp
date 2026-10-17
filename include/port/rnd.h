@@ -179,6 +179,9 @@ uint64_t Rnd_Tex0(int ctx);
 /* The PRIM the GS draws by when a packet sets prim: prim itself, or with PRMODECONT.AC 0 (the shadow passes) its type
    with the attributes of PRMODE (texturing, shading, blending, the context). */
 uint32_t Rnd_Prim(uint32_t prim);
+/* A 64-bit hash of what of the followed state a VU1 chain's checks and notes read (gRndCtxBad, PRMODE, PRMODECONT;
+   with tex, the two TEX0): the same hash, the same results (port/src/vu1_native.c, its chains' kept results). */
+uint64_t Rnd_StateKey(int tex);
 /* What of the followed GS state a polygon is made by (Rnd_Draw, Rnd_Vtx, Rnd_Tex0, Rnd_Prim): taken when a draw is
    queued to be made later (port/src/vu1_native.c), put back while it is made, and the state of then put back after. */
 typedef struct RndSnap {

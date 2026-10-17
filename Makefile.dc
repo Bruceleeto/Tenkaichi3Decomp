@@ -56,8 +56,8 @@ OBJS     := $(GAME_OBJ) $(GS_OBJ) $(PC_OBJ) $(DC_OBJ)
 
 # kos-cc adds KOS's own (-m4-single -ml -ffast-math ...); LTO off (as iortcw's), and C's float rules rather than
 # -ffast-math, so the game's maths is the PC build's in what it means (sh4zam emits its fsca / fsrra / fipr / ftrv by
-# inline asm without it); -Os (the program's size is RAM the 32 MB Dreamcast does not have), the renderer -O3 (RENDER_OBJ)
-DC_FLAGS    := -fno-lto -Os -g -fno-fast-math -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
+# inline asm without it); -Os (the program's size is RAM the 32 MB Dreamcast does not have), the renderer -O3 (RENDER_OBJ); -fno-math-errno: sqrtf the SH4's fsqrt, not a call (the same value: errno unread)
+DC_FLAGS    := -fno-lto -Os -g -fno-fast-math -fno-math-errno -ffp-contract=off -fno-strict-aliasing -DPORT_GAME_HARD_FLOAT
 # (game code without -w: a call to a function not declared is an error, see Makefile)
 GAME_CFLAGS := $(DC_FLAGS) -Wno-attributes -Werror=implicit-function-declaration -std=gnu89 -c -fcommon -Drand=Port_Rand -Dsrand=Port_Srand -iquote include -Iport/include -include port_compat.h
 NL_CFLAGS   := $(DC_FLAGS) -w -std=gnu89 -c -fno-builtin -Iport/include -Iport/third_party/newlib_libm -include newlib_shim.h
@@ -134,6 +134,14 @@ $(PROF_STAMP): | $(OBJ)
 $(OBJ)/dc_dc_prof.o $(OBJ)/gs_gs_walk.o: $(PROF_STAMP)
 $(OBJ)/dc_dc_prof.o: PC_CFLAGS += $(if $(filter 1,$(DC_PROF)),-DBT3_PROF)
 $(OBJ)/gs_gs_walk.o: GS_CFLAGS += $(if $(filter 1,$(DC_PROF)),-DBT3_PROF)
+# DC_NODRAW=1 (a test): the frame's draws and meshes not made, an empty frame shown; the game's code as ever (gs_walk.c)
+DC_NODRAW ?= 0
+NODRAW_STAMP := $(BUILD)/nodraw_$(DC_NODRAW).stamp
+$(NODRAW_STAMP): | $(OBJ)
+	rm -f $(BUILD)/nodraw_*.stamp
+	touch $@
+$(OBJ)/gs_gs_walk.o: $(NODRAW_STAMP)
+$(OBJ)/gs_gs_walk.o: GS_CFLAGS += $(if $(filter 1,$(DC_NODRAW)),-DBT3_NODRAW)
 # DC_DEMO=1 (the default for now: no pad yet): the attract demo's fight at start, as BT3_DEMO on PC; DC_DEMO=0 the game
 DC_DEMO ?= 1
 $(OBJ)/pc_headless.o: PC_CFLAGS += $(if $(filter 1,$(DC_DEMO)),-DBT3_DC_DEMO)

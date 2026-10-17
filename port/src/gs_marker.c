@@ -24,7 +24,7 @@ extern int Gs_TakesRecords(void);                                       /* gs/gs
 extern int Gs_RecordPush(const void *rec, int kind, uint32_t at); /* gs/gs_walk.c */
 extern uint32_t *gDmaCur;     /* src/sys/dma.c: the display list's cursor */
 
-RndState gRndCtx[2];
+RndState gRndCtx[2] __attribute__((aligned(4))); /* (copied as words: rnd_gs.c) */
 int gRndCtxValid;
 
 /* What the renderer was handed on the records path and did not take, where the PS2 packet the game then builds is
@@ -166,6 +166,21 @@ void Port_Bind(int kind, uint32_t block, uint32_t blocks, uint32_t h) {
         sBindFree = 1;
         sBindInit = 1;
     }
+    if ((i = *bind_slot(b)) != 0 && sBind[i - 1].h[kind] == h && sBind[i - 1].h[kind ^ 1] == 0) {
+        /* (bound there already, as it alone: the same again when nothing else starts in its other blocks) */
+        uint32_t c = b + 1;
+        while (c < e && c < 16384) {
+            if ((w = sBindAt[c >> 5] >> (c & 31)) == 0) {
+                c = (c | 31) + 1;
+                continue;
+            }
+            c += (uint32_t)__builtin_ctz(w);
+            break;
+        }
+        if (!(c < e && c < 16384)) {
+            return;
+        }
+    }
     while (b < e && b < 16384) {
         if ((w = sBindAt[b >> 5] >> (b & 31)) == 0) {
             b = (b | 31) + 1;
@@ -273,6 +288,14 @@ static void bind_resolve(uint32_t *tex, uint32_t *pal, uint64_t t0) {
                                                 gs/gs_draw.c depth_clut) */
 }
 
+static inline void cpw(void *d, const void *s, unsigned bytes) { /* (4-aligned; the SH4: no memcpy call) */
+    uint32_t *o = (uint32_t *)d, j;
+    const uint32_t *i = (const uint32_t *)s;
+    for (j = 0; j < bytes / 4; j++) {
+        o[j] = i[j];
+    }
+}
+
 int Port_Quad(const RndQuad *q) {
     RndQuad r;
     if (!Gs_TakesRecords()) {
@@ -281,7 +304,7 @@ int Port_Quad(const RndQuad *q) {
     if (q->gsTex0 == 0) {
         return Gs_RecordPush(q, 0, Port_Addr(gDmaCur));
     }
-    r = *q;
+    cpw(&r, q, sizeof(r));
     bind_resolve(&r.tex, &r.pal, r.gsTex0);
     return Gs_RecordPush(&r, 0, Port_Addr(gDmaCur));
 }
@@ -308,7 +331,7 @@ int Port_Poly(const RndPoly *p) {
     if (p->gsTex0 == 0) {
         return Gs_RecordPush(p, 1, Port_Addr(gDmaCur));
     }
-    r = *p;
+    cpw(&r, p, sizeof(r));
     if (sNotes != NULL && r.tex == 0) {
         unsigned i;
         for (i = 0; i < sNoteN && sNotes[i].tex0 != r.gsTex0; i++) {

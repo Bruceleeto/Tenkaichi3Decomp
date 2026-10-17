@@ -332,7 +332,11 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     if ((d = rnd_entry(kind, at, bytes, __builtin_return_address(0))) == NULL) {
         return 0;
     }
-    memcpy(d, rec, bytes);
+    { /* (words: the SH4's memcpy of an unknown size is a call; both 4-aligned, bytes a multiple of 4) */
+        uint32_t *o = (uint32_t *)d, j;
+        const uint32_t *in = (const uint32_t *)rec;
+        for (j = 0; j < bytes / 4; j++) { o[j] = in[j]; }
+    }
     sMarksIn += kind == 2;
     return 1;
 }
@@ -356,7 +360,7 @@ void *Gs_DeferPush(uint32_t bytes, RndDeferFn fn, uint32_t at) {
     if (d == NULL) {
         return NULL;
     }
-    memcpy(d, &fn, sizeof(fn));
+    *(RndDeferFn *)d = fn; /* (d: 8-aligned) */
     return d + 8;
 }
 
@@ -412,6 +416,9 @@ unsigned gStatMesh, gStatVtx, gStatPoly, gStatDraw;
 
 static void rnd_draw(const RndCmd *c) {
     const uint8_t *d = c->d;
+#ifdef BT3_NODRAW
+    if (c->kind != 2) { return; } /* (a test, Makefile.dc DC_NODRAW=1: nothing drawn, the meshes not made) */
+#endif
     if (c->kind == 0) { GsGpu_Quad((const RndQuad *)d); } else if (c->kind == 1) { GsGpu_Poly((const RndPoly *)d); }
     else if (c->kind == 3) {
         RndDeferFn fn;

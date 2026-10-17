@@ -147,7 +147,8 @@ int Port_TexNative(void *e, int tbp) { (void)e; (void)tbp; return 0; } /* (gs_pv
 int Port_PalNative(void *pkt, int size, uint32_t blt, int block) { (void)pkt; (void)size; (void)blt; (void)block; return 0; }
 static const uint32_t *GsPvr_PalCol(uint32_t pal, uint32_t n) { (void)pal; (void)n; return NULL; }
 int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) { (void)cbp; (void)k; (void)o; (void)alpha; return 0; }
-void Port_TexFreed(uint32_t lo, uint32_t hi) { (void)lo; (void)hi; }
+void Vu1Native_Freed(uint32_t lo, uint32_t hi);
+void Port_TexFreed(uint32_t lo, uint32_t hi) { Vu1Native_Freed(lo, hi); } /* (the models' chains kept: vu1_native.c) */
 uint32_t Port_TexHandle(const void *e) { (void)e; return 0; }
 uint32_t Port_PalHandle(const void *pkt) { (void)pkt; return 0; }
 #endif

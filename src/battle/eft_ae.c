@@ -1757,9 +1757,12 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
     u32 cbp = (u32)(tex0 >> 37) & 0x3FFF;
     u32 i;
 
+    s32 gotTex = 0, gotPal = 0;
+
     *tex = 0;
     *pal = 0;
-    for (i = 0; i < sEftVramSentCount; i++) {
+    /* (from the last: the last there of each is the one the GS has; done once both are found) */
+    for (i = sEftVramSentCount; i-- > 0 && !(gotTex && gotPal);) {
         EftAeVramEntry *e = &sEftVramSent[i];
         u8 *image = e->tex != NULL ? (u8 *)e->tex->image : NULL;
 
@@ -1767,11 +1770,13 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
             continue;
         }
 
-        if ((e->flags & 1) && (u32)e->imageBlock == tbp) {
+        if (!gotTex && (e->flags & 1) && (u32)e->imageBlock == tbp) {
             *tex = Port_TexHandle(image);
+            gotTex = 1;
         }
-        if ((e->flags & 2) && (u32)e->clutBlock == cbp) {
+        if (!gotPal && (e->flags & 2) && (u32)e->clutBlock == cbp) {
             *pal = *(s32 *)(image + 0x0C) != 0 ? Port_PalHandle(*(void **)(image + 0x3C)) : 0;
+            gotPal = 1;
         }
     }
 }

@@ -24,6 +24,12 @@
 #include <string.h>
 #include "../../include/port/rnd.h"
 
+static inline void words(void *d, const void *src, unsigned bytes) { /* (4-aligned; the SH4: no memcpy call) */
+    uint32_t *o = (uint32_t *)d, j;
+    const uint32_t *i = (const uint32_t *)src;
+    for (j = 0; j < bytes / 4; j++) { o[j] = i[j]; }
+}
+
 unsigned gRndOtStat[4];
 uint32_t gRndCtxBad[2];       /* RND_BAD_: what of a context's state a record cannot say */
 
@@ -202,8 +208,9 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
     if (gRndCtxBad[c] != 0) {
         return 0;
     }
-    memset(&p, 0, sizeof(p));
-    p.st = gRndCtx[c];
+    /* (each field of p set below, not cleared first: v[3] of a triangle and pad here) */
+    words(&p.st, &gRndCtx[c], sizeof(p.st));
+    p.pad = 0;
     p.st.flags = (uint16_t)((p.st.flags & ~RND_GOURAUD) | ((sPrim >> 3) & 1 ? RND_GOURAUD : 0));
     if (!((sPrim >> 6) & 1)) {
         p.st.blend = RND_BLEND_NONE;
@@ -240,7 +247,9 @@ static int vertex(uint32_t x, uint32_t y, uint32_t z, int kick, int mode) {
         }
         p.n = 4;
     } else {
-        memcpy(p.v, sV, sizeof(sV));
+        static const RndVtx none;
+        words(p.v, sV, sizeof(sV));
+        p.v[3] = none;
         p.n = 3;
     }
     if (type == 3 || type == 6) {
@@ -691,25 +700,43 @@ void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, floa
 }
 
 void Rnd_SnapTake(RndSnap *s) {
-    memcpy(s->ctx, gRndCtx, sizeof(s->ctx));
-    memcpy(s->bad, gRndCtxBad, sizeof(s->bad));
-    memcpy(s->tex0, sTex0, sizeof(s->tex0));
-    memcpy(s->xyOff, sXyOff, sizeof(s->xyOff));
+    words(s->ctx, gRndCtx, sizeof(s->ctx));
+    words(s->bad, gRndCtxBad, sizeof(s->bad));
+    words(s->tex0, sTex0, sizeof(s->tex0));
+    words(s->xyOff, sXyOff, sizeof(s->xyOff));
     s->prmode = sPrmode;
     s->prmodeCont = sPrmodeCont;
 }
 
 void Rnd_SnapPut(const RndSnap *s) {
-    memcpy(gRndCtx, s->ctx, sizeof(s->ctx));
-    memcpy(gRndCtxBad, s->bad, sizeof(s->bad));
-    memcpy(sTex0, s->tex0, sizeof(s->tex0));
-    memcpy(sXyOff, s->xyOff, sizeof(s->xyOff));
+    words(gRndCtx, s->ctx, sizeof(s->ctx));
+    words(gRndCtxBad, s->bad, sizeof(s->bad));
+    words(sTex0, s->tex0, sizeof(s->tex0));
+    words(sXyOff, s->xyOff, sizeof(s->xyOff));
     sPrmode = s->prmode;
     sPrmodeCont = s->prmodeCont;
 }
 
 uint64_t Rnd_Tex0(int ctx) {
     return sTex0[ctx & 1];
+}
+
+static inline uint64_t key_mix(uint64_t h, uint64_t v) {
+    h ^= v;
+    h *= 0x100000001B3ull;
+    return h ^ (h >> 29);
+}
+
+uint64_t Rnd_StateKey(int tex) {
+    uint64_t h = 0xCBF29CE484222325ull;
+    h = key_mix(h, gRndCtxBad[0] | (uint64_t)gRndCtxBad[1] << 32);
+    h = key_mix(h, sPrmode);
+    h = key_mix(h, sPrmodeCont);
+    if (tex) {
+        h = key_mix(h, sTex0[0]);
+        h = key_mix(h, sTex0[1]);
+    }
+    return h;
 }
 
 uint32_t Rnd_Prim(uint32_t prim) {

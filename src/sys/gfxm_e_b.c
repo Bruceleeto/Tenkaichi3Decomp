@@ -125,6 +125,9 @@ typedef struct ObjPlane8 {
 /* Gives every material texture of the model its row of the alpha table: the alpha bytes of the first 16 CLUT
    entries become (slot + row * 15), and the slot's base alpha is copied into the model header. */
 void BtlObjMdl_InitAlphaSlots(void *res, ObjMdl *mdl, s32 row) {
+#ifdef PORT
+    extern void Port_TexFreed(u32 lo, u32 hi); /* gs/gs_pvr.c: invalidate a cached palette when its packet changes */
+#endif
     ObjMdlFile *model = mdl->model;
     TexFile *tex = mdl->tex;
     s32 first;
@@ -155,6 +158,11 @@ void BtlObjMdl_InitAlphaSlots(void *res, ObjMdl *mdl, s32 row) {
             } else {
                 u8 *p = (u8 *)e->clut;
 
+#ifdef PORT
+                /* This edits the alpha slots inside the upload packet. The PVR palette cache can then trust an
+                   unchanged pack-backed packet by address instead of hashing it on every per-frame upload. */
+                if (p != NULL) { Port_TexFreed((u32)p, (u32)p + 16); }
+#endif
                 for (j = 15; j >= 0; j--) {
                     p[0x60 + j * 4 + 3] = slot + row;
                 }

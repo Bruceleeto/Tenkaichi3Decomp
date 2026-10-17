@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../../include/port/rnd.h"
 #include "vu1_native.h"
@@ -209,7 +210,7 @@ static int refuse(uint32_t why) {
 }
 
 /* Walks the VIF codes of a chain; fn for each batch. 0 = a chain of another shape (or a batch fn refused). */
-static int walk(const void *chain, BatchFn fn, void *arg) {
+static int walk_vif(const void *chain, BatchFn fn, void *arg) {
     const uint32_t *t = (const uint32_t *)chain, *w, *end, *hdr = NULL, *vtx = NULL;
     uint32_t nh = 0, nv = 0;
 
@@ -265,6 +266,182 @@ static int walk(const void *chain, BatchFn fn, void *arg) {
     return 1;
 }
 
+/* The chains of the models (programs 0, 1, 2, 4, 7, 8: the model's own data, not made again each frame) walked once:
+   their batches kept (where each one's header and vertices lie in the chain), and each walk after that the list.
+   Kept by the chain's address and its "ret" tag (its length), forgotten when the memory it lies in is freed or read
+   over (Vu1Native_Freed, from Port_TexFreed: Heap_Free, the file reads, the decompressor). All forgotten when the
+   store is full, walked again as they are drawn. A batch in 8 bytes: the header's word in the chain (18 bits) and
+   its quadwords - 1 (8), the vertices' word after the header's end (15) and their quadwords - 1 (8), 0 none. */
+#define CH_MAX 1024
+#define CH_BATCHES 6144
+#define CH_NOTES 2048 /* the textures the chains' notes named (each chain's kept once: chain_note) */
+#define CH_HASH(a) ((((a) >> 4) * 2654435761u) >> 24)
+typedef struct ChainEnt {
+    uint32_t addr, tag; /* (addr 0: free) */
+    uint16_t first, n, next;
+    /* the last check's and the last note's results, with the state they were made in (chain_key): the same state,
+       the same results, as the walk would give them (its batches read the chain, which is the same, and that state) */
+    uint8_t ck, ckRes, nt, ntFull;
+    uint16_t ntFirst, ntN;
+    uint32_t ckWhy;
+    uint64_t ckKey, ntKey;
+} ChainEnt;
+typedef struct ChainBatch {
+    uint32_t h, v;
+} ChainBatch;
+static ChainEnt sCh[CH_MAX];
+static ChainBatch sChB[CH_BATCHES];
+static uint64_t sChNote[CH_NOTES];
+static uint16_t sChHash[256], sChN, sChBN, sChNN;
+static unsigned sChFlushes;
+
+typedef struct ChainRec {
+    const uint32_t *chain;
+    uint32_t n, over;
+} ChainRec;
+
+static int chain_rec(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
+    ChainRec *r = (ChainRec *)arg;
+    uint32_t h = (uint32_t)(hdr - r->chain), d = vtx != NULL ? (uint32_t)(vtx - (hdr + nh * 4)) : 0;
+    if (sChBN + r->n >= CH_BATCHES || h >= 1u << 18 || d >= 1u << 15) {
+        r->over = 1;
+        return 1;
+    }
+    sChB[sChBN + r->n].h = h | (nh - 1) << 18;
+    sChB[sChBN + r->n].v = vtx != NULL ? 1u | d << 1 | (nv - 1) << 16 : 0;
+    r->n++;
+    return 1;
+}
+
+static void chain_flush(void) {
+    memset(sCh, 0, sizeof(sCh));
+    memset(sChHash, 0, sizeof(sChHash));
+    sChN = sChBN = sChNN = 0;
+}
+
+void Vu1Native_Freed(unsigned lo, unsigned hi) {
+    uint32_t i;
+    uint16_t *p;
+    for (i = 0; i < sChN; i++) {
+        ChainEnt *e = &sCh[i];
+        if (e->addr == 0 || e->addr < lo || e->addr >= hi) { continue; }
+        for (p = &sChHash[CH_HASH(e->addr)]; *p != i + 1; p = &sCh[*p - 1].next) {}
+        *p = e->next;
+        e->addr = 0;
+    }
+}
+
+/* The chain's record, made (its batches kept) when there is none. NULL: a chain walk_vif refuses (*why its reason)
+   or one too long for the store (said). */
+static ChainEnt *chain_get(const void *chain) {
+    const uint32_t *t = (const uint32_t *)chain;
+    uint32_t addr = Port_Addr(chain), i;
+    ChainEnt *e = NULL;
+    ChainRec r;
+
+    if (t == NULL) {
+        return NULL;
+    }
+    for (i = sChHash[CH_HASH(addr)]; i != 0; i = sCh[i - 1].next) {
+        if (sCh[i - 1].addr == addr) {
+            e = &sCh[i - 1];
+            break;
+        }
+    }
+    if (e != NULL && e->tag != t[0]) { /* (another chain there now) */
+        Vu1Native_Freed(addr, addr + 1);
+        e = NULL;
+    }
+    if (e == NULL) {
+        r.chain = t;
+        r.n = r.over = 0;
+        if (!walk_vif(chain, chain_rec, &r)) {
+            return NULL;
+        }
+        if (r.over || sChN == CH_MAX || sChNN + 16 > CH_NOTES) { /* the store full: all forgotten, this one walked again into it */
+            if (sChFlushes++ == 0 || getenv("BT3_GS_VERBOSE") != NULL) {
+                fprintf(stderr, "vu1: the chains' store full (%u chains, %u batches): all forgotten (%u times)\n", (unsigned)sChN,
+                        (unsigned)sChBN, sChFlushes);
+            }
+            chain_flush();
+            r.n = r.over = 0;
+            walk_vif(chain, chain_rec, &r);
+            if (r.over) {
+                Port_Lost("a VU1 chain of more batches than the chains' store holds (CH_BATCHES; its address)", addr, __builtin_return_address(0));
+                return NULL;
+            }
+        }
+        e = &sCh[sChN++];
+        memset(e, 0, sizeof(*e));
+        e->addr = addr;
+        e->tag = t[0];
+        e->first = sChBN;
+        e->n = (uint16_t)r.n;
+        e->next = sChHash[CH_HASH(addr)];
+        sChHash[CH_HASH(addr)] = (uint16_t)sChN;
+        sChBN += (uint16_t)r.n;
+    }
+    return e;
+}
+
+static int walk(const void *chain, BatchFn fn, void *arg) {
+    const uint32_t *t = (const uint32_t *)chain;
+    ChainEnt *e = chain_get(chain);
+    uint32_t i;
+
+    if (e == NULL) {
+        return walk_vif(chain, fn, arg); /* (refused again, its reason in sRefused; or too long to keep) */
+    }
+    sRefused = 0;
+    for (i = 0; i < e->n; i++) {
+        const ChainBatch *b = &sChB[e->first + i];
+        const uint32_t *hdr = t + (b->h & 0x3FFFF);
+        uint32_t nh = (b->h >> 18) + 1;
+        const uint32_t *vtx = b->v ? hdr + nh * 4 + ((b->v >> 1) & 0x7FFF) : NULL;
+        if (!fn(arg, hdr, nh, vtx, b->v ? (b->v >> 16) + 1 : 0)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* What the results of a check or a note of program stat depend on besides the chain (Rnd_StateKey; programs 0 and 1
+   read TEX0 from their batches, not the state's; program 1's notes its constant 26, extra). */
+static uint64_t chain_key(int stat, uint64_t extra) {
+    uint64_t h = Rnd_StateKey(stat > 1) ^ ((uint64_t)stat + 1) * 0x9E3779B97F4A7C15ull;
+    return (h ^ extra) * 0xFF51AFD7ED558CCDull;
+}
+
+/* A check walk's result (the caller's whole test) kept: 1 and *res when the last one was made in the same state. */
+static ChainEnt *sCkEnt;
+static uint64_t sCkKey;
+static int check_kept(const void *chain, int stat, int *res) {
+    ChainEnt *e = chain_get(chain);
+    sCkEnt = NULL;
+    if (e == NULL) {
+        return 0;
+    }
+    sCkKey = chain_key(stat, 0);
+    if (e->ck && e->ckKey == sCkKey) {
+        *res = e->ckRes;
+        sRefused = e->ckWhy;
+        return 1;
+    }
+    sCkEnt = e;
+    return 0;
+}
+
+static int check_keep(int res) {
+    if (sCkEnt != NULL) {
+        sCkEnt->ck = 1;
+        sCkEnt->ckRes = (uint8_t)(res != 0);
+        sCkEnt->ckWhy = sRefused;
+        sCkEnt->ckKey = sCkKey;
+        sCkEnt = NULL;
+    }
+    return res;
+}
+
 /* A header of size h that came in one unpack with its vertices: split. */
 static void split(const uint32_t *hdr, uint32_t *nh, const uint32_t **vtx, uint32_t *nv, uint32_t h) {
     if (*vtx == NULL && *nh > h) {
@@ -281,7 +458,7 @@ static unsigned sNoteN, sNoteFull;
 
 /* A draw: made now, or queued to be made when the list is (Vu1Defer, at the end of this file). stat: VU1N_; the
    constants k (nk floats) and k2 (nk2) behind them. */
-static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2);
+static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2, uint32_t kgen);
 
 static void note(uint32_t prim, uint64_t tex0) {
     unsigned i;
@@ -387,9 +564,24 @@ static void put_strip(const RndVtx *v, const uint8_t *adc, uint32_t n, uint32_t 
 #define P4_POLY 32  /* corners of a clipped polygon (a triangle cut by six planes has at most 9) */
 
 static float sP4[48]; /* VU 0..11: screen, clip, clip -> screen */
+static uint32_t sP4Gen = 1; /* changes when sP4 does: a draw's record shares the last one's constants while it is the same */
 
 void Vu1Native_SetProg4(const void *consts) {
-    memcpy(sP4, consts, sizeof(sP4));
+    const uint32_t *c = (const uint32_t *)consts;
+    uint32_t *d = (uint32_t *)sP4;
+    unsigned j;
+
+    for (j = 0; j < 48 && d[j] == c[j]; j++) {
+    }
+    if (j == 48) {
+        return; /* (the same: loaded again for the next object) */
+    }
+    for (; j < 48; j++) {
+        d[j] = c[j];
+    }
+    if (++sP4Gen == 0) {
+        sP4Gen = 1;
+    }
 }
 
 typedef struct P4Vtx {
@@ -607,18 +799,22 @@ unsigned gVu1NativeStat[VU1N_STATS][2];
 
 int Vu1Native_Prog4(const void *chain) {
     P4Walk wk;
+    int ok;
 
     if (!Port_TakesRecords()) {
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
-    if (!walk(chain, p4_batch, &wk) || !wk.header) {
+    if (!check_kept(chain, VU1N_P4, &ok)) {
+        ok = check_keep(walk(chain, p4_batch, &wk) && wk.header);
+    }
+    if (!ok) {
         gVu1NativeStat[VU1N_P4][0]++;
         Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P4 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P4][1]++;
-    submit(VU1N_P4, chain, sP4, 48, NULL, 0);
+    submit(VU1N_P4, chain, sP4, 48, NULL, 0, sP4Gen);
     return 1;
 }
 
@@ -805,7 +1001,7 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 
 int Vu1Native_Takes(int prog, const void *chain) {
     FigWalk wk;
-    int stat;
+    int stat, ok;
 
     if (!Port_TakesRecords()) {
         return 0;
@@ -814,10 +1010,13 @@ int Vu1Native_Takes(int prog, const void *chain) {
         Port_Lost("a VU1 program the native code does not have (its number)", (uint32_t)prog, __builtin_return_address(0));
         return 0;
     }
-    memset(&wk, 0, sizeof(wk));
-    wk.prog = prog;
     stat = prog == 2 ? VU1N_P2A + sP2Alt : prog;
-    if (!walk(chain, prog == 2 ? p2_batch : fig_batch, &wk)) {
+    if (!check_kept(chain, stat, &ok)) {
+        memset(&wk, 0, sizeof(wk)); /* (only for a walk: its light matrices and all) */
+        wk.prog = prog;
+        ok = check_keep(walk(chain, prog == 2 ? p2_batch : fig_batch, &wk));
+    }
+    if (!ok) {
         gVu1NativeStat[stat][0]++;
         Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)stat | sRefused << 8, __builtin_return_address(0));
         return 0;
@@ -829,11 +1028,11 @@ int Vu1Native_Takes(int prog, const void *chain) {
 #define FIG_K 108 /* the constants programs 0 and 1 read (0..26) */
 
 void Vu1Native_Prog0(const void *chain, const void *consts) {
-    submit(VU1N_P0, chain, (const float *)consts, FIG_K, NULL, 0);
+    submit(VU1N_P0, chain, (const float *)consts, FIG_K, NULL, 0, 0);
 }
 
 void Vu1Native_Prog1(const void *chain, const void *consts) {
-    submit(VU1N_P1, chain, (const float *)consts, FIG_K, NULL, 0);
+    submit(VU1N_P1, chain, (const float *)consts, FIG_K, NULL, 0, 0);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 2 */
@@ -911,7 +1110,7 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 
 void Vu1Native_Prog2(const void *chain, const void *consts) {
     /* (its own 0..10, then the block's screen and clip, 11..18) */
-    submit(sP2Alt ? VU1N_P2B : VU1N_P2A, chain, (const float *)consts, 44, sP2 + 44, 32);
+    submit(sP2Alt ? VU1N_P2B : VU1N_P2A, chain, (const float *)consts, 44, sP2 + 44, 32, 0);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 6 */
@@ -1041,13 +1240,13 @@ int Vu1Native_Prog6(const void *chain) {
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
-    if (!walk(chain, p6_batch, &wk) || !wk.header) {
+    if (!walk_vif(chain, p6_batch, &wk) || !wk.header) { /* (its chain made each frame: not kept) */
         gVu1NativeStat[VU1N_P6][0]++;
         Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P6 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P6][1]++;
-    submit(VU1N_P6, chain, sP6, 68, NULL, 0);
+    submit(VU1N_P6, chain, sP6, 68, NULL, 0, 0);
     return 1;
 }
 
@@ -1119,13 +1318,16 @@ static int p7_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 int Vu1Native_Prog7(const void *chain, const void *consts) {
     const float *k = (const float *)consts;
     P7Walk wk;
-    int j;
+    int j, ok;
 
     if (!Port_TakesRecords()) {
         return 0;
     }
     memset(&wk, 0, sizeof(wk));
-    if (!walk(chain, p7_batch, &wk)) {
+    if (!check_kept(chain, VU1N_P7, &ok)) {
+        ok = check_keep(walk(chain, p7_batch, &wk));
+    }
+    if (!ok) {
         gVu1NativeStat[VU1N_P7][0]++;
         Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P7 | sRefused << 8, __builtin_return_address(0));
         return 0;
@@ -1136,7 +1338,7 @@ int Vu1Native_Prog7(const void *chain, const void *consts) {
         mtx_apply(wk.cl + j * 4, k + 32, k[j * 4], k[j * 4 + 1], k[j * 4 + 2], k[j * 4 + 3]);
     }
     wk.alpha = k[51];
-    submit(VU1N_P7, chain, wk.sl, 33, NULL, 0); /* (sl, cl, alpha: one after the other) */
+    submit(VU1N_P7, chain, wk.sl, 33, NULL, 0, 0); /* (sl, cl, alpha: one after the other) */
     return 1;
 }
 
@@ -1236,6 +1438,7 @@ static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 
 int Vu1Native_Prog8(const void *chain, const void *consts) {
     P8Walk wk;
+    int ok;
 
     if (!Port_TakesRecords()) {
         return 0;
@@ -1246,13 +1449,16 @@ int Vu1Native_Prog8(const void *chain, const void *consts) {
     }
     memset(&wk, 0, sizeof(wk));
     wk.k = (const float *)consts;
-    if (!walk(chain, p8_batch, &wk)) {
+    if (!check_kept(chain, VU1N_P8, &ok)) {
+        ok = check_keep(walk(chain, p8_batch, &wk));
+    }
+    if (!ok) {
         gVu1NativeStat[VU1N_P8][0]++;
         Port_Lost("a VU1 program's chain its native code does not take (VU1N_ program | the refusing check's line << 8)", (uint32_t)VU1N_P8 | sRefused << 8, __builtin_return_address(0));
         return 0;
     }
     gVu1NativeStat[VU1N_P8][1]++;
-    submit(VU1N_P8, chain, wk.k, 40, sP8 + 40, 32);
+    submit(VU1N_P8, chain, wk.k, 40, sP8 + 40, 32, 0);
     return 1;
 }
 
@@ -1290,18 +1496,52 @@ static RndTexNote *notes_of(const Vu1Defer *m) {
     return (RndTexNote *)((uint8_t *)m + HDR_BYTES + (m->body == NULL ? BODY_BYTES(m->nk) : 0));
 }
 
-/* The draw being queued, and the last one that kept its own Vu1Body: in which list (Gs_DeferGen), where. */
-static union {
-    Vu1Defer d;
-    uint64_t align[(HDR_BYTES + sizeof(Vu1Body) + NOTE_MAX * sizeof(RndTexNote)) / 8 + 1];
-} sStage;
-static Vu1Body sBody, sOwner;
+/* The constants of a draw that has two blocks of them (k, k2: programs 2 and 8) one after the other; the state it is
+   queued in (static: the padding the same, for same32); the last draw that kept its own Vu1Body: in which list
+   (Gs_DeferGen), where. */
+static Vu1Body sBody;
+static RndSnap sSnap;
 static const Vu1Body *sOwnerAt;
-static uint32_t sOwnerGen, sOwnerNk;
+static uint32_t sOwnerGen, sOwnerNk, sOwnerKGen;
 static int sOwnerStat = -1;
 
 /* The walk of a draw of program stat (VU1N_) with constants k, in mode (W_DRAW, W_NOTE). */
+static void run_walk(int stat, const void *chain, const float *k, int mode);
+
+/* A note walk (sNote, sNoteN, sNoteFull) kept: the textures it named, named again in the same order (note: their
+   handles as they are now), when the last one was made in the same state. */
 static void run(int stat, const void *chain, const float *k, int mode) {
+    ChainEnt *e;
+    uint64_t key;
+    uint32_t i;
+
+    if (mode != W_NOTE || stat == VU1N_P6 || (e = chain_get(chain)) == NULL) {
+        run_walk(stat, chain, k, mode);
+        return;
+    }
+    key = chain_key(stat, stat == VU1N_P1 ? ld64((const uint32_t *)(k + 104)) : 0);
+    if (e->nt && e->ntKey == key) {
+        for (i = 0; i < e->ntN; i++) {
+            note(0x10, sChNote[e->ntFirst + i]);
+        }
+        sNoteFull |= e->ntFull;
+        return;
+    }
+    run_walk(stat, chain, k, mode);
+    if (sChNN + sNoteN > CH_NOTES) {
+        return; /* (not kept: the store is emptied when the next chain finds it full) */
+    }
+    e->nt = 1;
+    e->ntKey = key;
+    e->ntFull = (uint8_t)sNoteFull;
+    e->ntFirst = sChNN;
+    e->ntN = (uint16_t)sNoteN;
+    for (i = 0; i < sNoteN; i++) {
+        sChNote[sChNN++] = sNote[i].tex0;
+    }
+}
+
+static void run_walk(int stat, const void *chain, const float *k, int mode) {
     switch (stat) {
     case VU1N_P0:
     case VU1N_P1:
@@ -1323,7 +1563,7 @@ static void run(int stat, const void *chain, const float *k, int mode) {
         memset(&wk, 0, sizeof(wk));
         wk.draw = mode;
         wk.c = k;
-        walk(chain, stat == VU1N_P4 ? p4_batch : p6_batch, &wk);
+        stat == VU1N_P4 ? walk(chain, p4_batch, &wk) : walk_vif(chain, p6_batch, &wk);
         break;
     }
     case VU1N_P7: {
@@ -1362,44 +1602,58 @@ static void replay(const void *blob) {
     Rnd_SnapPut(&now);
 }
 
-static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2) {
-    Vu1Defer *m = &sStage.d, *q;
+/* n words the same (the SH4: no memcmp call, newlib's is bytes) */
+static inline int same32(const void *a, const void *b, unsigned n) {
+    const uint32_t *x = (const uint32_t *)a, *y = (const uint32_t *)b;
+    unsigned j;
+    for (j = 0; j < n; j++) {
+        if (x[j] != y[j]) { return 0; }
+    }
+    return 1;
+}
+
+/* kgen: not 0, a number that changes when k does (sP4Gen): k is the last record's while it is the same, not compared */
+static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2, uint32_t kgen) {
+    Vu1Defer *q;
     uint32_t bytes, gen;
     int shared;
 
-    memcpy(sBody.k, k, nk * 4);
     if (nk2 != 0) {
-        memcpy(sBody.k + nk, k2, nk2 * 4);
+        cp32(sBody.k, k, nk);
+        cp32(sBody.k + nk, k2, nk2);
+        k = sBody.k;
     }
     nk += nk2;
     if (Gs_Defers()) {
         sNoteN = sNoteFull = 0;
-        run(stat, chain, sBody.k, W_NOTE);
+        run(stat, chain, k, W_NOTE);
         if (!sNoteFull) {
-            Rnd_SnapTake(&sBody.st);
+            /* the record written where it is queued: its Vu1Body that of the draw before when the state and the
+               constants are the same */
+            Rnd_SnapTake(&sSnap);
             gen = Gs_DeferGen();
-            shared = sOwnerStat == stat && sOwnerNk == nk && sOwnerGen == gen &&
-                     memcmp(&sOwner, &sBody, offsetof(Vu1Body, k) + nk * 4) == 0;
-            m->chain = chain;
-            m->body = shared ? sOwnerAt : NULL;
-            m->stat = (uint8_t)stat;
-            m->nk = (uint16_t)nk;
-            m->notes = (uint8_t)sNoteN;
-            if (!shared) {
-                memcpy((uint8_t *)m + HDR_BYTES, &sBody, offsetof(Vu1Body, k) + nk * 4);
-            }
-            memcpy(notes_of(m), sNote, sNoteN * sizeof(RndTexNote));
-            bytes = (uint32_t)((const uint8_t *)(notes_of(m) + sNoteN) - (const uint8_t *)m);
+            shared = sOwnerAt != NULL && sOwnerStat == stat && sOwnerNk == nk && sOwnerGen == gen &&
+                     (kgen != 0 && sOwnerKGen == kgen || same32(sOwnerAt->k, k, nk)) &&
+                     same32(&sOwnerAt->st, &sSnap, sizeof(sSnap) / 4);
+            bytes = (uint32_t)(HDR_BYTES + (shared ? 0 : BODY_BYTES(nk)) + sNoteN * sizeof(RndTexNote));
             q = (Vu1Defer *)Gs_DeferPush(bytes, replay, Port_Addr(gDmaCur));
             if (q != NULL) { /* (NULL: no memory, said: made now) */
-                memcpy(q, m, bytes);
+                q->chain = chain;
+                q->body = shared ? sOwnerAt : NULL;
+                q->stat = (uint8_t)stat;
+                q->nk = (uint16_t)nk;
+                q->notes = (uint8_t)sNoteN;
                 if (!shared) {
-                    memcpy(&sOwner, &sBody, offsetof(Vu1Body, k) + nk * 4);
-                    sOwnerAt = body_of(q);
+                    Vu1Body *b = (Vu1Body *)((uint8_t *)q + HDR_BYTES);
+                    cp32(&b->st, &sSnap, sizeof(sSnap) / 4);
+                    cp32(b->k, k, nk);
+                    sOwnerAt = b;
                     sOwnerStat = stat;
                     sOwnerNk = nk;
                     sOwnerGen = gen;
+                    sOwnerKGen = kgen;
                 }
+                cp32(notes_of(q), sNote, sNoteN * sizeof(RndTexNote) / 4);
                 return;
             }
         } else {
@@ -1410,5 +1664,5 @@ static void submit(int stat, const void *chain, const float *k, unsigned nk, con
             }
         }
     }
-    run(stat, chain, sBody.k, W_DRAW);
+    run(stat, chain, k, W_DRAW);
 }

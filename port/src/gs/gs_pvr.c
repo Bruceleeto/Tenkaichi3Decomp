@@ -1642,7 +1642,7 @@ static uint16_t argb4444(uint32_t c) { /* (alpha as the GS has it: 0x80 = opaque
     return (uint16_t)(a << 12 | ((c >> 4) & 15) << 8 | ((c >> 12) & 15) << 4 | ((c >> 20) & 15));
 }
 
-static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; } /* (any alignment; no memcpy call) */
 
 /* What a record's packet holds, in brief: its size and 16 bytes from the middle and the end of it. The game can
    put another file where one was without freeing it (a copy within its heap): an entry or a packet at the same
@@ -1818,6 +1818,7 @@ typedef struct NatPal {
     uint16_t next;   /* the next record of its sPalHash chain + 1 */
     uint16_t sub[4]; /* 256 colours of 32 bits uploaded as 16 x 16: the four palettes of 16 its four blocks hold (records
                         + 1, at addr + 1 + k: the font's, src/battle/col_c.c Font_MakeTex0) */
+    uint16_t pktSize; /* pack-backed packets of this size can be reused without re-reading; writes invalidate them */
 } NatPal;
 static NatPal sPal[MAX_PAL];
 
@@ -1926,7 +1927,11 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
     if (!nat_on()) { return 0; }
     for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {
         if (sPal[i - 1].addr == addr) {
-            if (sPal[i - 1].sample == pal_sample(pkt, (uint32_t)size)) { p = &sPal[i - 1]; break; }
+            NatPal *old = &sPal[i - 1];
+            /* Pack-backed model palettes are immutable between invalidations. Their only in-place edit is the
+               16 alpha slots below; Heap_Free/file overwrite and BtlObjMdl_InitAlphaSlots call Port_TexFreed. */
+            if (old->pak >= 0 && size >= 0 && size < 65536 && old->pktSize == (uint16_t)size) { p = old; break; }
+            if (old->sample == pal_sample(pkt, (uint32_t)size)) { p = old; break; }
             Port_TexFreed(addr, addr + 16); /* (another packet there now; and the four palettes of its blocks) */
             break;
         }
@@ -1940,6 +1945,7 @@ int Port_PalNative(void *pkt, int size, uint32_t blt, int block) {
         p->sample = pal_sample(pkt, (uint32_t)size);
         if (pkt_key(pkt, (uint32_t)size, blt, &key, 1, &img) && (k = TexPak_Find(key, &w, &h, &bits)) >= 0 && bits == 32 && h == 1 &&
             (w == 16 || w == 256) && TexPak_Psm(k) == ((blt >> 8) & 63)) {
+            p->pktSize = size < 65536 ? (uint16_t)size : 0;
             if ((p->col = pal_col_new(w)) == NULL || !TexPak_ReadInto(k, p->col, w * 4)) {
                 /* (no memory for it, said by pal_col_new, or the file failed: not kept, asked again next time) */
                 if (p->col != NULL && !sPalAsk) {
@@ -2007,9 +2013,11 @@ int Port_ClutTint(int cbp, const float *k, const float *o, int alpha) {
 }
 
 /* The game's heap block [lo, hi) is freed: the entries in it are no longer textures. */
+void Vu1Native_Freed(uint32_t lo, uint32_t hi);
 void Port_TexFreed(uint32_t lo, uint32_t hi) {
     uint32_t i;
     uint16_t *p;
+    Vu1Native_Freed(lo, hi); /* (the models' chains kept: vu1_native.c) */
     for (i = 0; i < MAX_NAT; i++) {
         NatTex *n = &sNat[i];
         if (n->e == 0 || n->e < lo || n->e >= hi) { continue; }

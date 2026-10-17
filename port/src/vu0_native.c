@@ -177,7 +177,8 @@ static inline float div_ps2(float a, float b) {
 
 /* The PS2 has no infinity or NaN: a product too large is +/-FLT_MAX (and FLT_MAX * 0 is 0). The game's code on the
  * Dreamcast is IEEE: an infinity from here became a NaN there (0 * inf) and spread through the camera */
-static inline float ps2f(float r) { return isinf(r) ? copysignf(FLT_MAX, r) : r; }
+static inline float ps2f(float r) { return __builtin_fabsf(r) > FLT_MAX ? copysignf(FLT_MAX, r) : r; }
+/* (|r| > FLT_MAX: isinf for every value, NaN too, as one float compare; isinf was libgcc's __unordsf2 on the SH4) */
 static inline float pmul(float a, float b) { return ps2f(a * b); }
 
 /* 1 / w (vdiv Q, vf0w, w): a zero or denormal w (the PS2 reads it as 0) gives +/-FLT_MAX; a w outside 2^-60..2^60,
@@ -1058,8 +1059,16 @@ void ClipVtx_CopyArray(ClipVtx *dst, const ClipVtx *src, int n) {
     if (n == 0) {
         return;
     }
-    do {
-        *dst++ = *src++;
+    do { /* (as floats: a struct copy is a memcpy call on the SH4) */
+        const float *s = &src->pos.x;
+        float *d = &dst->pos.x;
+        int j;
+
+        for (j = 0; j < 12; j++) {
+            d[j] = s[j];
+        }
+        dst++;
+        src++;
     } while (--n != 0);
 }
 
