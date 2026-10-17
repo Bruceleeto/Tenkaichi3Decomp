@@ -175,7 +175,7 @@ static inline void cp32(void *d, const void *s, unsigned n) { /* n words */
     uint32_t *o = (uint32_t *)d;
     const uint32_t *i = (const uint32_t *)s;
     unsigned j;
-    for (j = 0; j < n; j++) { o[j] = i[j]; }
+    for (j = 0; j < n; j++) { o[j] = i[j]; __asm__("" ::: "memory"); /* (not a memcpy call again: gcc makes such a loop one) */ }
 }
 
 /* A GIF tag of a strip or fan as the programs send them: PRIM from the tag (PRE), packed, the registers ST, RGBAQ,

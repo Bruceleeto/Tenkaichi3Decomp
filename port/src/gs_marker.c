@@ -293,6 +293,7 @@ static inline void cpw(void *d, const void *s, unsigned bytes) { /* (4-aligned; 
     const uint32_t *i = (const uint32_t *)s;
     for (j = 0; j < bytes / 4; j++) {
         o[j] = i[j];
+        __asm__("" ::: "memory"); /* (not a memcpy call again: gcc makes such a loop one) */
     }
 }
 

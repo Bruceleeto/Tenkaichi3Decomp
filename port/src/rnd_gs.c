@@ -27,7 +27,7 @@
 static inline void words(void *d, const void *src, unsigned bytes) { /* (4-aligned; the SH4: no memcpy call) */
     uint32_t *o = (uint32_t *)d, j;
     const uint32_t *i = (const uint32_t *)src;
-    for (j = 0; j < bytes / 4; j++) { o[j] = i[j]; }
+    for (j = 0; j < bytes / 4; j++) { o[j] = i[j]; __asm__("" ::: "memory"); /* (not a memcpy call again: gcc makes such a loop one) */ }
 }
 
 unsigned gRndOtStat[4];

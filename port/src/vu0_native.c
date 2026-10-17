@@ -1066,6 +1066,7 @@ void ClipVtx_CopyArray(ClipVtx *dst, const ClipVtx *src, int n) {
 
         for (j = 0; j < 12; j++) {
             d[j] = s[j];
+            __asm__("" ::: "memory"); /* (not a memcpy call again: gcc makes such a loop one) */
         }
         dst++;
         src++;

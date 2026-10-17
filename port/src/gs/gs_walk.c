@@ -335,7 +335,7 @@ int Gs_RecordPush(const void *rec, int kind, uint32_t at) {
     { /* (words: the SH4's memcpy of an unknown size is a call; both 4-aligned, bytes a multiple of 4) */
         uint32_t *o = (uint32_t *)d, j;
         const uint32_t *in = (const uint32_t *)rec;
-        for (j = 0; j < bytes / 4; j++) { o[j] = in[j]; }
+        for (j = 0; j < bytes / 4; j++) { o[j] = in[j]; __asm__("" ::: "memory"); /* (not a memcpy call again: gcc makes such a loop one) */ }
     }
     sMarksIn += kind == 2;
     return 1;

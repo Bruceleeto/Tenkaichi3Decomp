@@ -175,6 +175,8 @@ $(LTO_STAMP): | $(OBJ)
 	rm -f $(BUILD)/lto_*.stamp
 	touch $@
 $(OBJS): $(LTO_STAMP)
+# (every object made again when the flags or the game's compile step change: a flag is not a file make sees)
+$(OBJS): Makefile.dc port/tools/cc_ee.py
 $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 	rm -f $(filter-out $(OBJS),$(wildcard $(OBJ)/*.o))
 	mkdir -p $(BUILD)/tmp && TMPDIR=$(abspath $(BUILD)/tmp) BT3_LTO_FLAG=$(LTO_FLAG) $(PYTHON) port/tools/link_dc.py $(EXE) $(OBJ) $(DATA)
