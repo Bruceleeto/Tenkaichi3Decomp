@@ -9,6 +9,17 @@ extern float atan2f(float y, float x);
 extern float Mathf_Acos(float x); /* acosf with the argument clamped to [-1, 1] */
 extern float Mathf_Asin(float x); /* asinf with the argument clamped to [-1, 1] */
 
+#ifdef __DREAMCAST__
+/* The slerps' sines (angles in [0, pi/2]) as a polynomial, not port/src/dc/dc_libm.c's FSCA: its angle steps of
+   1/65536 turn are large beside the small angles between two poses. */
+static inline float slerp_sinf(float x) {
+    float x2 = x * x;
+    return x * (1.0f + x2 * (-1.0f / 6.0f + x2 * (1.0f / 120.0f + x2 * (-1.0f / 5040.0f + x2 * (1.0f / 362880.0f + x2 * (-1.0f / 39916800.0f))))));
+}
+#else
+#define slerp_sinf sinf
+#endif
+
 extern void Vec4_Copy(void *dst, void *src);
 extern void Vec3_Normalize(Vec4 *dst, Vec4 *src);
 extern void Vec3_Cross(Vec4 *dst, Vec4 *a, Vec4 *b);
@@ -99,7 +110,7 @@ void Quat_SlerpIdentity(Quat *out, Quat *q, float t) {
         w = 1.0f;
     }
     angle = Mathf_Acos(w);
-    s = sinf(angle);
+    s = slerp_sinf(angle);
     if (s < 0.000001f) {
         out->x = 0.0f;
         out->y = 0.0f;
@@ -107,8 +118,8 @@ void Quat_SlerpIdentity(Quat *out, Quat *q, float t) {
         out->w = 1.0f;
     } else {
         float inv = 1.0f / s;
-        float ka = sinf(angle * (1.0f - t)) * inv;
-        float kb = sinf(angle * t) * inv;
+        float ka = slerp_sinf(angle * (1.0f - t)) * inv;
+        float kb = slerp_sinf(angle * t) * inv;
 
         out->x = q->x * kb;
         out->y = q->y * kb;
@@ -193,7 +204,7 @@ void Quat_Slerp(Quat *out, Quat *a, Quat *b, float t) {
         c = 1.0f;
     }
     angle = Mathf_Acos(c);
-    s = sinf(angle);
+    s = slerp_sinf(angle);
     if (s < 0.000001f) {
         out->x = qa.x;
         out->y = qa.y;
@@ -201,8 +212,8 @@ void Quat_Slerp(Quat *out, Quat *a, Quat *b, float t) {
         out->w = qa.w;
     } else {
         float inv = 1.0f / s;
-        float ka = sinf(angle * (1.0f - t)) * inv;
-        float kb = sinf(angle * t) * inv;
+        float ka = slerp_sinf(angle * (1.0f - t)) * inv;
+        float kb = slerp_sinf(angle * t) * inv;
 
         out->x = qa.x * ka + qb.x * kb;
         out->y = qa.y * ka + qb.y * kb;
