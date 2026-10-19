@@ -62,6 +62,23 @@ static uint32_t sSent, sTris, sDropped; /* this scene: bytes sent, triangles sen
    buffer as a texture: the shared layer's coordinates are in GS_W x GS_H texels of the buffer, the PVR's in its
    texture's own size). */
 static float sSx = 640.0f / 512.0f, sSy = 480.0f / 448.0f, sRw = 640.0f, sRh = 480.0f, sUs = 1.0f, sVs = 1.0f;
+
+#define GUARD 1024.0f
+/* The PVR handles screen edges, but extreme coordinates still need a guard band. */
+static inline int screen_scissor(float x0, float y0, float x1, float y1) {
+#if defined(__DREAMCAST__) || defined(BT3_DCSIM)
+    return x0 <= 0.0f && y0 <= 0.0f && x1 >= sRw && y1 >= sRh;
+#else
+    return 0;
+#endif
+}
+
+static inline int scissor_inside(float x, float y, float x0, float y0, float x1, float y1) {
+    if (screen_scissor(x0, y0, x1, y1)) {
+        return x >= -GUARD && x <= sRw + GUARD && y >= -GUARD && y <= sRh + GUARD;
+    }
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+}
 /* The GS's constant blend factor (ALPHA.FIX) of the draw being sent, as its vertices' alpha (below); < 0: none. */
 static float sFixA = -1.0f;
 
@@ -464,6 +481,11 @@ static void emit_poly(ClipV *a, int m, float x0, float y0, float x1, float y1) {
     ClipV b[16];
     int j, k, inside = 1;
 
+    if (screen_scissor(x0, y0, x1, y1)) {
+        x0 = y0 = -GUARD;
+        x1 = sRw + GUARD;
+        y1 = sRh + GUARD;
+    }
     for (j = 0; j < m; j++) {
         if (a[j].x < x0 || a[j].x > x1 || a[j].y < y0 || a[j].y > y1) { inside = 0; }
     }
@@ -585,12 +607,11 @@ static int clip_plane(const ClipH *in, int n, ClipH *out, const float *plane) {
     return m;
 }
 
-/* A vertex-program triangle: clipped in clip space against the eye (w > 0) and a guard band of GUARD pixels around
+/* A vertex-program triangle: clipped in clip space against the eye (w > 0) and a guard band around
    the screen (as a GPU does: a vertex just in front of the eye would otherwise land millions of pixels away, past
    what the PVR's edge arithmetic holds), then projected to screen pixels, then the scissor. Depth is clamped, not
    clipped: the PC back ends turn the GPU's depth clipping off for the same reason (the sky and far scenery lie
    beyond the GS's depth range and are drawn all the same). */
-#define GUARD 1024.0f
 /* A clip-space vertex in screen pixels, the PVR's depth and colour. */
 static void vu_project(const ClipH *a, const Vu0Uniform *U, ClipV *o) {
     const float sx = sSx, sy = sSy;
@@ -606,11 +627,11 @@ static void vu_project(const ClipH *a, const Vu0Uniform *U, ClipV *o) {
 }
 
 static void vu_triangle(int vu, const Vu0Uniform *U, const uint32_t *idx, float x0, float y0, float x1, float y1) {
-    const float sx = sSx, sy = sSy;
     ClipH a[16], b[16];
     ClipV out[16];
     int j, m = 3;
     const float eye[5] = {0.0f, 0.0f, 0.0f, 1.0f, -1e-3f};
+    const float sx = sSx, sy = sSy;
     /* screen x = (s.x / w - misc.x) * sx within [-GUARD, 640 + GUARD], y alike */
     const float left[5] = {1.0f, 0.0f, 0.0f, -(U->misc[0] - GUARD / sx), 0.0f};
     const float right[5] = {-1.0f, 0.0f, 0.0f, U->misc[0] + (sRw + GUARD) / sx, 0.0f};
@@ -651,7 +672,7 @@ static int vu_plain(int vu, const Vu0Uniform *U, uint32_t i, ClipV *o, float x0,
     vu_vertex(vu, U, &gsVuVerts[(size_t)i * 12], &h);
     if (h.s[3] < 1e-3f) { return 0; }
     vu_project(&h, U, o);
-    return o->x >= x0 && o->x <= x1 && o->y >= y0 && o->y <= y1;
+    return scissor_inside(o->x, o->y, x0, y0, x1, y1);
 }
 
 static void vu_draw(int vu, const Vu0Uniform *U, const uint32_t *idx, uint32_t count, float x0, float y0, float x1, float y1) {
@@ -730,7 +751,7 @@ static inline int strip_corner(const Vtx *v, const PvrTex *t, ClipV *o, float x0
     o->c[1] = (float)gs_unit(v->g);
     o->c[2] = (float)gs_unit(v->b);
     o->c[3] = sFixA >= 0.0f ? sFixA * 255.0f : (float)gs_unit(v->a);
-    return o->x >= x0 && o->x <= x1 && o->y >= y0 && o->y <= y1;
+    return scissor_inside(o->x, o->y, x0, y0, x1, y1);
 }
 
 /* A strip draw (gs_draw.c GsGpu_Strip): its strips as the PVR's, a triangle with a corner outside the scissor
@@ -962,7 +983,7 @@ static void draw_one(uint32_t n, const PvrTex *t) {
                 a[j].c[1] = (float)gs_unit(v->g);
                 a[j].c[2] = (float)gs_unit(v->b);
                 a[j].c[3] = sFixA >= 0.0f ? sFixA * 255.0f : (float)gs_unit(v->a);
-                if (a[j].x < x0 || a[j].x > x1 || a[j].y < y0 || a[j].y > y1) { inside = 0; }
+                if (!scissor_inside(a[j].x, a[j].y, x0, y0, x1, y1)) { inside = 0; }
             }
             /* A triangle that needs no clipping and starts with the last two corners of the one before (a strip
                the game drew, handed on as triangles: the records of the vertex programs) continues the PVR's

@@ -6,7 +6,7 @@
  * have drawn go to the renderer as polygons (include/port/rnd.h): no VU memory, no GS packet.
  *
  * The listings this follows are the programs in src/vu1/ (.vsm; docs/systems/vu1/). The arithmetic is done in the same
- * order as the programs do it, the conversions to the GS's integers as they do (ftoi4 / ftoi0, a 24-bit depth), so
+ * order as the programs do it (DC uses approximate reciprocals), the conversions to the GS's integers as they do (ftoi4 / ftoi0, a 24-bit depth), so
  * a corner lands on the GS's sixteenth of a pixel; a division by zero and an overflow give the largest float, as
  * the unit does. The chains' shape is the one the offline audit found in every asset (port/ps2_offline_audit.txt
  * section 2): one "ret" tag, UNPACK V4-32 of a header at TOPS + 0 and of the vertices behind it, MSCNT.
@@ -147,12 +147,48 @@ static void mtx_run(float (*o)[4], const float *m, const float (*in)[4], uint32_
 #endif
 }
 
+/* The same guarded shz_invf used by VU0: square only within a safe exponent range.
+   Keep the original divide's zero/overflow behaviour on exceptional inputs. */
+static inline float vu_recip(float w) {
+#if VU1_DIRECT
+    uint32_t bits, e;
+    memcpy(&bits, &w, sizeof(bits));
+    e = (bits >> 23) & 0xFF;
+    if (e == 0) {
+        return w < 0.0f ? -VU_MAX : VU_MAX;
+    }
+    if (e < 127 - 60 || e > 127 + 60) {
+        return vu_div(1.0f, w);
+    }
+#ifdef BT3_DCSIM
+    /* shz_invf(w) = fsrra(w * w), with the original sign restored. */
+    {
+        float inv = sh4_fsrra_f(w * w, 0);
+        return w < 0.0f ? -inv : inv;
+    }
+#else
+    return shz_invf(w);
+#endif
+#else
+    return vu_div(1.0f, w);
+#endif
+}
+
 /* CLIP: which of the six planes x, y, z = +|w| / -|w| the point is outside (bit 0 x > +|w|, 1 x < -|w|, 2 y > +|w|,
    3 y < -|w|, 4 z > +|w|, 5 z < -|w|). */
+/* Four view widths/heights: ordinary screen-edge crossings stay in the strip. */
+#define VU1_GUARD 4.0f
 static unsigned clip_flags(const float c[4]) {
+#if VU1_DIRECT
+    float w = c[3], g = w * VU1_GUARD;
+    /* Signed w also rejects geometry behind the eye. No far-plane clip. */
+    return (unsigned)(c[0] > g) | (unsigned)(c[0] < -g) << 1 | (unsigned)(c[1] > g) << 2 |
+           (unsigned)(c[1] < -g) << 3 | (unsigned)(c[2] < -w) << 5;
+#else
     float w = c[3] < 0.0f ? -c[3] : c[3];
     return (unsigned)(c[0] > w) | (unsigned)(c[0] < -w) << 1 | (unsigned)(c[1] > w) << 2 | (unsigned)(c[1] < -w) << 3 |
            (unsigned)(c[2] > w) << 4 | (unsigned)(c[2] < -w) << 5;
+#endif
 }
 
 /* A corner as the program stores it for the GS (XYZF2 from the screen position already divided, ST and Q, RGBAQ
@@ -163,7 +199,11 @@ static void put_vtx(RndVtx *o, int ctx, const float scr[4], float s, float t, fl
     uint32_t z = ((uint32_t)vu_ftoi(scr[2], 16.0f) >> 4) & 0xFFFFFF;
     uint32_t rgba = ((uint32_t)col[0] & 0xFF) | ((uint32_t)col[1] & 0xFF) << 8 | ((uint32_t)col[2] & 0xFF) << 16 |
                     ((uint32_t)col[3] & 0xFF) << 24;
+#if VU1_DIRECT
+    Rnd_VtxUnwrapped(o, ctx, vu_ftoi(scr[0], 16.0f), vu_ftoi(scr[1], 16.0f), z, s, t, q, rgba);
+#else
     Rnd_Vtx(o, ctx, vu_ftoi(scr[0], 16.0f), vu_ftoi(scr[1], 16.0f), z, s, t, q, rgba);
+#endif
 }
 
 /* ---------------------------------------------------------------------------------------------- the chains */
@@ -535,8 +575,29 @@ static int direct_strip(const float (*s)[4], const float *u, const float *t, con
 
 /* The texture coordinate s / q of a corner whose ST and Q are (s, t, w) times q: as the renderer divides them
    (a Q of 0 taken as 1) */
-static inline float direct_div(float a, float w, float q) {
-    return w == 1.0f ? a : w != 0.0f ? a / w : a * q;
+static inline void direct_uv(float s, float t, float w, float q, float *u, float *v) {
+    uint32_t bits, e;
+    if (w == 1.0f) {
+        *u = s;
+        *v = t;
+        return;
+    }
+    if (w == 0.0f) {
+        *u = s * q;
+        *v = t * q;
+        return;
+    }
+    memcpy(&bits, &w, sizeof(bits));
+    e = (bits >> 23) & 0xFF;
+    if (e < 127 - 60 || e > 127 + 60) {
+        /* A reciprocal could overflow although s / w and t / w are representable. */
+        *u = s / w;
+        *v = t / w;
+        return;
+    }
+    q = vu_recip(w);
+    *u = s * q;
+    *v = t * q;
 }
 #endif
 
@@ -615,8 +676,12 @@ static void p4_cross(P4Vtx *o, const P4Vtx *a, const P4Vtx *b, int comp, float s
 
 /* Outside the plane comp = sign * |w| (the CLIP judgement). */
 static int p4_out(const P4Vtx *v, int comp, float sign) {
+#if VU1_DIRECT
+    float w = v->p[3];
+#else
     float w = v->p[3] < 0.0f ? -v->p[3] : v->p[3];
-    return sign < 0.0f ? v->p[comp] < -w : v->p[comp] > w;
+#endif
+    return sign < 0.0f ? v->p[comp] < sign * w : v->p[comp] > sign * w;
 }
 
 /* One plane of the clipper (Sutherland-Hodgman): the closed polygon src of n corners into dst, closed again; the
@@ -643,13 +708,18 @@ static int p4_plane(P4Vtx *dst, const P4Vtx *src, int n, int comp, float sign) {
 
 /* The triangle of strip corners c0, c1, c2 (clip positions, the colours' integers, texture coordinates) clipped
    and sent as a fan, as clip_triangle / emit_fan do: first grown by 0.5% about its centre (so it overlaps the
-   strip's triangles around it), then cut by z = -w, z = +w, x = -w, x = +w, y = -w, y = +w in that order; what is
+   strip's triangles around it), then cut by near Z and a wide XY guard band on DC, otherwise all six planes; what is
    left goes through the clip -> screen matrix toScr (program 4's and program 6's clippers are the same). The
    texture as put_strip's. */
 static void p4_clip(const float *c0, const float *c1, const float *c2, const int32_t (*col)[4], const float *const *tc,
                     uint32_t prim, uint64_t tex0, uint32_t tex, const float *toScr) {
+#if VU1_DIRECT
+    static const int comp[5] = {2, 0, 0, 1, 1};
+    static const float sign[5] = {-1.0f, -VU1_GUARD, VU1_GUARD, -VU1_GUARD, VU1_GUARD};
+#else
     static const int comp[6] = {2, 2, 0, 0, 1, 1};
     static const float sign[6] = {-1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f};
+#endif
     static P4Vtx poly[2][P4_POLY + 1];
     const float *cp[3];
     float g[4];
@@ -671,18 +741,22 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
         }
     }
     poly[0][3] = poly[0][0];
-    for (k = 0; k < 6 && n != 0; k++) {
+    for (k = 0; k < (int)(sizeof(comp) / sizeof(comp[0])) && n != 0; k++) {
         n = p4_plane(poly[(k + 1) & 1], poly[k & 1], n, comp[k], sign[k]);
     }
     if (n < 3) {
         return;
     }
-    for (k = 0; k < n; k++) { /* (after six planes the polygon is in poly[0]) */
+    for (k = 0; k < n; k++) {
+#if VU1_DIRECT
+        const P4Vtx *v = &poly[1][k];
+#else
         const P4Vtx *v = &poly[0][k];
+#endif
         float s[4], q;
         int32_t c[4];
         mtx_apply(s, toScr, v->p[0], v->p[1], v->p[2], v->p[3]);
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (i = 0; i < 4; i++) {
             s[i] = vu_clamp(s[i] * q);
             c[i] = vu_ftoi(v->c[i], 1.0f);
@@ -753,7 +827,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         const float *v = (const float *)(vtx + i * 12); /* position, colour, s t q */
         float *s = scr[i], q;
 
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (k = 0; k < 4; k++) {
             s[k] = vu_clamp(s[k] * q);
             col[i][k] = vu_ftoi(v[4 + k], 1.0f);
@@ -779,8 +853,7 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 #if VU1_DIRECT
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12);
-        uv[0][i] = direct_div(v[8], v[10], qv[i]);
-        uv[1][i] = direct_div(v[9], v[10], qv[i]);
+        direct_uv(v[8], v[9], v[10], qv[i], &uv[0][i], &uv[1][i]);
     }
     if (direct_strip((const float (*)[4])scr, uv[0], uv[1], (const int32_t (*)[4])col, 1, adc, n, prim, tex0)) {
         return 1;
@@ -830,15 +903,164 @@ int Vu1Native_Prog4(const void *chain) {
    colours (22, 23), program 1's TEX0 (26). A batch: a tag of one A+D register, TEX0 of each layer, the two strips'
    tags, then the corners (position with bone A's weight in w, normal, s t q). */
 #define FIG_MAXV 38 /* the corners the program has room for (its output, 6 + 6n quadwords, in 238) */
+#define FIG_K 108 /* the constants programs 0 and 1 read (0..26) */
+#define FIG_VIEW_K 8
+
+/* sx, sy, depth multiplier/addend, viewport x/y offsets, valid, padding. */
+static float sFigView[FIG_VIEW_K];
+
+void Vu1Native_SetFigViewport(const void *clipToScreen, const void *viewToScreen) {
+    const float *v = (const float *)clipToScreen, *s = (const float *)viewToScreen;
+    sFigView[0] = v[0];
+    sFigView[1] = v[5];
+    sFigView[2] = s[10];
+    sFigView[3] = s[14];
+    sFigView[4] = v[12];
+    sFigView[5] = v[13];
+    sFigView[6] = v[15] == 1.0f ? 1.0f : 0.0f;
+    sFigView[7] = 0.0f;
+}
 
 typedef struct FigWalk {
     int prog, draw;  /* (draw: W_) */
     const float *k;  /* the constants, when drawing */
     const float *sc; /* program 2: its block's screen and clip (VU 11..18, sP2 + 44) */
     int alt;         /* program 2: 2b */
-    int lit;         /* program 0: lightA, lightB made (once a draw, as the program's setup before its batches) */
-    float lightA[16], lightB[16];
+    int lit;         /* packed lighting made once per part, before its batches */
+    float light[16]; /* program 0: brightness A in x, brightness B in y */
+#if VU1_DIRECT
+    const float *view; /* camera coefficients captured at submission, never the current camera at replay */
+    int prepared, fast;
+    float clipA[16], clipB[16];
+#endif
 } FigWalk;
+
+static void fig_prepare_light(FigWalk *wk) {
+    const float *k = wk->k;
+    uint32_t c;
+    if (wk->prog == 0 && !wk->lit) {
+        /* The two x results are the only normal components program 0 consumes. Pack them into one matrix:
+           its x row is (light * A).x, its y row (light * B).x. The other rows are unused. */
+        wk->lit = 1;
+        for (c = 0; c < 3; c++) {
+            float a[4], b[4];
+            mtx_apply(a, k + 40, k[c * 4], k[c * 4 + 1], k[c * 4 + 2], k[c * 4 + 3]);
+            mtx_apply(b, k + 40, k[16 + c * 4], k[16 + c * 4 + 1], k[16 + c * 4 + 2], k[16 + c * 4 + 3]);
+            wk->light[c * 4] = a[0]; wk->light[c * 4 + 1] = b[0];
+            wk->light[c * 4 + 2] = wk->light[c * 4 + 3] = 0.0f;
+        }
+        wk->light[12] = wk->light[13] = k[52];
+        wk->light[14] = wk->light[15] = 0.0f;
+    }
+}
+
+/* Legacy positions, also the fallback for unusual projections, exceptional inputs and clip boundaries. */
+static void fig_positions_old(float (*screen)[4], float (*clip)[4], const float *k,
+                              const uint32_t *vtx, uint32_t n) {
+    static float pa[FIG_MAXV][4], pb[FIG_MAXV][4];
+    uint32_t i, c;
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        for (c = 0; c < 3; c++) {
+            pa[i][c] = vu_clamp(v[c] - k[32 + c]);
+            pb[i][c] = vu_clamp(v[c] - k[36 + c]);
+        }
+        pa[i][3] = pb[i][3] = 1.0f;
+    }
+    mtx_run(pa, k, (const float (*)[4])pa, n);
+    mtx_run(pb, k + 16, (const float (*)[4])pb, n);
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        for (c = 0; c < 3; c++) {
+            screen[i][c] = vu_clamp(pb[i][c] + vu_clamp(vu_clamp(pa[i][c] - pb[i][c]) * v[3]));
+        }
+        screen[i][3] = 1.0f;
+    }
+    mtx_run(clip, k + 72, (const float (*)[4])screen, n);
+    mtx_run(screen, k + 56, (const float (*)[4])screen, n);
+}
+
+#if VU1_DIRECT
+/* Restrict reassociation to finite, bounded operands: all intermediate products in both paths then fit in
+   a float. Testing only the final result would not detect a saturated intermediate in the legacy path. */
+#define FIG_BOUND 1.0e8f
+static int fig_bounded(const float *v, uint32_t n) {
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        if (!(__builtin_fabsf(v[i]) <= FIG_BOUND)) { return 0; }
+    }
+    return 1;
+}
+
+/* projection * bone * translation(-pivot); ignore the bone's w row, as the legacy blend sets w to 1. */
+static void fig_clip_bone(float *out, const float *projection, const float *bone, const float *pivot) {
+    float p[4];
+    uint32_t c;
+    for (c = 0; c < 3; c++) {
+        mtx_apply(out + c * 4, projection, bone[c * 4], bone[c * 4 + 1], bone[c * 4 + 2], 0.0f);
+    }
+    mtx_apply(p, bone, -pivot[0], -pivot[1], -pivot[2], 1.0f);
+    mtx_apply(out + 12, projection, p[0], p[1], p[2], 1.0f);
+}
+
+static void fig_prepare(FigWalk *wk) {
+    const float *k = wk->k, *v = wk->view;
+    uint32_t c, axis;
+    wk->prepared = 1;
+    wk->fast = 0;
+    if (v == NULL || v[6] != 1.0f || !fig_bounded(v, FIG_VIEW_K) ||
+        !fig_bounded(k, 40) || !fig_bounded(k + 56, 32)) { return; }
+    /* Check the captured camera really describes these screen/clip matrices. A special projection keeps the
+       original path. Z comes from w directly to avoid cancellation of large clip-z and clip-w terms. */
+    for (c = 0; c < 4; c++) {
+        for (axis = 0; axis < 4; axis++) {
+            float expected, actual = k[56 + c * 4 + axis];
+            if (axis < 2) {
+                expected = k[72 + c * 4 + axis] * v[axis] + k[72 + c * 4 + 3] * v[4 + axis];
+            } else if (axis == 2) {
+                expected = k[72 + c * 4 + 3] * v[2] + (c == 3 ? v[3] : 0.0f);
+            } else {
+                expected = k[72 + c * 4 + 3];
+            }
+            if (!(__builtin_fabsf(expected - actual) <= 1.0e-5f * (1.0f + __builtin_fabsf(actual)))) { return; }
+        }
+    }
+    fig_clip_bone(wk->clipA, k + 72, k, k + 32);
+    fig_clip_bone(wk->clipB, k + 72, k + 16, k + 36);
+    wk->fast = 1;
+}
+
+static int fig_positions_fast(float (*screen)[4], float (*clip)[4], FigWalk *wk,
+                              const uint32_t *vtx, uint32_t n) {
+    const float *view = wk->view;
+    uint32_t i, c;
+    if (!wk->prepared) { fig_prepare(wk); }
+    if (!wk->fast) { return 0; }
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        if (!(v[3] >= 0.0f && v[3] <= 1.0f) || !fig_bounded(v, 3)) { return 0; }
+        screen[i][0] = v[0]; screen[i][1] = v[1]; screen[i][2] = v[2]; screen[i][3] = 1.0f;
+    }
+    /* Two batched matrix loads, not two loads per vertex. The second pass reuses its input buffer. */
+    mtx_run(clip, wk->clipA, (const float (*)[4])screen, n);
+    mtx_run(screen, wk->clipB, (const float (*)[4])screen, n);
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        float *a = clip[i], *b = screen[i], eps;
+        for (c = 0; c < 4; c++) { a[c] = b[c] + (a[c] - b[c]) * v[3]; }
+        /* Preserve the old clip decision near a plane, where reassociation's rounding could change it. */
+        eps = 1.0e-4f * (1.0f + __builtin_fabsf(a[3]));
+        if (__builtin_fabsf(a[2] + a[3]) <= eps ||
+            __builtin_fabsf(__builtin_fabsf(a[0]) - VU1_GUARD * a[3]) <= eps ||
+            __builtin_fabsf(__builtin_fabsf(a[1]) - VU1_GUARD * a[3]) <= eps) { return 0; }
+        b[0] = a[0] * view[0] + a[3] * view[4];
+        b[1] = a[1] * view[1] + a[3] * view[5];
+        b[2] = a[3] * view[2] + view[3];
+        b[3] = a[3];
+    }
+    return 1;
+}
+#endif
 
 /* The A+D tag of one register the batch starts with (no EOP: the strip's tag follows in the same kick). */
 static int ad_tag_ok(const uint32_t *tag) {
@@ -857,14 +1079,13 @@ static int ad_tex0(const uint32_t *ad, int ctx, uint64_t *tex0) {
 static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[2][FIG_MAXV];
     static uint8_t adc[FIG_MAXV];
-    static float pa[FIG_MAXV][4], pb[FIG_MAXV][4], ss[FIG_MAXV][4], cs[FIG_MAXV][4], la[FIG_MAXV][4], lb[FIG_MAXV][4];
+    static float ss[FIG_MAXV][4], cs[FIG_MAXV][4], la[FIG_MAXV][4];
     static float qa[FIG_MAXV], ua[2][FIG_MAXV], ta[2][FIG_MAXV]; /* q; each layer's texture coordinate (s / q) */
     FigWalk *wk = (FigWalk *)arg;
     const float *k = wk->k;
     uint32_t prim[2], n, i, c, flags[3] = {0, 0, 0};
     uint64_t tex0[2] = {0, 0};
     int ctx[2];
-    float *lightA = wk->lightA, *lightB = wk->lightB;
     int32_t col[2][4];
 
     split(hdr, &nh, &vtx, &nv, 5);
@@ -902,54 +1123,24 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         col[0][c] = vu_ftoi(k[88 + c], 1.0f);
         col[1][c] = vu_ftoi(k[92 + c], 1.0f);
     }
-    if (wk->prog == 0 && !wk->lit) { /* the setup's light * A and light * B: columns 0..2 the product, 3 the light's own */
-        wk->lit = 1;
-        for (c = 0; c < 3; c++) {
-            mtx_apply(lightA + c * 4, k + 40, k[c * 4], k[c * 4 + 1], k[c * 4 + 2], k[c * 4 + 3]);
-            mtx_apply(lightB + c * 4, k + 40, k[16 + c * 4], k[16 + c * 4 + 1], k[16 + c * 4 + 2], k[16 + c * 4 + 3]);
-        }
-        cp32(lightA + 12, k + 52, 4);
-        cp32(lightB + 12, k + 52, 4);
-    }
-    /* each matrix run over the batch's corners at once (mtx_run): the corner relative to bone A's pivot and to B's,
-       through A and B, blended by the weight; through the screen and the clip; the normal through the light(s) */
+    fig_prepare_light(wk);
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12);
-        pa[i][0] = vu_clamp(v[0] - k[32]);
-        pa[i][1] = vu_clamp(v[1] - k[33]);
-        pa[i][2] = vu_clamp(v[2] - k[34]);
-        pa[i][3] = 1.0f;
-        pb[i][0] = vu_clamp(v[0] - k[36]);
-        pb[i][1] = vu_clamp(v[1] - k[37]);
-        pb[i][2] = vu_clamp(v[2] - k[38]);
-        pb[i][3] = 1.0f;
         cp32(cs[i], v + 4, 3); /* (the normal) */
         cs[i][3] = 1.0f;
     }
-    if (wk->prog == 0) {
-        mtx_run(la, lightA, (const float (*)[4])cs, n);
-        mtx_run(lb, lightB, (const float (*)[4])cs, n);
-    } else {
-        mtx_run(la, k + 40, (const float (*)[4])cs, n);
-    }
-    mtx_run(pa, k, (const float (*)[4])pa, n);
-    mtx_run(pb, k + 16, (const float (*)[4])pb, n);
-    for (i = 0; i < n; i++) {
-        const float *v = (const float *)(vtx + i * 12);
-        for (c = 0; c < 3; c++) {
-            ss[i][c] = vu_clamp(pb[i][c] + vu_clamp(vu_clamp(pa[i][c] - pb[i][c]) * v[3]));
-        }
-        ss[i][3] = 1.0f; /* (the screen and the clip take the blend's x y z with w 1) */
-    }
-    mtx_run(cs, k + 72, (const float (*)[4])ss, n);
-    mtx_run(ss, k + 56, (const float (*)[4])ss, n);
+    mtx_run(la, wk->prog == 0 ? wk->light : k + 40, (const float (*)[4])cs, n);
+#if VU1_DIRECT
+    if (!fig_positions_fast(ss, cs, wk, vtx, n))
+#endif
+    { fig_positions_old(ss, cs, k, vtx, n); }
     for (i = 0; i < n; i++) {
         const float *v = (const float *)(vtx + i * 12); /* position (w: bone A's weight), normal, s t q */
         float *s = ss[i], *cl = cs[i], l[4], q, u, t;
 
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         if (wk->prog == 0) { /* u = 0.5 + 0.5 * (light * the normal blended by the weight).x */
-            l[0] = vu_clamp(lb[i][0] + vu_clamp(vu_clamp(la[i][0] - lb[i][0]) * v[3]));
+            l[0] = vu_clamp(la[i][1] + vu_clamp(vu_clamp(la[i][0] - la[i][1]) * v[3]));
             u = vu_clamp(vu_clamp(l[0] * 0.5f) + 0.5f);
             t = 0.0f;
         } else { /* (u, v) = 0.5 * (1 + (light * normal).xy) */
@@ -973,8 +1164,7 @@ static int fig_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t
         if (c == 0) {
             for (i = 0; i < n; i++) {
                 const float *v = (const float *)(vtx + i * 12);
-                ua[0][i] = direct_div(v[8], v[10], qa[i]);
-                ta[0][i] = direct_div(v[9], v[10], qa[i]);
+                direct_uv(v[8], v[9], v[10], qa[i], &ua[0][i], &ta[0][i]);
             }
         }
         if (direct_strip((const float (*)[4])ss, ua[c], ta[c], (const int32_t (*)[4])col[c], 0, adc, n, prim[c], tex0[c])) {
@@ -1025,14 +1215,12 @@ int Vu1Native_Takes(int prog, const void *chain) {
     return 1;
 }
 
-#define FIG_K 108 /* the constants programs 0 and 1 read (0..26) */
-
 void Vu1Native_Prog0(const void *chain, const void *consts) {
-    submit(VU1N_P0, chain, (const float *)consts, FIG_K, NULL, 0, 0);
+    submit(VU1N_P0, chain, (const float *)consts, FIG_K, sFigView, FIG_VIEW_K, 0);
 }
 
 void Vu1Native_Prog1(const void *chain, const void *consts) {
-    submit(VU1N_P1, chain, (const float *)consts, FIG_K, NULL, 0, 0);
+    submit(VU1N_P1, chain, (const float *)consts, FIG_K, sFigView, FIG_VIEW_K, 0);
 }
 
 /* ---------------------------------------------------------------------------------------------- program 2 */
@@ -1094,7 +1282,7 @@ static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         }
         mtx_apply(s, sc, p[0], p[1], p[2], 1.0f);
         mtx_apply(cl, cm, p[0], p[1], p[2], 1.0f);
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (c = 0; c < 4; c++) {
             s[c] = vu_clamp(s[c] * q);
         }
@@ -1201,7 +1389,7 @@ static int p6_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         st[i][1] = vu_clamp(vu_clamp(vu_clamp(c[1] * wk->c[64]) + 1.0f) * 0.5f);
         st[i][2] = 1.0f;
         st[i][3] = 0.0f;
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (k = 0; k < 4; k++) {
             s[k] = vu_clamp(s[k] * q);
             col[i][k] = vu_ftoi(v[8 + k], 1.0f);
@@ -1300,7 +1488,7 @@ static int p7_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
 
         mtx_apply(s, wk->sl, v[0], v[1], v[2], 1.0f);
         mtx_apply(c, wk->cl, v[0], v[1], v[2], 1.0f);
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (k = 0; k < 4; k++) {
             s[k] = vu_clamp(s[k] * q);
             col[k] = vu_ftoi(k < 3 ? v[4 + k] : wk->alpha, 1.0f);
@@ -1421,7 +1609,7 @@ static int p8_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         }
         mtx_apply(s, sc, p[0], p[1], p[2], 1.0f);
         mtx_apply(cl, cm, p[0], p[1], p[2], 1.0f);
-        q = vu_div(1.0f, s[3]);
+        q = vu_recip(s[3]);
         for (c = 0; c < 4; c++) {
             s[c] = vu_clamp(s[c] * q);
             col[c] = vu_ftoi(v[4 + c], 1.0f);
@@ -1479,7 +1667,7 @@ typedef struct Vu1Defer {
     uint16_t nk;    /* floats of constants */
 } Vu1Defer;
 
-#define DEFER_MAX_K 108
+#define DEFER_MAX_K (FIG_K + FIG_VIEW_K)
 typedef struct Vu1Body {
     RndSnap st;
     float k[DEFER_MAX_K]; /* (nk of them kept) */
@@ -1552,6 +1740,9 @@ static void run_walk(int stat, const void *chain, const float *k, int mode) {
         wk.prog = stat == VU1N_P0 ? 0 : stat == VU1N_P1 ? 1 : 2;
         wk.draw = mode;
         wk.k = k;
+#if VU1_DIRECT
+        if (wk.prog != 2) { wk.view = k + FIG_K; }
+#endif
         wk.sc = k + 44;
         wk.alt = stat == VU1N_P2B;
         walk(chain, wk.prog == 2 ? p2_batch : fig_batch, &wk);

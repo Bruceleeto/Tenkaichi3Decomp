@@ -584,6 +584,11 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
     ObjDrawNode *node;
     f32 k;
 
+#ifdef PORT
+    if (mode != 2) {
+        Vu1Native_SetFigViewport(&gBtlCamView->unk100, &gBtlCamView->view2screen);
+    }
+#endif
     headNode = NULL;
     headPart = NULL;
     if (mode == 1) {

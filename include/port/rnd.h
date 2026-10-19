@@ -174,6 +174,8 @@ void Port_DirectSend(const RndPvrVtx *v, const uint8_t *adc, uint32_t n); /* the
 /* A corner from what a GS packet gives: x, y in sixteenths of a pixel (XYOFFSET of context ctx at 0, 0), the
    24-bit depth, s t q, r g b a. */
 void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
+/* Native transformed coordinates: signed 12.4, without GS packet wrapping at 16 bits. */
+void Rnd_VtxUnwrapped(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba);
 /* The TEX0 of context ctx as the packets followed have set it (a draw whose texture was bound before it). */
 uint64_t Rnd_Tex0(int ctx);
 /* The PRIM the GS draws by when a packet sets prim: prim itself, or with PRMODECONT.AC 0 (the shadow passes) its type

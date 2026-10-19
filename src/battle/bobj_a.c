@@ -1287,37 +1287,40 @@ void BtlObjHit_BuildVolumes(BobjObj *obj) {
 
 /* Local rotation matrix of a node. On a fighter, node 2 gets the extra rotation look.node2, nodes 0x2E / 0x2F
    are slerped towards look.node2E / node2F, and node 0x31 (the jaw) takes the face's rotation while it talks. */
-void BtlObjPose_GetNodeMtx(BobjObj *obj, Mtx44 *out, BobjPart *part) {
-    Quat q;
+static void BtlObjPose_GetNodeQuat(BobjObj *obj, Quat *q, BobjPart *part) {
     BobjLook *look = &obj->look;
 
     if (obj->type == 0) {
         switch (part->id) {
         case 2:
-            Quat_Mul(&q, &look->node2, &part->rot);
+            Quat_Mul(q, &look->node2, &part->rot);
             break;
         case 0x2E:
-            Quat_Slerp(&q, &part->rot, &obj->look.node2E, look->weight2E);
+            Quat_Slerp(q, &part->rot, &obj->look.node2E, look->weight2E);
             break;
         case 0x2F:
-            Quat_Slerp(&q, &part->rot, &obj->look.node2F, look->weight2F);
+            Quat_Slerp(q, &part->rot, &obj->look.node2F, look->weight2F);
             break;
         case 0x31:
             if (BtlObj_IsJawActive(obj)) {
-                BtlObj_GetJawRot(obj, &q);
+                BtlObj_GetJawRot(obj, q);
             } else {
-                Vec4_Copy((Vec4 *)&q, (Vec4 *)&part->rot);
+                Vec4_Copy((Vec4 *)q, (Vec4 *)&part->rot);
             }
             break;
         default:
-            Vec4_Copy((Vec4 *)&q, (Vec4 *)&part->rot);
+            Vec4_Copy((Vec4 *)q, (Vec4 *)&part->rot);
             break;
         }
-        Quat_ToMtx(out, &q);
     } else {
-        Vec4_Copy((Vec4 *)&q, (Vec4 *)&part->rot);
-        Quat_ToMtx(out, &q);
+        Vec4_Copy((Vec4 *)q, (Vec4 *)&part->rot);
     }
+}
+
+void BtlObjPose_GetNodeMtx(BobjObj *obj, Mtx44 *out, BobjPart *part) {
+    Quat q;
+    BtlObjPose_GetNodeQuat(obj, &q, part);
+    Quat_ToMtx(out, &q);
 }
 
 /* Resets the transform: position and rotation 0, scale 1, matrix rebuilt. */
@@ -1373,6 +1376,43 @@ void BtlObjXf_SetMtx(BobjObj *obj, Mtx44 *m) {
 /* World matrix of every node, parents first, on the VU0 matrix stack: node = local * parent. Stores the root
    node's world position in xf.rootPos. */
 void BtlObjPose_CalcMatrices(BobjObj *obj) {
+#ifdef __DREAMCAST__
+    /* Keep the working parent in XMTRX. The stack holds pointers to parent matrices already needed by the
+       game, rather than copying each parent through the emulated VU0 stack and a local rotation matrix. */
+    const Mtx44 *parents[64], *parent = &obj->xf.mtx;
+    BobjBone *bone = obj->mdl.nodes;
+    unsigned sp = 0;
+    Vu0Cur_ResetStack();
+    shz_xmtrx_load_unaligned_4x4((const float *)parent);
+    while (1) {
+        BobjPart *part = BtlObj_GetNode(obj, bone->id);
+        Quat q;
+        shz_vec4_t pos;
+        if (obj->type == 0 && (part->id == 2 || part->id == 0x2E || part->id == 0x2F || part->id == 0x31)) {
+            BtlObjPose_GetNodeQuat(obj, &q, part);
+            /* Special pose helpers may use XMTRX themselves. */
+            shz_xmtrx_load_unaligned_4x4((const float *)parent);
+        } else {
+            q.x = part->rot.x; q.y = part->rot.y; q.z = part->rot.z; q.w = part->rot.w;
+        }
+        shz_xmtrx_store_unaligned_4x4((float *)&part->parent);
+        parents[sp++ & 63] = &part->parent;
+        pos = shz_xmtrx_transform_vec4(shz_vec4_init(part->pos.x, part->pos.y, part->pos.z, 1.0f));
+        shz_xmtrx_apply_rotation_quat(shz_quat_init(q.w, q.x, q.y, q.z));
+        shz_xmtrx_set_translation(pos.x, pos.y, pos.z);
+        shz_xmtrx_store_unaligned_4x4((float *)&part->mtx);
+        parent = &part->mtx;
+        if (bone->pop != 0) {
+            sp -= bone->pop;
+            parent = parents[sp & 63];
+            shz_xmtrx_load_unaligned_4x4((const float *)parent);
+        }
+        if (bone->last != 0) { break; }
+        bone = (BobjBone *)((u8 *)bone + bone->next);
+    }
+    Vu0Cur_LoadMtx((Mtx44 *)parent);
+    Vec4_Copy(&obj->xf.rootPos, (Vec4 *)BtlObj_GetNode(obj, 0)->mtx.m[3]);
+#else
     Mtx44 local;
     BobjXf *xf = &obj->xf;
     BobjBone *bone = obj->mdl.nodes;
@@ -1400,6 +1440,7 @@ void BtlObjPose_CalcMatrices(BobjObj *obj) {
     }
 end:
     Vec4_Copy(&xf->rootPos, (Vec4 *)BtlObj_GetNode(obj, 0)->mtx.m[3]);
+#endif
 }
 
 /* Whether the object has the fighter buffer. */

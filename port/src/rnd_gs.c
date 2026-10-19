@@ -689,14 +689,18 @@ int Rnd_Direct(RndDirect *o, const RndPoly *h, int ctx, int abe, int gouraud, ui
     return r;
 }
 
-void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
-    o->x = (float)((x & 0xFFFF) - (int32_t)(sXyOff[ctx & 1] & 0xFFFF)) / 16.0f;
-    o->y = (float)((y & 0xFFFF) - (int32_t)((sXyOff[ctx & 1] >> 32) & 0xFFFF)) / 16.0f;
+void Rnd_VtxUnwrapped(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
+    o->x = ((float)x - (float)(int32_t)(sXyOff[ctx & 1] & 0xFFFF)) / 16.0f;
+    o->y = ((float)y - (float)(int32_t)((sXyOff[ctx & 1] >> 32) & 0xFFFF)) / 16.0f;
     o->z = z;
     o->s = s;
     o->t = t;
     o->q = q;
     o->rgba = rgba;
+}
+
+void Rnd_Vtx(RndVtx *o, int ctx, int32_t x, int32_t y, uint32_t z, float s, float t, float q, uint32_t rgba) {
+    Rnd_VtxUnwrapped(o, ctx, x & 0xFFFF, y & 0xFFFF, z, s, t, q, rgba);
 }
 
 void Rnd_SnapTake(RndSnap *s) {

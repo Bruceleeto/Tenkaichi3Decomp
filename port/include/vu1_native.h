@@ -25,6 +25,9 @@ int Vu1Native_Prog4(const void *chain);
    before its constants are made; then the draw with them (ObjDrawPkt from mtxA, as it would have gone to VU
    address 0: 0x22 quadwords, 0xB for program 2). */
 int Vu1Native_Takes(int prog, const void *chain);
+/* Camera coefficients for the fighter fast path; captured with each part's deferred constants.
+   Both matrices are column-major: View.unk100 and View.view2screen. */
+void Vu1Native_SetFigViewport(const void *clipToScreen, const void *viewToScreen);
 void Vu1Native_Prog0(const void *chain, const void *consts);
 void Vu1Native_Prog1(const void *chain, const void *consts);
 void Vu1Native_Prog2(const void *chain, const void *consts);
