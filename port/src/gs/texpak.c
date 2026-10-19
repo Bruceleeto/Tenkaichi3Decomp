@@ -38,7 +38,10 @@ static int log_code(uint32_t n, uint32_t lo, int count) {
 
 static void pak_open(void) {
 #ifdef __DREAMCAST__
-    const char *path = "/cd/tex.pak";
+    extern const char *Port_FileRoot(void); /* plat_file.c: /cd, else /pc */
+    char root[80];
+    const char *path = root;
+    snprintf(root, sizeof(root), "%s/tex.pak", Port_FileRoot());
 #else
     const char *path = "port/build/dc/assets/tex.pak";
 #endif

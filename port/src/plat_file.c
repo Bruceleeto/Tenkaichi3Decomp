@@ -4,7 +4,7 @@
  * The game reads everything through CRI's ADXF library: three AFS archives ("partitions" 0..2), files addressed by
  * (partition, index), read in 2048-byte sectors, asynchronously. Here an archive is a FOLDER of loose files made by
  * port/tools/extract_disc.py (<root>/pzs3us1/00042.bin is partition 1, index 42) and a read finishes at once.
- * <root> is the environment variable BT3_DATA, or "gamedata" (the Dreamcast: "/cd", the disc). A file in <root>/mods/<same relative path> is used
+ * <root> is the environment variable BT3_DATA, or "gamedata" (the Dreamcast: "/cd", the disc, else "/pc", the host through dcload). A file in <root>/mods/<same relative path> is used
  * instead of the original: that is the whole modding mechanism for now.
  */
 #include <ctype.h>
@@ -42,7 +42,26 @@ extern void Port_LowFree(void *addr);
 static const char *root(void) {
     const char *r = getenv("BT3_DATA");
 #ifdef __DREAMCAST__
-    return r != NULL ? r : "/cd"; /* (the disc's root: `make -f Makefile.dc disc`) */
+    /* the disc's root (`make -f Makefile.dc disc`), else the host's through dcload (/pc): the first that holds
+       partition 0, decided once */
+    static const char *found;
+    if (r != NULL) { return r; }
+    if (found == NULL) {
+        static const char *const roots[] = {"/cd", "/pc"};
+        unsigned i;
+        found = roots[0];
+        for (i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+            char path[64];
+            FILE *fp;
+            snprintf(path, sizeof(path), "%s/pzs3us0/00000.bin", roots[i]);
+            if ((fp = fopen(path, "rb")) != NULL) {
+                fclose(fp);
+                found = roots[i];
+                break;
+            }
+        }
+    }
+    return found;
 #else
     return r != NULL ? r : "gamedata";
 #endif

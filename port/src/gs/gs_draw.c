@@ -1798,9 +1798,23 @@ void GsGpu_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t
 #endif
 }
 
+#if GS_STRIPS && defined(BT3_PVR)
+static inline int same_rnd_state(const RndState *a, const RndState *b) {
+    return a->flags == b->flags && a->blend == b->blend && a->atest == b->atest && a->aref == b->aref &&
+           a->afail == b->afail && a->ztest == b->ztest && a->mask == b->mask && a->fbp == b->fbp && a->fix == b->fix &&
+           a->scissor[0] == b->scissor[0] && a->scissor[1] == b->scissor[1] && a->scissor[2] == b->scissor[2] &&
+           a->scissor[3] == b->scissor[3];
+}
+#endif
+
 int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) {
 #if GS_STRIPS && defined(BT3_PVR)
-    GsDraw d;
+    /* The last strip's draw state (rnd_draw_state's: the target, the pipeline, the modes), kept: a model's next
+       strip almost always has the same. The same state, texture, TEX0 and palette tint, and the target slot still
+       the frame buffer's, make the same; its target is touched as GsDraw_TargetGet would. */
+    static struct { int ok; RndState st; GsTex g; uint64_t t0, tint; GsDraw d; } m;
+    const GsDraw *dp = &m.d;
+    uint64_t tint;
     GsTex g = 0;
     uint32_t tw = 1, th = 1;
     int r;
@@ -1819,14 +1833,26 @@ int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) 
     if ((h->tex != 0 || h->gsTex0 != 0) && (g = rnd_tex(h->tex, h->pal, h->gsTex0, &tw, &th)) == 0) {
         return 0;
     }
-    if (!rnd_draw_state(&d, &h->st, g, h->gsTex0)) {
-        gStatPoly += tris;
-        return 2;
+    tint = gGsTint[(uint32_t)(h->gsTex0 >> 42) & 511];
+    if (m.ok && m.g == g && m.t0 == h->gsTex0 && m.tint == tint && same_rnd_state(&m.st, &h->st) && m.d.target < gsTargetCount &&
+        gsTargets[m.d.target].fbp == (h->st.fbp & 0x1FFu)) {
+        gsTargets[m.d.target].last = gGsFrame;
+    } else {
+        m.ok = 0;
+        if (!rnd_draw_state(&m.d, &h->st, g, h->gsTex0)) {
+            gStatPoly += tris;
+            return 2;
+        }
+        m.ok = 1;
+        m.st = h->st;
+        m.g = g;
+        m.t0 = h->gsTex0;
+        m.tint = tint;
     }
-    if (d.misc[1] != 0.0f) {
+    if (dp->misc[1] != 0.0f) {
         return 0; /* (the destination alpha test: its snapshot, date_snapshot) */
     }
-    if ((r = GsPvr_Direct(o, &d, tris, verts)) == 0) {
+    if ((r = GsPvr_Direct(o, dp, tris, verts)) == 0) {
         return 0;
     }
     gStatPoly += tris;
@@ -1837,8 +1863,8 @@ int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) 
         o->z0 = 0.001f;
         o->z1 = 1.001f;
         gStatDraw++;
-        gsTargets[d.target].draws++;
-        gsTargets[d.target].gen = gGsPageGen[gsTargets[d.target].fbp & 511];
+        gsTargets[dp->target].draws++;
+        gsTargets[dp->target].gen = gGsPageGen[gsTargets[dp->target].fbp & 511];
     }
     return r;
 #else

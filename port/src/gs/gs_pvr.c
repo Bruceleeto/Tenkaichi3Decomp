@@ -710,6 +710,7 @@ static void vu_draw(int vu, const Vu0Uniform *U, const uint32_t *idx, uint32_t c
    the alpha test as blending (a cut-out's transparent texels have alpha 0) or not drawn (never passes); the
    scissor by clipping the triangles here; the destination alpha test left out (see below). */
 static int sSecAlpha; /* this render has written the GS's alpha alone into the secondary buffer (see below) */
+static int sHdrLive;  /* the polygon header the TA has now is GsPvr_Direct's last (sDirLast.hdr): nothing sent since */
 
 /* Whether draw d is one the PVR draws (into whichever buffer). */
 static int draw_kept(const GsDraw *d, uint32_t n) {
@@ -953,6 +954,7 @@ static void draw_one(uint32_t n, const PvrTex *t) {
         }
         sSent += sizeof(hdr);
         pvr_prim(&hdr, sizeof(hdr));
+        sHdrLive = 0;
         /* the scissor (x, y, width, height at SCALE) in the render's pixels */
         float x0 = (float)d->scissor[0] / (float)SCALE * sSx, y0 = (float)d->scissor[1] / (float)SCALE * sSy;
         float x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sSx, y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sSy;
@@ -1095,6 +1097,7 @@ static void scene_begin(TgVer *dst, const TgVer *bg) {
     pvr_wait_ready();
     sSent = 0;
     sSecAlpha = 0;
+    sHdrLive = 0;
     if (dst != NULL) {
         rtt_argb4444();
         pvr_scene_begin_rtt(dst->t.mem, dst->t.w, dst->t.h, dst->t.w);
@@ -1313,11 +1316,32 @@ static int spill(void) {
    its corners after it as the caller makes them (Port_DirectSend). Only what draw_one sends as one polygon over the
    whole screen without a tint (else 0: the strip goes through the lists as before); 2 = nothing drawn, as
    spill and draw_one leave it out. */
+static inline int same_words(const void *a, const void *b, unsigned bytes) {
+    const uint32_t *x = (const uint32_t *)a, *y = (const uint32_t *)b;
+    unsigned i;
+    for (i = 0; i < bytes / 4; i++) {
+        if (x[i] != y[i]) { return 0; }
+    }
+    return 1;
+}
+
+/* The last direct strip's polygon (draw_head's, and its header compiled), kept: a model's next strip almost always
+   draws as the one before. draw_head reads only the draw, its texture's record and sSecAlpha; the same of those,
+   the same polygon, and then no new header either while the TA still has it (sHdrLive). */
+static struct {
+    int ok, sec, secAfter;
+    GsDraw d;
+    const PvrTex *tp, *tout; /* the texture given, the one drawn (NULL: none) */
+    PvrTex t;                /* *tp as it was (a texture moved, or another in its record, is another polygon) */
+    float us, vs, fixa;
+    pvr_poly_hdr_t hdr;
+} sDirLast;
+
 int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     const PvrTex *t = d->mode[0] != 0 ? (const PvrTex *)d->tex : NULL;
     pvr_poly_cxt_t pass[2];
-    pvr_poly_hdr_t hdr;
-    uint32_t key;
+    pvr_poly_hdr_t *hdr = &sDirLast.hdr;
+    uint32_t key, hdrBytes;
     float x0, y0, x1, y1;
     int np;
 
@@ -1345,20 +1369,50 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     if (x0 > 0.0f || y0 > 0.0f || x1 < sRw || y1 < sRh) {
         return 0; /* (a scissor inside the screen: draw_one clips to it) */
     }
-    if ((np = draw_head(d, &t, pass)) == 0) {
-        return 2;
-    }
-    if (np != 1 || sTintCur != NULL) {
-        return 0;
+    if (sDirLast.ok && sDirLast.sec == sSecAlpha && sDirLast.tp == t && (t == NULL || same_words(&sDirLast.t, t, sizeof(*t))) &&
+        same_words(&sDirLast.d, d, sizeof(*d))) {
+        /* (draw_head's results as it left them) */
+        t = sDirLast.tout;
+        sUs = sDirLast.us;
+        sVs = sDirLast.vs;
+        sFixA = sDirLast.fixa;
+        sTintCur = NULL;
+        sTintFlat = 0;
+        sSecAlpha = sDirLast.secAfter;
+    } else {
+        const PvrTex *given = t;
+        int sec = sSecAlpha;
+        sDirLast.ok = 0;
+        sHdrLive = 0;
+        if ((np = draw_head(d, &t, pass)) == 0) {
+            return 2;
+        }
+        if (np != 1 || sTintCur != NULL) {
+            return 0;
+        }
+        pvr_poly_compile(hdr, &pass[0]);
+        sDirLast.ok = 1;
+        sDirLast.sec = sec;
+        sDirLast.secAfter = sSecAlpha;
+        sDirLast.d = *d;
+        sDirLast.tp = given;
+        if (given != NULL) { sDirLast.t = *given; }
+        sDirLast.tout = t;
+        sDirLast.us = sUs;
+        sDirLast.vs = sVs;
+        sDirLast.fixa = sFixA;
     }
     strip_end();
-    if (sSent + sizeof(hdr) + verts * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
+    hdrBytes = sHdrLive ? 0 : sizeof(*hdr);
+    if (sSent + hdrBytes + verts * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
         sDropped += tris;
         return 2;
     }
-    pvr_poly_compile(&hdr, &pass[0]);
-    pvr_prim(&hdr, sizeof(hdr));
-    sSent += sizeof(hdr) + verts * sizeof(pvr_vertex_t);
+    if (!sHdrLive) {
+        pvr_prim(hdr, sizeof(*hdr));
+        sHdrLive = 1;
+    }
+    sSent += hdrBytes + verts * sizeof(pvr_vertex_t);
     sTris += tris;
     o->sx = sSx;
     o->sy = sSy;

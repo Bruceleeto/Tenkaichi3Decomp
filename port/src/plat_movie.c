@@ -45,11 +45,12 @@ extern int Port_NetSession(void); /* gs/net.c: no movies in an online session */
 #define MPEG_FILE_READ(fh, buf, size) fs_read((fh), (buf), (size))
 #define MPEG_FILE_TELL(fh) fs_tell((fh))
 #include "../third_party/pl_mpeg/pl_mpeg_dc.h"
-#define MOVIE_DIR "/cd/"
+extern const char *Port_FileRoot(void); /* plat_file.c: /cd, else /pc */
+#define MOVIE_DIR Port_FileRoot(), "/"
 extern void GsPvr_MovieMacroblocks(const uint32_t *mb);
 #else
 #include "../third_party/pl_mpeg/pl_mpeg.h"
-#define MOVIE_DIR "port/build/dc/assets/"
+#define MOVIE_DIR "port/build/dc/assets", "/"
 extern void GsPvr_MovieYuv(const uint8_t *py, const uint8_t *pcb, const uint8_t *pcr, int ys, int cs);
 #endif
 extern int GsPvr_MovieBegin(int w, int h); /* gs/gs_pvr.c: the movie's texture */
@@ -109,7 +110,7 @@ static void movie_start(void) {
         char path[600];
         const char *name = strrchr(gPortMoviePath, '/') != NULL ? strrchr(gPortMoviePath, '/') + 1 : gPortMoviePath;
         size_t n = strcspn(name, ".");
-        snprintf(path, sizeof(path), "%s%.*s.mpg", MOVIE_DIR, (int)n, name);
+        snprintf(path, sizeof(path), "%s%s%.*s.mpg", MOVIE_DIR, (int)n, name);
         sPlm = plm_create_with_filename(path);
         if (sPlm == NULL || !plm_has_headers(sPlm) || !GsPvr_MovieBegin(plm_get_width(sPlm), plm_get_height(sPlm))) {
             fprintf(stderr, "bt3: ERROR: the movie %s is not played: %s\n", path,

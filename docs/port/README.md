@@ -3376,3 +3376,14 @@ Not checked: with a window on a real display, and by feel; the sound (the game's
 and those now come two at once in a fight); V-sync on; Windows and macOS; a machine too slow to compute and show
 a tick in time, where the picture then comes late instead of the game's start of the tick.
 
+
+## The Dreamcast ELF in Flycast, the data from /pc (2026-10-19)
+
+Without a disc the Dreamcast build reads its data from `/pc` (the host, through dcload): plat_file.c `root()`
+takes the first of `/cd`, `/pc` that holds `pzs3us0/00000.bin` (decided once; `BT3_DATA` still wins), and
+tex.pak and the movies are looked for there too. The Flycast fork in the Optimizer repository (tools/flycast,
+branch `optimizer`) serves `/pc/` from a `pc` folder next to the ELF it boots, so `port/build/dc/pc` holds what
+the disc would: `pzs3us0/`, `pzs3us1/`, `disc/DATA/` (no .PSS / .ADX), `tex.pak` and the `.mpg` movies (copied
+from gamedata and port/build/dc/assets; `make -f Makefile.dc clean` removes it). From the repository's root:
+
+    ~/Downloads/Optimizer/tools/flycast/build/flycast "$PWD/port/build/dc/bt3.elf"
