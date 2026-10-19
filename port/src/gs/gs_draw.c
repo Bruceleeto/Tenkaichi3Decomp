@@ -107,6 +107,8 @@ unsigned gsSkipped;
 unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes; /* created since the front end last cleared them (slow-frame report) */
 unsigned gGpuTexReplaced; /* textures taken from a texture pack so far */
 uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs; /* time spent decoding textures, creating pipelines, in GsGpu_FrameEnd */
+int gGsDirectWhy; /* TEMP: why GsGpu_Direct / GsPvr_Direct last returned 2 */
+int gGsDirectNot; /* TEMP: why the direct path last returned 0 (vu1_native.c p4_fast) */
 uint64_t gGpuWaitNs; /* the Dreamcast: waiting for the PVR's last render to end (gs_pvr.c scene_begin) */
 
 static uint64_t gpu_now(void) {
@@ -1821,17 +1823,21 @@ int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) 
     int r;
 
     if (sBackend != &sPvrBackend || GS_INTERP > 0) {
+        gGsDirectNot = 6;
         return 0;
     }
     if (GS_NO_PICTURE) {
         gStatPoly += tris;
+        gGsDirectWhy = 1;
         return 2;
     }
     if (!(h->st.flags & RND_GOURAUD) || (h->tex & RND_TEX_TARGET)) {
+        gGsDirectNot = (h->st.flags & RND_GOURAUD) ? 8 : 7;
         return 0;
     }
     rnd_check(&h->st, h->gsCtx, h->tex != 0 || h->gsTex0 != 0);
     if ((h->tex != 0 || h->gsTex0 != 0) && (g = rnd_tex(h->tex, h->pal, h->gsTex0, &tw, &th)) == 0) {
+        gGsDirectNot = 9;
         return 0;
     }
     tint = gGsTint[(uint32_t)(h->gsTex0 >> 42) & 511];
@@ -1842,6 +1848,7 @@ int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) 
         m.ok = 0;
         if (!rnd_draw_state(&m.d, &h->st, g, h->gsTex0)) {
             gStatPoly += tris;
+            gGsDirectWhy = 2;
             return 2;
         }
         m.ok = 1;
@@ -1850,9 +1857,8 @@ int GsGpu_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) 
         m.t0 = h->gsTex0;
         m.tint = tint;
     }
-    if (dp->misc[1] != 0.0f) {
-        return 0; /* (the destination alpha test: its snapshot, date_snapshot) */
-    }
+    /* (the destination alpha test, dp->misc[1], left out: the PVR draws a vertex program's without it, gs_pvr.c
+       draw_kept) */
     if ((r = GsPvr_Direct(o, dp, tris, verts)) == 0) {
         return 0;
     }
@@ -4762,7 +4768,7 @@ void GsGpu_InterpFlush(void) { /* (the name Port_VBlank knew it by) */
  * picture is finished, the NEXT tick is computed without being drawn (its drawing is left out the way a re-run
  * frame's is: GS_NO_PICTURE) and nothing is shown for it; the grid (plat_stub.c: a blank that is already due is
  * not waited for) then catches up. At most kSkipMax ticks in a row, so that something is shown at least every
- * fifth tick; a machine too slow for that slows down as before. Setting "frame_skip" (F1, Video), on by default.
+ * fifth tick; a machine too slow for that slows down as before. Setting "frame_skip" (F1, Video), off by default (the PS2 game has none: it slows down).
  * Only helps where the showing is what takes the time (a weak graphics chip), not the computing. */
 int gsSkipFrame;
 static int sSkipOn = -1, sSkipRun;
@@ -4770,7 +4776,7 @@ static unsigned sSkipped; /* (BT3_GS_VERBOSE) */
 
 int GsDraw_FrameSkip(void) {
     if (sSkipOn < 0) {
-        sSkipOn = getenv("BT3_FRAME_SKIP") != NULL ? atoi(getenv("BT3_FRAME_SKIP")) != 0 : Port_Setting("frame_skip", 1) != 0;
+        sSkipOn = getenv("BT3_FRAME_SKIP") != NULL ? atoi(getenv("BT3_FRAME_SKIP")) != 0 : Port_Setting("frame_skip", 0) != 0;
     }
     return sSkipOn;
 }

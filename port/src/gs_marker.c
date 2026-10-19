@@ -412,8 +412,10 @@ int Port_Strip(const RndPoly *h, const RndVtx *v, const uint8_t *adc, uint32_t n
 
 /* Port_Strip's texture, for a strip made straight into the renderer's vertices (Rnd_Direct) */
 int Port_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) {
+    extern int gGsDirectNot;
     RndPoly r = *h;
     if (!Gs_TakesRecords()) {
+        gGsDirectNot = 4;
         return 0;
     }
     if (r.gsTex0 != 0) {
@@ -426,6 +428,7 @@ int Port_Direct(RndDirect *o, const RndPoly *h, uint32_t tris, uint32_t verts) {
             r.tex = sNotes[i].tex;
             r.pal = sNotes[i].pal;
         } else if (sNotes != NULL && r.tex == 0) {
+            gGsDirectNot = 5;
             return 0; /* (Port_Strip's: it reports it) */
         } else {
             bind_resolve(&r.tex, &r.pal, r.gsTex0);

@@ -1349,21 +1349,26 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     float x0, y0, x1, y1;
     int np;
 
+    extern int gGsDirectWhy, gGsDirectNot;
     if (!no_rtt() || d->mode[0] == 2) {
+        gGsDirectNot = no_rtt() ? 12 : 11;
         return 0;
     }
     if (!draw_kept(d, 0xFFFFFFFFu)) {
+        gGsDirectWhy = 3;
         return 2;
     }
     spill();
     gsVertCount = 0;
     gsDrawCount = 0;
     if (d->target != sStreamShown) {
+        gGsDirectWhy = 4;
         return 2;
     }
     key = sPipeKey[d->pipeline];
     if ((key >> 16 & 7) == 0) { sStreamTA = 0; }
     if (sStreamTA && (key & 1) && ((key >> 7) & 3) == 1) {
+        gGsDirectWhy = 5;
         return 2;
     }
     x0 = (float)d->scissor[0] / (float)SCALE * sSx;
@@ -1371,6 +1376,7 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     x1 = (float)(d->scissor[0] + d->scissor[2]) / (float)SCALE * sSx;
     y1 = (float)(d->scissor[1] + d->scissor[3]) / (float)SCALE * sSy;
     if (x0 > 0.0f || y0 > 0.0f || x1 < sRw || y1 < sRh) {
+        gGsDirectNot = 13;
         return 0; /* (a scissor inside the screen: draw_one clips to it) */
     }
     if (sDirLast.ok && sDirLast.sec == sSecAlpha && sDirLast.tp == t && (t == NULL || same_words(&sDirLast.t, t, sizeof(*t))) &&
@@ -1389,9 +1395,11 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
         sDirLast.ok = 0;
         sHdrLive = 0;
         if ((np = draw_head(d, &t, pass)) == 0) {
+            gGsDirectWhy = 6;
             return 2;
         }
         if (np != 1 || sTintCur != NULL) {
+            gGsDirectNot = np != 1 ? 14 : 15;
             return 0;
         }
         pvr_poly_compile(hdr, &pass[0]);
@@ -1410,6 +1418,10 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     hdrBytes = sHdrLive ? 0 : sizeof(*hdr);
     if (sSent + hdrBytes + verts * sizeof(pvr_vertex_t) > SCENE_BUDGET) {
         sDropped += tris;
+        {
+            extern int gGsDirectWhy;
+            gGsDirectWhy = 7;
+        }
         return 2;
     }
     if (!sHdrLive) {

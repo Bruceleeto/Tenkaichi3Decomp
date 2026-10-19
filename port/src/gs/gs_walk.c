@@ -429,7 +429,9 @@ static void rnd_draw(const RndCmd *c) {
     if (c->kind == 0) { GsGpu_Quad((const RndQuad *)d); } else if (c->kind == 1) { GsGpu_Poly((const RndPoly *)d); }
     else if (c->kind == 3) {
         RndDeferFn fn;
-        uint64_t t0 = Gs_NowNs();
+        uint64_t t0;
+        if (GS_NO_PICTURE) { return; } /* (a mesh queued for a tick drawn without a picture: dropped, as its strips would be) */
+        t0 = Gs_NowNs();
         memcpy(&fn, d, sizeof(fn));
         sReplay = 1;
         gStatMesh++;

@@ -776,6 +776,212 @@ static void p4_clip(const float *c0, const float *c1, const float *c2, const int
     }
 }
 
+#if defined(__DREAMCAST__) && !defined(BT3_DCSIM)
+/* Program 4's strip on the Dreamcast in two passes over its corners, the matrices in XMTRX once each: the clip
+   matrix and the clip flags of every corner (the triangles to clip noted, then clipped as p4_batch does), then the
+   screen matrix for only the corners the strip sends, straight into the PVR's vertices. Nothing held to the largest
+   float: corners and matrices within P4_BOUND (the sums cannot overflow), else 0 and p4_batch's own path, nothing
+   sent yet. 1 = done (or the renderer did not take the strip: put_strip, as p4_batch). */
+#define P4_BOUND 1.0e8f
+static inline float p4_recip(float w) {
+    float a = __builtin_fabsf(w);
+    return a >= 0x1p-60f && a < 0x1p61f ? shz_invf(w) : vu_recip(w); /* (vu_recip's exponent range, as floats) */
+}
+
+static inline uint32_t p4_unit(float f) { /* direct_unit of vu_ftoi(f, 1) */
+    return direct_unit(f >= 2147483648.0f ? 0x7FFFFFFF : f <= -2147483648.0f ? (int32_t)0x80000000u : (int32_t)f);
+}
+
+static unsigned sWhyN[8]; /* TEMP: the "none" strips by gGsDirectWhy */
+static unsigned sNotN[16]; /* TEMP: the "records" strips by gGsDirectNot */
+static uint64_t sPh[7]; /* TEMP: p4_fast_do's steps, ns */
+static unsigned sCutN[2]; /* TEMP: the clipped triangles: only the guard band's sides crossed, the near plane crossed */
+static int p4_fast_do(const P4Walk *wk, const uint32_t *vtx, uint32_t n, uint32_t prim, uint64_t tex0, int *cat) {
+    static float clip[P4_MAXV][4] __attribute__((aligned(32)));
+    static uint8_t adc[P4_MAXV];
+    static uint16_t cut[P4_MAXV];
+    const float *m = wk->c;
+    uint32_t i, k, e, f0 = 0, f1 = 0, f2 = 0, ncut = 0, tris = 0, verts = 0, run = 0;
+    RndPoly h;
+    RndDirect d;
+    int r;
+    extern uint64_t Gs_NowNs(void);
+    uint64_t t0 = Gs_NowNs(), t1;
+
+    for (i = 0; i < 48; i++) {
+        if (!(__builtin_fabsf(m[i]) <= P4_BOUND)) { *cat = 0; return 0; }
+    }
+    shz_xmtrx_load_unaligned_4x4(m + 16);
+    for (i = 0; i < n; i++) {
+        const float *v = (const float *)(vtx + i * 12);
+        shz_vec4_t c;
+        if (!(__builtin_fabsf(v[0]) <= P4_BOUND && __builtin_fabsf(v[1]) <= P4_BOUND && __builtin_fabsf(v[2]) <= P4_BOUND &&
+              __builtin_fabsf(v[3]) <= P4_BOUND)) {
+            *cat = 0;
+            return 0;
+        }
+        c = shz_xmtrx_transform_vec4(shz_vec4_init(v[0], v[1], v[2], v[3]));
+        clip[i][0] = c.x;
+        clip[i][1] = c.y;
+        clip[i][2] = c.z;
+        clip[i][3] = c.w;
+        f0 = f1;
+        f1 = f2;
+        f2 = clip_flags(clip[i]) | (c.w <= 0.0f ? 0x20u : 0u); /* (behind the eye: never sent to the TA) */
+        adc[i] = 0;
+        /* Only the near plane is clipped: the TA bins a triangle by its box on the screen and takes corners far off
+           its edges (as DMS's dc_model.c). The guard band's sides only leave out a triangle wholly beyond one. */
+        if (i >= 2 && (f0 | f1 | f2) != 0) {
+            if ((f0 & f1 & f2) != 0) {
+                adc[i] = 1;
+            } else if ((f0 | f1 | f2) & 0x20) {
+                cut[ncut++] = (uint16_t)i;
+                sCutN[1]++; /* TEMP */
+                adc[i] = 1;
+            } else {
+                sCutN[0]++; /* TEMP: drawn whole, once cut */
+            }
+        }
+    }
+    t1 = Gs_NowNs(); sPh[0] += t1 - t0; t0 = t1;
+    for (k = 0; k < ncut; k++) { /* (p4_batch's clipped fans, in the same order: before the strip) */
+        int32_t col[3][4];
+        const float *tc[3];
+        uint32_t j;
+        i = cut[k];
+        for (j = 0; j < 3; j++) {
+            const float *v = (const float *)(vtx + (i - 2 + j) * 12);
+            col[j][0] = vu_ftoi(v[4], 1.0f);
+            col[j][1] = vu_ftoi(v[5], 1.0f);
+            col[j][2] = vu_ftoi(v[6], 1.0f);
+            col[j][3] = vu_ftoi(v[7], 1.0f);
+            tc[j] = v + 8;
+        }
+        p4_clip(clip[i - 2], clip[i - 1], clip[i], (const int32_t(*)[4])col, tc, wk->fanPrim, Rnd_Tex0((int)(wk->fanPrim >> 9) & 1), 0, m + 32);
+    }
+    t1 = Gs_NowNs(); sPh[1] += t1 - t0; t0 = t1;
+    for (k = 2; k < n; k++) { /* (direct_strip's count) */
+        if (adc[k]) {
+            run = 0;
+            continue;
+        }
+        tris++;
+        verts += run ? 1 : 3;
+        run = 1;
+    }
+    if (tris == 0) {
+        *cat = 1;
+        return 1;
+    }
+    memset(&h, 0, sizeof(h));
+    h.gsTex0 = (prim >> 4) & 1 ? tex0 : 0;
+    h.st.flags = RND_VU;
+    {
+        extern int gGsDirectNot;
+        gGsDirectNot = 0;
+    }
+    r = Rnd_Direct(&d, &h, (int)(prim >> 9) & 1, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1, tris, verts);
+    t1 = Gs_NowNs(); sPh[r == 0 ? 6 : 2] += t1 - t0; t0 = t1;
+    if (r == 0) {
+        /* (not taken: p4_batch's records of the strip) */
+        static RndVtx out[P4_MAXV];
+        extern int gGsDirectNot;
+        *cat = 2;
+        sNotN[gGsDirectNot & 15]++;
+        for (i = 0; i < n; i++) {
+            const float *v = (const float *)(vtx + i * 12);
+            float s[4], q;
+            int32_t c[4];
+            mtx_apply(s, m, v[0], v[1], v[2], v[3]);
+            q = vu_recip(s[3]);
+            for (k = 0; k < 4; k++) {
+                s[k] = vu_clamp(s[k] * q);
+                c[k] = vu_ftoi(v[4 + k], 1.0f);
+            }
+            put_vtx(&out[i], (int)(prim >> 9) & 1, s, vu_clamp(v[8] * q), vu_clamp(v[9] * q), vu_clamp(v[10] * q), c);
+        }
+        put_strip(out, adc, n, prim, tex0, 0);
+        sPh[5] += Gs_NowNs() - t0;
+        return 1;
+    }
+    if (r != 1) {
+        extern int gGsDirectWhy;
+        *cat = 3;
+        sWhyN[gGsDirectWhy & 7]++;
+        gGsDirectWhy = 0;
+        return 1;
+    }
+    *cat = 4;
+    shz_xmtrx_load_unaligned_4x4(m);
+    for (k = 2; k < n;) { /* the corners Port_DirectSend sends: each run's, from two before it */
+        if (adc[k]) {
+            k++;
+            continue;
+        }
+        for (e = k + 1; e < n && !adc[e]; e++) {
+        }
+        for (i = k - 2; i < e; i++) {
+            const float *v = (const float *)(vtx + i * 12);
+            RndPvrVtx *o = &sDirect[i];
+            shz_vec4_t s = shz_xmtrx_transform_vec4(shz_vec4_init(v[0], v[1], v[2], v[3]));
+            float q = p4_recip(s.w), z = s.z * q * d.zk + d.zo, u, t;
+            direct_uv(v[8], v[9], v[10], q, &u, &t);
+            o->x = (s.x * q - d.xo) * d.sx;
+            o->y = (s.y * q - d.yo) * d.sy;
+            o->z = z < d.z0 ? d.z0 : z > d.z1 ? d.z1 : z;
+            o->u = u * d.us;
+            o->v = t * d.vs;
+            o->argb = (d.fixa >= 0 ? (uint32_t)d.fixa : p4_unit(v[7])) << 24 | p4_unit(v[4]) << 16 | p4_unit(v[5]) << 8 | p4_unit(v[6]);
+        }
+        k = e;
+    }
+    t1 = Gs_NowNs(); sPh[3] += t1 - t0; t0 = t1;
+    gStatVtx += n;
+    Port_DirectSend(sDirect, adc, n);
+    sPh[4] += Gs_NowNs() - t0;
+    return 1;
+}
+
+/* TEMP: each outcome's batches and time, printed as per frame every 60 frames */
+static int p4_fast(const P4Walk *wk, const uint32_t *vtx, uint32_t n, uint32_t prim, uint64_t tex0) {
+    extern uint64_t Gs_NowNs(void);
+    extern unsigned gGsFrame;
+    static const char *const name[5] = {"bound", "culled", "records", "none", "direct"};
+    static uint64_t ns[5];
+    static unsigned cnt[5], from;
+    uint64_t t0 = Gs_NowNs();
+    int cat = 4, r = p4_fast_do(wk, vtx, n, prim, tex0, &cat), i;
+    ns[cat] += Gs_NowNs() - t0;
+    cnt[cat]++;
+    if (gGsFrame - from >= 60) {
+        unsigned f = gGsFrame - from;
+        fprintf(stderr, "p4_fast per frame:");
+        for (i = 0; i < 5; i++) {
+            fprintf(stderr, " %s %u (%.1f ms)", name[i], cnt[i] / f, (double)ns[i] / 1e6 / f);
+            ns[i] = 0;
+            cnt[i] = 0;
+        }
+        fprintf(stderr, "\np4_fast none by why: ?%u picture %u state %u not-kept %u other-target %u table-alpha %u head %u budget %u\n",
+                sWhyN[0] / f, sWhyN[1] / f, sWhyN[2] / f, sWhyN[3] / f, sWhyN[4] / f, sWhyN[5] / f, sWhyN[6] / f, sWhyN[7] / f);
+        memset(sWhyN, 0, sizeof(sWhyN));
+        fprintf(stderr, "p4_fast steps ms: transform+bounds %.1f clip-fans %.1f Rnd_Direct(taken) %.1f fill %.1f send %.1f "
+                        "Rnd_Direct(refused) %.1f records-path %.1f\n",
+                (double)sPh[0] / 1e6 / f, (double)sPh[1] / 1e6 / f, (double)sPh[2] / 1e6 / f, (double)sPh[3] / 1e6 / f,
+                (double)sPh[4] / 1e6 / f, (double)sPh[6] / 1e6 / f, (double)sPh[5] / 1e6 / f);
+        fprintf(stderr, "p4_fast records by why: ?%u strip-takes %u takes-records %u ctx-bad %u gs-records %u no-note %u "
+                        "backend %u not-gouraud %u target-tex %u no-tex %u dest-alpha %u rtt %u mode2 %u scissor %u passes %u tint %u\n",
+                sNotN[0] / f, sNotN[1] / f, sNotN[2] / f, sNotN[3] / f, sNotN[4] / f, sNotN[5] / f, sNotN[6] / f, sNotN[7] / f,
+                sNotN[8] / f, sNotN[9] / f, sNotN[10] / f, sNotN[11] / f, sNotN[12] / f, sNotN[13] / f, sNotN[14] / f, sNotN[15] / f);
+        fprintf(stderr, "p4_fast clipped triangles: past the sides, now drawn whole %u, near plane %u\n", sCutN[0] / f, sCutN[1] / f);
+        memset(sCutN, 0, sizeof(sCutN));
+        memset(sNotN, 0, sizeof(sNotN));
+        memset(sPh, 0, sizeof(sPh));
+        from = gGsFrame;
+    }
+    return r;
+}
+#endif
+
 static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[P4_MAXV];
     static uint8_t adc[P4_MAXV];
@@ -818,6 +1024,11 @@ static int p4_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t 
         note(prim, tex0);
         return 1;
     }
+#if defined(__DREAMCAST__) && !defined(BT3_DCSIM)
+    if (p4_fast(wk, vtx, n, prim, tex0)) {
+        return 1;
+    }
+#endif
     for (i = 0; i < n; i++) { /* (the positions as points: the matrices' runs read them from there) */
         cp32(scr[i], vtx + i * 12, 4);
     }
@@ -1805,10 +2016,14 @@ static inline int same32(const void *a, const void *b, unsigned n) {
 
 /* kgen: not 0, a number that changes when k does (sP4Gen): k is the last record's while it is the same, not compared */
 static void submit(int stat, const void *chain, const float *k, unsigned nk, const float *k2, unsigned nk2, uint32_t kgen) {
+    extern int gPortResim, gsSkipFrame; /* gs/gs_internal.h GS_NO_PICTURE */
     Vu1Defer *q;
     uint32_t bytes, gen;
     int shared;
 
+    if (gPortResim || gsSkipFrame) {
+        return; /* (a tick drawn without a picture, skipped or re-run: the renderer would drop every strip) */
+    }
     if (nk2 != 0) {
         cp32(sBody.k, k, nk);
         cp32(sBody.k + nk, k2, nk2);

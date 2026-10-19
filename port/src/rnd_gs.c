@@ -660,14 +660,18 @@ int Rnd_Direct(RndDirect *o, const RndPoly *h, int ctx, int abe, int gouraud, ui
     RndPoly p;
     int r;
 
+    extern int gGsDirectNot;
     ctx &= 1;
     if (!Port_StripTakes()) {
+        gGsDirectNot = 1;
         return 0;
     }
     if (!Port_TakesRecords()) {
+        gGsDirectNot = 2;
         return 0;
     }
     if (gRndCtxBad[ctx] != 0) {
+        gGsDirectNot = 3;
         return 0; /* (Rnd_DrawStrip's: it reports it) */
     }
     p = *h;
