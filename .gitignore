@@ -23,8 +23,7 @@ bt3_pipelines.txt
 bt3_crash.txt
 saves/
 bt3_settings.txt
-/docs/port/*
-!/docs/port/*.md
+/docs/port/
 port/tests/ps2float/test.elf
 port/tests/ps2float/*.o
 /bt3-setup
