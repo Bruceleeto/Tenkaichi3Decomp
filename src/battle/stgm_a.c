@@ -352,6 +352,9 @@ void StgModel_Draw(void *view) {
     s32 j;
     s32 k;
     u32 chain;
+#ifdef BT3_NOSTAGE
+    return; /* (a test, Makefile.dc DC_NOSTAGE=1: the stage not drawn) */
+#endif
 
     if (Battle_GetWork()->flags & 0x2000) {
         return;

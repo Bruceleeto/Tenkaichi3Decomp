@@ -583,6 +583,9 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
     ObjDrawPart *part;
     ObjDrawNode *node;
     f32 k;
+#ifdef BT3_NOFIG
+    return; /* (a test, Makefile.dc DC_NOFIG=1: the fighters not drawn) */
+#endif
 
 #ifdef PORT
     if (mode != 2) {

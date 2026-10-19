@@ -147,6 +147,22 @@ $(NODRAW_STAMP): | $(OBJ)
 	touch $@
 $(OBJ)/gs_gs_walk.o: $(NODRAW_STAMP)
 $(OBJ)/gs_gs_walk.o: GS_CFLAGS += $(if $(filter 1,$(DC_NODRAW)),-DBT3_NODRAW)
+# DC_NOSTAGE=1 (a test): the stage's models not drawn (src/battle/stgm_a.c StgModel_Draw); the fighters, effects and HUD as ever
+DC_NOSTAGE ?= 0
+NOSTAGE_STAMP := $(BUILD)/nostage_$(DC_NOSTAGE).stamp
+$(NOSTAGE_STAMP): | $(OBJ)
+	rm -f $(BUILD)/nostage_*.stamp
+	touch $@
+$(OBJ)/battle_stgm_a.o: $(NOSTAGE_STAMP)
+$(OBJ)/battle_stgm_a.o: GAME_CFLAGS += $(if $(filter 1,$(DC_NOSTAGE)),-DBT3_NOSTAGE)
+# DC_NOFIG=1 (a test): the fighters' models not drawn (src/sys/gfxm_d_c.c ObjDraw_DrawParts); the stage, effects and HUD as ever
+DC_NOFIG ?= 0
+NOFIG_STAMP := $(BUILD)/nofig_$(DC_NOFIG).stamp
+$(NOFIG_STAMP): | $(OBJ)
+	rm -f $(BUILD)/nofig_*.stamp
+	touch $@
+$(OBJ)/sys_gfxm_d_c.o: $(NOFIG_STAMP)
+$(OBJ)/sys_gfxm_d_c.o: GAME_CFLAGS += $(if $(filter 1,$(DC_NOFIG)),-DBT3_NOFIG)
 # DC_DEMO=1 (the default for now: no pad yet): the attract demo's fight at start, as BT3_DEMO on PC; DC_DEMO=0 the game
 DC_DEMO ?= 1
 $(OBJ)/pc_headless.o: PC_CFLAGS += $(if $(filter 1,$(DC_DEMO)),-DBT3_DC_DEMO)

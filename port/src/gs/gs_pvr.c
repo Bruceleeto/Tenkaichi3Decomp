@@ -1093,8 +1093,12 @@ static uint32_t pow2_rt(uint32_t n) {
 }
 
 /* A render begun: into `dst` (NULL: the screen), over `bg` drawn first (NULL: cleared). */
+extern uint64_t gGpuWaitNs; /* gs_draw.c: waiting for the PVR's last render to end (pvr_wait_ready) */
 static void scene_begin(TgVer *dst, const TgVer *bg) {
+    extern uint64_t Gs_NowNs(void);
+    uint64_t t0 = Gs_NowNs();
     pvr_wait_ready();
+    gGpuWaitNs += Gs_NowNs() - t0;
     sSent = 0;
     sSecAlpha = 0;
     sHdrLive = 0;

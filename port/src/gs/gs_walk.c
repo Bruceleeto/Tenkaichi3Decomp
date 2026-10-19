@@ -484,7 +484,7 @@ static int time_report(void) {
 }
 
 void Gs_FramePace(uint64_t tChain) {
-    static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, sumMesh, perMin = ~0ull, perMax;
+    static uint64_t start, sum, worst, sumGame, sumList, sumTex, sumPipe, sumEnd, sumMesh, sumWait, perMin = ~0ull, perMax;
     static unsigned n, over;
     static uint64_t fpsFrom;
     static unsigned fpsN;
@@ -510,7 +510,7 @@ void Gs_FramePace(uint64_t tChain) {
         gPortSleptNs = 0;
         {   /* a frame over budget: where the time went and what was created in it */
             extern unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes;
-            extern uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs;
+            extern uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs, gGpuWaitNs;
             if (work > 33366700ull && getenv("BT3_GS_VERBOSE") != NULL) {
                 fprintf(stderr, "slow: frame %u: %.1f ms = game %.1f ms + display list %.1f ms; %u new textures (%u pixels), %u new pipelines\n",
                         sFrame, (double)work / 1e6, (double)(tChain - start) / 1e6, (double)(t - tChain) / 1e6, gGpuNewTex, gGpuNewTexPixels,
@@ -525,6 +525,8 @@ void Gs_FramePace(uint64_t tChain) {
             sumPipe += gGpuPipeNs;
             sumEnd += gGpuEndNs;
             sumMesh += sMeshNs;
+            sumWait += gGpuWaitNs;
+            gGpuWaitNs = 0;
             gGpuNewTex = gGpuNewTexPixels = gGpuNewPipes = 0;
             gGpuTexNs = gGpuPipeNs = gGpuEndNs = 0;
             sMeshNs = 0;
@@ -542,15 +544,15 @@ void Gs_FramePace(uint64_t tChain) {
                 fprintf(stderr, "time: frame %u: work per frame: average %.1f ms, worst %.1f ms, %u of 60 over the 33.4 ms budget\n",
                         sFrame, (double)sum / 60e6, (double)worst / 1e6, over);
                 fprintf(stderr, "time:   of the average: game code %.1f ms, display list %.1f ms (of which: the models' meshes %.1f, texture "
-                                "decoding %.1f, pipeline creation %.1f, ending and submitting the frame %.1f)\n",
+                                "decoding %.1f, pipeline creation %.1f, ending and submitting the frame %.1f; waiting for the PVR's last render %.1f)\n",
                         (double)sumGame / 60e6, (double)sumList / 60e6, (double)sumMesh / 60e6, (double)sumTex / 60e6, (double)sumPipe / 60e6,
-                        (double)sumEnd / 60e6);
+                        (double)sumEnd / 60e6, (double)sumWait / 60e6);
             }
             if (time_report()) {
                 fprintf(stderr, "time:   frames lasted %.1f to %.1f ms (33.4 in a fight, 16.7 in the menus)\n", (double)perMin / 1e6, (double)perMax / 1e6);
             }
             n = 0; sum = 0; worst = 0; over = 0;
-            sumGame = sumList = sumTex = sumPipe = sumEnd = sumMesh = 0;
+            sumGame = sumList = sumTex = sumPipe = sumEnd = sumMesh = sumWait = 0;
             perMin = ~0ull;
             perMax = 0;
         }

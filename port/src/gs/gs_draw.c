@@ -107,6 +107,7 @@ unsigned gsSkipped;
 unsigned gGpuNewTex, gGpuNewTexPixels, gGpuNewPipes; /* created since the front end last cleared them (slow-frame report) */
 unsigned gGpuTexReplaced; /* textures taken from a texture pack so far */
 uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs; /* time spent decoding textures, creating pipelines, in GsGpu_FrameEnd */
+uint64_t gGpuWaitNs; /* the Dreamcast: waiting for the PVR's last render to end (gs_pvr.c scene_begin) */
 
 static uint64_t gpu_now(void) {
     struct timespec ts;
