@@ -69,6 +69,9 @@ extern void StgNative_Begin(const void *mdl, const void *mtx);
 extern void StgNative_Mesh(u32 chain);
 extern void StgNative_End(void);
 extern void StgNative_Frame(void);
+extern void StgNative_Mesh7(const void *mdl, u32 chain, const void *mtx, f32 alpha);
+extern void StgNative_Mesh8(u32 chain, const f32 *world, const f32 *parent, const f32 *ofsA, const f32 *ofsB);
+#define STGM_CALL7(c, m, a) StgNative_Mesh7(gBtlStage->mdl, (c), (m), (a))
 #define STGM_LOAD4(m) StgNative_Begin(gBtlStage->mdl, (m))
 #define STGM_CALL4(c) StgNative_Mesh(c)
 #define STGM_MAT_END() StgNative_End()
@@ -78,6 +81,7 @@ extern void StgNative_Frame(void);
 #define STGM_CALL4(c) Vu1Pkt_CallProg4(c)
 #define STGM_MAT_END() ((void)0)
 #define STGM_FRAME() ((void)0)
+#define STGM_CALL7(c, m, a) (Vu0Cur_LoadMtx(m), Vu1Pkt_CallProg7((c), (a)))
 #endif
 
 /* Draws the animated stage objects: for each animation, every object that plays it, posed at its frame. */
@@ -146,7 +150,23 @@ void StgModel_DrawAnims(void) {
                 TexFile_UploadPacked(tex, 0x3480, 0x3700);
                 uploaded = 1;
             }
+#if defined(PORT) && defined(__DREAMCAST__) && !defined(BT3_DCSIM) && !defined(BT3_OLDSTAGE)
+            {
+                /* each node's mesh drawn natively (port/src/dc/stg_native.c), as Vu1Node_Draw walks them */
+                Vu1Node *nd = mdl;
+                while (1) {
+                    if (nd->hasMesh) {
+                        StgNative_Mesh8((u32)nd->vif, nd->world, nd->parent, nd->unkD0, nd->unkE0);
+                    }
+                    if (nd->last) {
+                        break;
+                    }
+                    nd = (Vu1Node *)((u8 *)nd + nd->size);
+                }
+            }
+#else
             Vu1Node_Draw(mdl);
+#endif
         }
     }
 }
@@ -324,10 +344,10 @@ s32 StgModel_DrawDebris(s32 drawn, u8 *vis) {
                         StgModel_SetTexture(mats[i].tex);
                     }
                     chain = mesh[j].chain;
-                    Vu0Cur_LoadMtx(mesh[j].mtx);
-                    Vu1Pkt_CallProg7(chain, (f32)mesh[j].alpha);
+                    STGM_CALL7(chain, mesh[j].mtx, (f32)mesh[j].alpha);
                 }
             }
+            STGM_MAT_END();
         }
         StgModel_SetTestDefault();
     }
