@@ -1740,12 +1740,18 @@ void EftTexSet_Keep16(EftAeTexSet16 *set, s32 tcc, s32 tfx) {
 static EftAeVramEntry sEftVramSent[128];
 static u32 sEftVramSentCount;
 static s32 sEftVramSentNow;
+/* EftVram_PortHandles' last answers, by TEX0's blocks (tbp | cbp << 14), emptied when the list changes: a frame's
+   effects draw many quads from the same few textures, and each answer was a walk of the list */
+#define EFT_VRAM_MEMO 8
+static struct { u32 key, tex, pal; } sEftVramMemo[EFT_VRAM_MEMO];
+static u32 sEftVramMemoN, sEftVramMemoNext;
 
 /* The list forgotten when the effects' list is made or freed (a battle's start and end): its textures are the last
    battle's, freed with it. */
 static void EftVram_PortForget(void) {
     sEftVramSentCount = 0;
     sEftVramSentNow = 0;
+    sEftVramMemoN = 0;
 }
 
 /* The handles (include/port/rnd.h) of the textures a draw's TEX0 names: the image uploaded this frame at its TBP0
@@ -1758,7 +1764,15 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
     u32 i;
 
     s32 gotTex = 0, gotPal = 0;
+    u32 key = tbp | cbp << 14;
 
+    for (i = 0; i < sEftVramMemoN; i++) {
+        if (sEftVramMemo[i].key == key) {
+            *tex = sEftVramMemo[i].tex;
+            *pal = sEftVramMemo[i].pal;
+            return;
+        }
+    }
     *tex = 0;
     *pal = 0;
     /* (from the last: the last there of each is the one the GS has; done once both are found) */
@@ -1779,6 +1793,10 @@ void EftVram_PortHandles(u64 tex0, u32 *tex, u32 *pal) {
             gotPal = 1;
         }
     }
+    i = sEftVramMemoN < EFT_VRAM_MEMO ? sEftVramMemoN++ : sEftVramMemoNext++ % EFT_VRAM_MEMO;
+    sEftVramMemo[i].key = key;
+    sEftVramMemo[i].tex = *tex;
+    sEftVramMemo[i].pal = *pal;
 }
 
 /* The same given to an ordering table record (Ot_RecTexHandles) for the TEX0 it writes. */
@@ -1798,6 +1816,7 @@ void EftVram_UploadAll(void) {
     __builtin_memcpy(sEftVramSent, gEftVram->entry, gEftVram->count * sizeof(EftAeVramEntry));
     sEftVramSentCount = gEftVram->count;
     sEftVramSentNow = 1;
+    sEftVramMemoN = 0;
 #endif
     for (i = 0; i < gEftVram->count; i++) {
         EftAeVramEntry *e = &gEftVram->entry[i];
@@ -1819,6 +1838,7 @@ void EftVram_Reset(void) {
 #ifdef PORT
     if (!sEftVramSentNow) {
         sEftVramSentCount = 0;
+        sEftVramMemoN = 0;
     }
     sEftVramSentNow = 0;
 #endif

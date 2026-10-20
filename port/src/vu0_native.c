@@ -1111,7 +1111,7 @@ void ClipPlane_DistArray(V4 *dist, const ClipVtx *poly, const V4 *plane, int n) 
 }
 
 /* Sutherland-Hodgman against one plane, in place; "outside" is dist < 0. The original's buffers hold 9 vertices. */
-int ClipPoly_ClipPlane(ClipVtx *poly, const V4 *plane, int n) {
+static __attribute__((noinline)) int clip_plane_cut(ClipVtx *poly, const V4 *plane, int n) {
     ClipVtx buf[9];
     V4 dist[9];
     int out[12];
@@ -1157,6 +1157,29 @@ int ClipPoly_ClipPlane(ClipVtx *poly, const V4 *plane, int n) {
     nOut = (int)(dst - buf);
     ClipVtx_CopyArray(poly, buf, nOut);
     return nOut;
+}
+
+/* (most polygons are wholly inside or wholly outside: told by their distances alone, as clip_plane_cut tells them,
+   without its frame and buffers) */
+int ClipPoly_ClipPlane(ClipVtx *poly, const V4 *plane, int n) {
+    V4 pl;
+    int i, nOut = 0;
+
+    if (n == 0) {
+        return 0;
+    }
+    pl = *plane;
+    for (i = 0; i < n; i++) {
+        const V4 *p = &poly[i].pos;
+        nOut += dot4(pl, v4(p->x, p->y, p->z, 1.0f)) < 0.0f;
+    }
+    if (nOut == 0) {
+        return n;
+    }
+    if (nOut == n) {
+        return 0;
+    }
+    return clip_plane_cut(poly, plane, n);
 }
 
 /* XMTRX loaded: no on-screen test, no return value; stq.w is a scratch register's (render data): 1 here */
