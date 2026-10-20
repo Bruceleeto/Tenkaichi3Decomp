@@ -242,6 +242,8 @@ static uint64_t sNs;
    vertices sent */
 static uint64_t sTm[6];
 static unsigned sCm[4]; /* (3: corners one bone's) */
+static uint64_t sSt[5]; /* TEMP: inside skinning, per batch: bone A, bone B and the clip test, the screen and the rest,
+                           the timer itself (two calls back to back); batches timed */
 
 /* m with its pivot taken first: m (p - o) = m' p (w 1) */
 static void shifted(float *o, const float *m, const float *ofs) {
@@ -286,17 +288,59 @@ static unsigned sRampWhy[6]; /* TEMP: not read: no note, no entry, the format, n
 extern const void *GsPvr_TexEntry(uint32_t tex);            /* gs/gs_pvr.c */
 extern const uint32_t *GsPvr_PalCol(uint32_t pal, uint32_t n);
 
+/* GS memory's layouts (port/tools/dc_tex.c vram_rw): where pixel (x, y) of a 32-bit buffer of width bw (in 64s) lies,
+   in words from its first block; where an 8-bit one's lies, in bytes */
+static const uint8_t kBlock32[4][8] = {{0, 1, 4, 5, 16, 17, 20, 21}, {2, 3, 6, 7, 18, 19, 22, 23}, {8, 9, 12, 13, 24, 25, 28, 29}, {10, 11, 14, 15, 26, 27, 30, 31}};
+static const uint8_t kCol32[8][8] = {{0, 1, 4, 5, 8, 9, 12, 13}, {2, 3, 6, 7, 10, 11, 14, 15}, {16, 17, 20, 21, 24, 25, 28, 29}, {18, 19, 22, 23, 26, 27, 30, 31},
+                                     {32, 33, 36, 37, 40, 41, 44, 45}, {34, 35, 38, 39, 42, 43, 46, 47}, {48, 49, 52, 53, 56, 57, 60, 61}, {50, 51, 54, 55, 58, 59, 62, 63}};
+static const uint8_t kCol8First[4][16] = {{0, 4, 16, 20, 32, 36, 48, 52, 2, 6, 18, 22, 34, 38, 50, 54}, {8, 12, 24, 28, 40, 44, 56, 60, 10, 14, 26, 30, 42, 46, 58, 62},
+                                          {33, 37, 49, 53, 1, 5, 17, 21, 35, 39, 51, 55, 3, 7, 19, 23}, {41, 45, 57, 61, 9, 13, 25, 29, 43, 47, 59, 63, 11, 15, 27, 31}};
+static inline uint32_t at32(uint32_t bw, uint32_t x, uint32_t y) {
+    return (((y & ~0x1Fu) * bw + ((x >> 1) & ~0x1Fu) + kBlock32[(y >> 3) & 3][(x >> 3) & 7]) << 6) + kCol32[y & 7][x & 7];
+}
+static inline uint32_t at8(uint32_t bw, uint32_t x, uint32_t y) {
+    uint32_t col = (y & 15) >> 2;
+    return ((((y >> 1) & ~0x1Fu) * (bw >> 1) + ((x >> 2) & ~0x1Fu) + kBlock32[(y >> 4) & 3][(x >> 4) & 7]) << 8) +
+           kCol8First[y & 3][(col & 1) ? ((x & 15) ^ 4) : (x & 15)] + col * 64;
+}
+
+/* the 8-bit indices of row 0, x 0..n-1 (of tw) of an 8-bit texture uploaded as 32 bits (rw x rh, width dbw): the upload
+   laid out as GS memory would hold it, read as TEX0 does (width tbw). 0 = it lies beyond two pages. Kept: the light's
+   texture is uploaded once. */
+#define FIG_T8WORDS 4096 /* (two pages) */
+static int t8_from_32(uint8_t *idx, uint32_t n, uint32_t tw, const uint8_t *img, uint32_t rw, uint32_t rh, uint32_t dbw, uint32_t tbw) {
+    static uint32_t mem[FIG_T8WORDS];
+    uint32_t x, y;
+    for (y = 0; y < rh; y++) {
+        for (x = 0; x < rw; x++) {
+            uint32_t a = at32(dbw ? dbw : 1, x, y);
+            if (a >= FIG_T8WORDS) { return 0; }
+            mem[a] = rd32(img + (y * rw + x) * 4);
+        }
+    }
+    for (x = 0; x < n; x++) {
+        uint32_t a = at8(tbw ? tbw : 1, x * tw / n, 0);
+        if (a >= FIG_T8WORDS * 4) { return 0; }
+        idx[x] = (uint8_t)(mem[a >> 2] >> ((a & 3) * 8));
+    }
+    return 1;
+}
+
 /* the ramp's first row from its entry's upload packet (TRXREG, then IMAGE), in the format TEX0 reads it */
 static void ramp_read(FigRamp *o, const RndTexNote *note) {
     uint64_t t0 = o->tex0;
-    uint32_t psm = (uint32_t)(t0 >> 20) & 63, tw = 1u << ((uint32_t)(t0 >> 26) & 15), rw = 0, size, at = 0, x;
+    uint32_t psm = (uint32_t)(t0 >> 20) & 63, tw = 1u << ((uint32_t)(t0 >> 26) & 15), rw = 0, rh = 0, size, at = 0, x, dpsm;
+    static const uint8_t *kImg;   /* (the 8-bit view of a 32-bit upload, kept: its packet, TEX0's shape) */
+    static uint64_t kShape;
+    static uint8_t kIdx[FIG_RAMPW];
     const uint8_t *e, *p, *img = NULL;
     const uint32_t *pal = NULL;
 
     o->n = 0;
     if (note == NULL) { sRampWhy[0]++; return; }
     if ((e = (const uint8_t *)GsPvr_TexEntry(note->tex & ~RND_TEX_RGB)) == NULL) { sRampWhy[1]++; return; }
-    if ((psm != 0x13 && psm != 0x14 && psm != 0) || ((rd32(e + 0x18) >> 8) & 63) != psm || ((t0 >> 56) & 31) != 0) {
+    dpsm = (rd32(e + 0x18) >> 8) & 63;
+    if ((psm != 0x13 && psm != 0x14 && psm != 0) || (dpsm != psm && !(psm == 0x13 && dpsm == 0)) || ((t0 >> 56) & 31) != 0) {
         sRampWhy[2]++;
         return;
     }
@@ -310,7 +354,7 @@ static void ramp_read(FigRamp *o, const RndTexNote *note) {
         at += 16;
         if (flg == 0 && ((tag >> 60) & 15) == 1 && (p[at - 8] & 15) == 0xE) { /* A+D: TRXREG */
             for (i = 0; i < nloop && at + 16 <= size; i++, at += 16) {
-                if (p[at + 8] == 0x52) { rw = rd32(p + at) & 0xFFF; }
+                if (p[at + 8] == 0x52) { rw = rd32(p + at) & 0xFFF; rh = rd32(p + at + 4) & 0xFFF; }
             }
         } else if (flg == 2) { /* IMAGE */
             img = p + at;
@@ -318,8 +362,23 @@ static void ramp_read(FigRamp *o, const RndTexNote *note) {
             break;
         }
     }
-    if (img == NULL || rw < tw) { sRampWhy[4]++; return; }
     o->n = tw < FIG_RAMPW ? tw : FIG_RAMPW;
+    if (img != NULL && dpsm != psm) { /* (8-bit read from a 32-bit upload: the light's) */
+        if (kImg != img || kShape != (t0 & 0xFFFFC000ull)) {
+            kImg = NULL;
+            if (!t8_from_32(kIdx, o->n, tw, img, rw, rh, rd32(e + 0x18) & 63, (uint32_t)(t0 >> 14) & 63)) {
+                o->n = 0;
+                sRampWhy[4]++;
+                return;
+            }
+            kImg = img;
+            kShape = t0 & 0xFFFFC000ull;
+        }
+        for (x = 0; x < o->n; x++) { o->col[x] = pal[kIdx[x]]; }
+        o->decal = ((t0 >> 35) & 3) == 1;
+        return;
+    }
+    if (img == NULL || rw < tw) { o->n = 0; sRampWhy[4]++; return; }
     for (x = 0; x < o->n; x++) { /* (texel x * tw / n, nearest) */
         uint32_t k = x * tw / o->n;
         o->col[x] = psm == 0 ? rd32(img + k * 4) : psm == 0x13 ? pal[img[k]] : pal[(img[k >> 1] >> ((k & 1) * 4)) & 15];
@@ -575,6 +634,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
         const FigVtx *v = (const FigVtx *)(b + 1);
         static float t[FIG_MAXV][4] __attribute__((aligned(32))); /* (one batch's: in the cache) */
         uint32_t f0 = 0, f1 = 0, f2 = 0;
+        uint64_t s0 = Gs_NowNs(), s1, s2; /* TEMP */
         shz_xmtrx_load_unaligned_4x4(sMat[pi][0]);
         for (i = 0; i < b->n; i++) { /* (bone A: not for a corner wholly B's) */
             if (v[i].w != 0.0f) {
@@ -585,6 +645,8 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 t[i][3] = p.w;
             }
         }
+        s1 = Gs_NowNs(); /* TEMP */
+        sSt[0] += s1 - s0;
         shz_xmtrx_load_unaligned_4x4(sMat[pi][1]);
         for (i = 0; i < b->n; i++) {
             float w = v[i].w, cx, cy, cz, cw, g;
@@ -638,7 +700,13 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 t[i][3] = p.w + (sc[i][3] - p.w) * w;
             }
         }
+        s2 = Gs_NowNs(); /* TEMP */
+        sSt[1] += s2 - s1;
         corners_put(r, pt, pi, ks[k], b, t, &sOut[j], layer, m);
+        s1 = Gs_NowNs(); /* TEMP */
+        sSt[2] += s1 - s2;
+        sSt[3] += Gs_NowNs() - s1;
+        sSt[4]++;
     }
 }
 
@@ -897,6 +965,11 @@ static void fig_frame(void) {
                         "writing and sending %.2f (%u vertices), by records %.2f; queueing (game side) %.2f\n",
                 (double)sTm[0] / 1e6 / f, (double)sTm[1] / 1e6 / f, (double)sTm[2] / 1e6 / f, sCm[0] / f, sCm[1] / f, sCm[3] / f,
                 (double)sTm[3] / 1e6 / f, sCm[2] / f, (double)sTm[4] / 1e6 / f, (double)sTm[5] / 1e6 / f);
+        fprintf(stderr, "fig_native skinning per frame (ms): bone A %.2f, bone B and clip %.2f, screen and the rest %.2f; "
+                        "the timer %.2f (%u batches, %.2f us a call)\n", (double)sSt[0] / 1e6 / f, (double)sSt[1] / 1e6 / f,
+                (double)sSt[2] / 1e6 / f, (double)sSt[3] / 1e6 / f, (unsigned)(sSt[4] / f),
+                sSt[4] ? (double)sSt[3] / 1e3 / (double)sSt[4] : 0.0);
+        memset(sSt, 0, sizeof(sSt));
         memset(sTm, 0, sizeof(sTm));
         memset(sCm, 0, sizeof(sCm));
         memset(sN, 0, sizeof(sN));
