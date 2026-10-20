@@ -37,6 +37,7 @@
 #include "pvr_host.h" /* gpu_pvr: the window the picture is shown in */
 #else
 #include <dc/sq.h> /* the movie's macroblocks to the YUV converter */
+#include "../dc/kos_single_vbuf.h" /* one vertex buffer as large as half of video memory */
 static uint32_t sFbCfg2; /* the pixel format the PVR writes, as vid_set_mode left it (the screen's RGB565) */
 #endif
 
@@ -50,11 +51,16 @@ static void rtt_argb4444(void) {
 #endif
 }
 
-/* What a scene may send: the vertex buffer pvr_init was given, less a margin (the background polygon, and the
-   TA's own layout of a polygon being a little larger than what is sent). kos_pvr does not stop at its end: what
-   goes past it lands on the frame buffers and the textures. So a frame with more than this loses triangles. */
-#define VERTEX_BUF_BYTES (1536 * 1024)
-#define SCENE_BUDGET (VERTEX_BUF_BYTES - 128 * 1024)
+/* What a scene may send: the vertex buffer, less a margin (the background polygon, and the TA's own layout of a
+   polygon being a little larger than what is sent). kos_pvr does not stop at its end: what goes past it lands on
+   the textures. So a frame with more than this loses triangles. On the Dreamcast one vertex buffer, not two
+   (kos_single_vbuf.h): KOS lays out two of everything below the texture line, one in each half of video memory,
+   even single-buffered; the layout made again with half 0 all vertex buffer and half 1 the frame buffers, the
+   OPBs and the tile matrix. VERTEX_BUF_BYTES (what pvr_init is given) then only sets the texture line: ~2 MB of
+   vertex buffer from it, and ~512 KB more texture memory than the 1536 KB double-buffered one gave. */
+#define VERTEX_BUF_BYTES (1280 * 1024)
+static uint32_t sVbufBytes = VERTEX_BUF_BYTES;
+#define SCENE_BUDGET (sVbufBytes - 128 * 1024)
 static uint32_t sSent, sTris, sDropped; /* this scene: bytes sent, triangles sent, triangles left out */
 
 /* What one render draws in: GS pixels to its pixels (the screen: 640 x 480 for the GS's 512 x 448; a frame buffer
@@ -363,12 +369,12 @@ static void scale_changed(void) {} /* the chip draws 640 x 480 whatever the scal
 static int pvr_be_init(void) {
     pvr_init_params_t params = {
         {PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16}, /* opaque, translucent, punch-through */
-        VERTEX_BUF_BYTES, /* vertex buffer: a demo fight frame sends at most about 1.1 MB (as strips); each byte here costs two of the texture heap */
+        VERTEX_BUF_BYTES, /* vertex buffer (the texture line: kos_single_vbuf.h makes the buffer larger); each byte here costs two of the texture heap */
         0,           /* no vertex DMA */
         0,           /* no horizontal FSAA */
         1,           /* no autosort: translucent polygons in the order the GS drew them */
         3,           /* overflow bins */
-        0,
+        1,           /* one vertex buffer: the TA waits for the last render (pvr_scene_begin), started late in the frame */
     };
 
 #ifndef __DREAMCAST__
@@ -382,6 +388,12 @@ static int pvr_be_init(void) {
         return 0;
     }
 #ifdef __DREAMCAST__
+    {
+        uint32_t v = kos_single_vbuf_layout(true); /* (true: autosort off, as params) */
+        if (v != 0) { sVbufBytes = v; }
+        fprintf(stderr, "bt3: pvr: vertex buffer %u KB (%s)\n", (unsigned)(sVbufBytes / 1024),
+                v != 0 ? "one, half 0 of video memory" : "as KOS laid it out");
+    }
     sFbCfg2 = PVR_GET(PVR_FB_CFG_2);
 #endif
     pvr_set_bg_color(0.0f, 0.0f, 0.0f);
