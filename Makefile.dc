@@ -165,6 +165,15 @@ $(OLDSTAGE_STAMP): | $(OBJ)
 $(OBJ)/battle_stgm_a.o $(OBJ)/battle_stg_d_b.o $(OBJ)/dc_stg_native.o: $(OLDSTAGE_STAMP)
 $(OBJ)/battle_stgm_a.o $(OBJ)/battle_stg_d_b.o: GAME_CFLAGS += $(if $(filter 1,$(DC_OLDSTAGE)),-DBT3_OLDSTAGE)
 $(OBJ)/dc_stg_native.o: PC_CFLAGS += $(if $(filter 1,$(DC_OLDSTAGE)),-DBT3_OLDSTAGE)
+# DC_OLDFIG=1: the fighters drawn the old way, through the VU1 emulation, not natively (port/src/dc/fig_native.c)
+DC_OLDFIG ?= 0
+OLDFIG_STAMP := $(BUILD)/oldfig_$(DC_OLDFIG).stamp
+$(OLDFIG_STAMP): | $(OBJ)
+	rm -f $(BUILD)/oldfig_*.stamp
+	touch $@
+$(OBJ)/sys_gfxm_d_c.o $(OBJ)/dc_fig_native.o: $(OLDFIG_STAMP)
+$(OBJ)/sys_gfxm_d_c.o: GAME_CFLAGS += $(if $(filter 1,$(DC_OLDFIG)),-DBT3_OLDFIG)
+$(OBJ)/dc_fig_native.o: PC_CFLAGS += $(if $(filter 1,$(DC_OLDFIG)),-DBT3_OLDFIG)
 # DC_NOFIG=1 (a test): the fighters' models not drawn (src/sys/gfxm_d_c.c ObjDraw_DrawParts); the stage, effects and HUD as ever
 DC_NOFIG ?= 0
 NOFIG_STAMP := $(BUILD)/nofig_$(DC_NOFIG).stamp

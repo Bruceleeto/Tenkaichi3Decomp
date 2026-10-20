@@ -1449,6 +1449,11 @@ void Vu1Native_SetProg2(int alt, const void *consts) {
     sP2Alt = alt != 0;
 }
 
+const float *Vu1Native_Prog2Block(int *alt) {
+    *alt = sP2Alt;
+    return sP2;
+}
+
 static int p2_batch(void *arg, const uint32_t *hdr, uint32_t nh, const uint32_t *vtx, uint32_t nv) {
     static RndVtx out[FIG_MAXV];
     static uint8_t adc[FIG_MAXV];

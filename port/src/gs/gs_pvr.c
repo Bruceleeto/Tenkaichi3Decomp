@@ -2277,6 +2277,17 @@ uint32_t Port_TexHandle(const void *e) {
     return 0;
 }
 
+/* The texture entry (in the game's memory) a texture record's handle names; NULL = none (port/src/dc/fig_native.c:
+   the shading ramp's indices, read on the CPU). */
+const void *GsPvr_TexEntry(uint32_t tex) {
+    uint32_t i = tex & 0xFFFF;
+    if (i == 0 || i > MAX_NAT || sNat[i - 1].e == 0 || sNat[i - 1].none ||
+        ((tex >> 16) & 0xBFFF) != (sNat[i - 1].gen & 0xBFFF)) { /* (RND_TEX_RGB's bit or'd in) */
+        return NULL;
+    }
+    return Port_Ptr(sNat[i - 1].e);
+}
+
 uint32_t Port_PalHandle(const void *pkt) {
     uint32_t addr = Port_Addr((void *)pkt), i;
     for (i = sPalHash[PAL_HASH(addr)]; i != 0; i = sPal[i - 1].next) {

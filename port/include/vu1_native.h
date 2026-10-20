@@ -34,6 +34,8 @@ void Vu1Native_Prog2(const void *chain, const void *consts);
 /* Program 2's setup: which of the two (alt: 2b) and its constant block at VU address 0 (the 0x13 quadwords of
    Vu1Pkt_LoadProg2; its caller fills 11..18 before the parts are drawn, read then). */
 void Vu1Native_SetProg2(int alt, const void *consts);
+/* The last Vu1Pkt_LoadProg2's block (NULL: none yet) and whether it was 2b (port/src/dc/fig_native.c) */
+const float *Vu1Native_Prog2Block(int *alt);
 
 /* Program 6 (the ground under a fighter, with its shadow page): the 17 quadwords Vu1Pkt_LoadProg6 puts at VU
    address 0 (screen, clip, clip -> screen, shadow camera, scale), kept for the call that follows; the chain

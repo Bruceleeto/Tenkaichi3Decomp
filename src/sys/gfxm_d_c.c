@@ -566,6 +566,19 @@ void ObjDraw_AddClutPass(ObjDrawObj *obj, ObjDrawState *state, ObjDrawView *view
 /* A part that programs 0, 1 and 2 draw as records (port/include/vu1_native.h, when Vu1Native_Takes its chain): its
    constants are made here instead of in a packet, and drawn with once they are in. */
 static ObjDrawPkt sPortPkt;
+#if defined(__DREAMCAST__) && !defined(BT3_DCSIM) && !defined(BT3_OLDFIG)
+/* the Dreamcast: the parts drawn natively (port/src/dc/fig_native.c), what it does not read the old way */
+extern int FigNative_Takes(int prog, void *chain);
+extern void FigNative_Draw(int prog, void *chain, const f32 *k);
+#define FIG_TAKES(p, c) FigNative_Takes((p), (c))
+extern void FigNative_End(void);
+#define FIG_DRAW(p, c, k) FigNative_Draw((p), (c), (const f32 *)(k))
+#define FIG_END() FigNative_End()
+#else
+#define FIG_TAKES(p, c) Vu1Native_Takes((p), (c))
+#define FIG_DRAW(p, c, k) Vu1Native_Prog##p((c), (k))
+#define FIG_END() ((void)0)
+#endif
 #endif
 
 /* Queues the VU1 packets of the model's parts. mode 0: lit draw (program 0; the head, node 0x33, last and
@@ -620,7 +633,7 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
 #ifdef PORT
                         u8 *chain = (part->node == 0x30 && BtlObj_GetSubState(obj) != -1) ? mdl->chains[BtlObj_GetSubState(obj)]
                                                                                           : part->chain;
-                        ObjDrawPkt *pkt = Vu1Native_Takes(0, chain) ? &sPortPkt : Vu1Pkt_CallProg0(chain);
+                        ObjDrawPkt *pkt = FIG_TAKES(0, chain) ? &sPortPkt : Vu1Pkt_CallProg0(chain);
 #else
                         ObjDrawPkt *pkt = Vu1Pkt_CallProg0((part->node == 0x30 && BtlObj_GetSubState(obj) != -1)
                                                                ? mdl->chains[BtlObj_GetSubState(obj)]
@@ -638,14 +651,14 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                         Vu0Clip_StoreMtx(&pkt->clip);
 #ifdef PORT
                         if (pkt == &sPortPkt) {
-                            Vu1Native_Prog0(chain, &pkt->mtxA);
+                            FIG_DRAW(0, chain, &pkt->mtxA);
                         }
 #endif
                     }
                 } else if (mode == 1) {
                     if (part->flags & 1) {
 #ifdef PORT
-                        ObjDrawPkt *pkt = Vu1Native_Takes(1, part->chain) ? &sPortPkt : Vu1Pkt_CallProg1(part);
+                        ObjDrawPkt *pkt = FIG_TAKES(1, part->chain) ? &sPortPkt : Vu1Pkt_CallProg1(part);
 #else
                         ObjDrawPkt *pkt = Vu1Pkt_CallProg1(part);
 #endif
@@ -679,13 +692,13 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                         Vu0Clip_StoreMtx(&pkt->clip);
 #ifdef PORT
                         if (pkt == &sPortPkt) {
-                            Vu1Native_Prog1(part->chain, &pkt->mtxA);
+                            FIG_DRAW(1, part->chain, &pkt->mtxA);
                         }
 #endif
                     }
                 } else if (mode == 2) {
 #ifdef PORT
-                    ObjDrawPkt *pkt = Vu1Native_Takes(2, part->chain) ? &sPortPkt : Vu1Pkt_CallProg2(part);
+                    ObjDrawPkt *pkt = FIG_TAKES(2, part->chain) ? &sPortPkt : Vu1Pkt_CallProg2(part);
 #else
                     ObjDrawPkt *pkt = Vu1Pkt_CallProg2(part);
 #endif
@@ -698,7 +711,7 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
                     pkt->light.m[0][3] = k;
 #ifdef PORT
                     if (pkt == &sPortPkt) {
-                        Vu1Native_Prog2(part->chain, &pkt->mtxA);
+                        FIG_DRAW(2, part->chain, &pkt->mtxA);
                     }
 #endif
                 }
@@ -709,6 +722,9 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
         }
         part = (ObjDrawPart *)((u8 *)part + part->next);
     }
+#ifdef PORT
+    FIG_END(); /* (the parts staged: one draw, before the head's frame mask) */
+#endif
     if (headNode != NULL) {
         ObjDrawPkt *pkt;
 
@@ -716,7 +732,7 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
             ObjGs_AddFrameMaskOpaque(fbmsk);
         }
 #ifdef PORT
-        pkt = Vu1Native_Takes(0, headPart->chain) ? &sPortPkt : Vu1Pkt_CallProg0(headPart->chain);
+        pkt = FIG_TAKES(0, headPart->chain) ? &sPortPkt : Vu1Pkt_CallProg0(headPart->chain);
 #else
         pkt = Vu1Pkt_CallProg0(headPart->chain);
 #endif
@@ -731,8 +747,9 @@ void ObjDraw_DrawParts(ObjDrawObj *obj, ObjDrawView *view, s32 mode, u64 tex0, u
         Vu0Clip_StoreMtx(&pkt->clip);
 #ifdef PORT
         if (pkt == &sPortPkt) {
-            Vu1Native_Prog0(headPart->chain, &pkt->mtxA);
+            FIG_DRAW(0, headPart->chain, &pkt->mtxA);
         }
+        FIG_END();
 #endif
         if (!noMask) {
             ObjGs_AddFrameMaskBlend(fbmsk);
