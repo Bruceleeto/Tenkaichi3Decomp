@@ -65,7 +65,11 @@ static int slot_of(const char *rel) {
     }
     fp = Port_FileOpenHost(rel, path, sizeof(path));
     if (fp == NULL) {
-        fprintf(stderr, "bt3: file not found: %s\n", path);
+        static char said[512]; /* (the file said last: a file the game keeps asking for is said once) */
+        if (strcmp(said, path) != 0) {
+            snprintf(said, sizeof(said), "%s", path);
+            fprintf(stderr, "bt3: file not found: %s\n", path);
+        }
         return -1;
     }
     for (i = 0; i < SLOTS; i++) {

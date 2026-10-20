@@ -244,8 +244,27 @@ void Movie_Close(void) {
     }
 }
 
+#ifdef PORT
+/* Whether the movie's file is there: the Dreamcast's data leaves the .PSS files out (dc-assets converts them), and
+   Movie_Open waits for the file as the PS2 waits for its disc, so a movie that is not there is passed over. */
+static s32 Movie_PortThere(char *pss) {
+    ADXF adxf = ADXF_Open(pss, NULL);
+
+    if (adxf == NULL) {
+        return 0;
+    }
+    ADXF_Close(adxf);
+    return 1;
+}
+#endif
+
 /* Plays the opening movie from start to end (or until it is skipped). */
 void Movie_PlayOpening(void) {
+#ifdef PORT
+    if (!Movie_PortThere("zs3usop.pss")) {
+        return;
+    }
+#endif
     Movie_Open("zs3usop.pss", "zs3usop.adx");
     Movie_Run();
     Movie_Close();
@@ -253,6 +272,11 @@ void Movie_PlayOpening(void) {
 
 /* Plays the ending movie. */
 void Movie_PlayEnding(void) {
+#ifdef PORT
+    if (!Movie_PortThere("zs3used.pss")) {
+        return;
+    }
+#endif
     Movie_Open("zs3used.pss", "zs3used.adx");
     Movie_Run();
     Movie_Close();

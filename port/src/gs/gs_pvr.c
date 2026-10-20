@@ -840,6 +840,15 @@ static int draw_head(const GsDraw *d, const PvrTex **tp, pvr_poly_cxt_t pass[2])
     if (noTex < 0) { noTex = getenv("BT3_PVR_NOTEX") != NULL; }
     if (d->vu && noTex) { t = NULL; } /* 3D in its colours only */
     sUs = sVs = 1.0f;
+    if (t != NULL && t->mem != NULL && (t->pw < 8 || t->pw > 1024 || (t->pw & (t->pw - 1)) || t->ph < 8 || t->ph > 1024 || (t->ph & (t->ph - 1)))) {
+        static int said; /* (a size the PVR cannot take: KOS would stop at an assertion; drawn in its colours instead) */
+        if (!said) {
+            said = 1;
+            fprintf(stderr, "bt3: ERROR: a texture of %u x %u (the PVR told %u x %u) drawn without it: not a size the PVR takes\n",
+                    (unsigned)t->w, (unsigned)t->h, (unsigned)t->pw, (unsigned)t->ph);
+        }
+        t = NULL;
+    }
     if (t != NULL && t->mem != NULL) {
         pvr_poly_cxt_txr(&cxt, PVR_LIST_TR_POLY, (int)t->fmt, (int)t->pw, (int)t->ph, t->base,
                          (d->sampler & 1) ? PVR_FILTER_BILINEAR : PVR_FILTER_NEAREST);
@@ -1874,6 +1883,7 @@ static NatTex *nat_get(uint8_t *e) {
         return n;
     }
     if (w != (tw < 8 ? 8 : tw) || h != (th < 8 ? 8 : th) || bits != (psm == 0x14 ? 4u : 8u)) { sNatWhy[3]++; n->why = NAT_SIZE; return n; }
+    if (bits == 8 && (w > 512 || h > 512)) { sNatWhy[3]++; n->why = NAT_SIZE; return n; } /* (VQ: the PVR is told 2w x 2h, 1024 at most) */
     bytes = bits == 4 ? w * h / 2 : 2048 + w * h; /* (8-bit: the codebook, then the indices) */
     n->pak = k;
     n->psm = psm; n->tw = tw; n->th = th; n->bits = bits;
@@ -2250,6 +2260,7 @@ static NatTex *nat_copy(NatTex *n) {
 static NatTex *nat_view(NatTex *n, uint32_t tw, uint32_t th) {
     uint32_t i;
     NatTex *v;
+    if (tw > 512 || th > 512) { return NULL; } /* (VQ: the PVR is told 2w x 2h, 1024 at most) */
     for (i = n->view; i != 0; i = sNat[i - 1].var) {
         if (sNat[i - 1].tw == tw && sNat[i - 1].th == th) { return &sNat[i - 1]; }
     }

@@ -18,7 +18,13 @@
 
 #define HEAP_BASE 0x003BE000u  /* page that holds the first address */
 #define HEAP_FIRST 0x003BE730u /* what the PS2's malloc returns for the game heap (gHeapStart in a PCSX2 save state) */
+#ifdef __DREAMCAST__
+/* The Dreamcast: only as far as the game heap goes (Heap_Create, the game's one malloc, ends at 0x1EFB014). The
+   PS2's last MB above it was its stack; here it is left to KOS and the port, which need it. */
+#define HEAP_END 0x01EFC000u
+#else
 #define HEAP_END 0x02000000u
+#endif
 
 static uint32_t sHeapNext = HEAP_FIRST, sHeapEnd = HEAP_END;
 
