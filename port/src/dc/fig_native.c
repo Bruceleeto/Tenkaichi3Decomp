@@ -234,7 +234,7 @@ typedef struct FigRec {
     FigPart part[];
 } FigRec;
 
-static unsigned sN[10]; /* TEMP: parts drawn by program 0, 1, 2; the old way; strips by records; batches; headers;
+static unsigned sN[11]; /* TEMP: parts drawn by program 0, 1, 2; the old way; strips by records; batches; headers;
                           program 0's batches with the ramp folded in, with it a layer of its own; draws by four transforms */
 static uint64_t sNs;
 /* TEMP: fig_draw's steps: the batch table and keys, Rnd_Direct, chunk_make, the corners written and sent, the
@@ -279,6 +279,9 @@ typedef struct FigRamp {
     uint64_t tex0;
     uint32_t n;              /* texels across (sampled down to FIG_RAMPW); 0 = not read */
     uint32_t decal;          /* TFX decal: its colour as it is, not times the layer's */
+    float fn;                /* n */
+    uint32_t tab[FIG_RAMPW]; /* the folded colours (tab_of), for tabArgb and tabC1; tabOk 0: none yet */
+    uint32_t tabArgb, tabC1, tabOk;
     uint32_t col[FIG_RAMPW]; /* as GS memory holds them: r in the low byte */
 } FigRamp;
 static FigRamp sRamp[FIG_RAMPS];
@@ -363,6 +366,8 @@ static void ramp_read(FigRamp *o, const RndTexNote *note) {
         }
     }
     o->n = tw < FIG_RAMPW ? tw : FIG_RAMPW;
+    o->fn = (float)(int32_t)o->n;
+    o->tabOk = 0;
     if (img != NULL && dpsm != psm) { /* (8-bit read from a 32-bit upload: the light's) */
         if (kImg != img || kShape != (t0 & 0xFFFFC000ull)) {
             kImg = NULL;
@@ -544,9 +549,6 @@ static float sMat[FIG_PARTS][4][16]; /* each part's clip A, clip B; screen A, sc
 static int sRel;
 static float sV[6];
 static uint8_t sFold[FIG_BATCHES]; /* the batch's ramp (sRamp), 0xFF none */
-static uint32_t sTab[FIG_RAMPW];
-static int sTabPart = -1, sTabRamp = -1;
-static uint32_t sTabArgb, sTabC1; /* (what the table was made with) */
 
 static uint32_t unit(int32_t c) {
     c &= 0xFF;
@@ -557,9 +559,15 @@ static inline int32_t ftoi(float f) {
     return f >= 2147483648.0f ? 0x7FFFFFFF : f <= -2147483648.0f ? (int32_t)0x80000000u : (int32_t)f;
 }
 
-/* the folded colours of part pi with ramp ri, one a texel: c0 (1 - ramp c1), as the PVR draws the two layers */
-static void tab_make(const FigMap *m, int pi, int ri) {
-    const FigRamp *rp = &sRamp[ri];
+/* ramp ri's folded colours for map m's, one a texel: c0 (1 - ramp c1), as the PVR draws the two layers; kept with
+   the ramp, made again only for other colours (the parts' are mostly the same) */
+static const uint32_t *tab_of(const FigMap *m, int ri) {
+    FigRamp *rp = &sRamp[ri];
+    uint32_t c1 = m->c1[0] | m->c1[1] << 8 | m->c1[2] << 16;
+    if (rp->tabOk && rp->tabArgb == m->argb && (rp->decal || rp->tabC1 == c1)) {
+        return rp->tab;
+    }
+    sN[10]++; /* TEMP */
     uint32_t x, ch;
     for (x = 0; x < rp->n; x++) {
         uint32_t o = m->c0[3] << 24;
@@ -568,12 +576,12 @@ static void tab_make(const FigMap *m, int pi, int ri) {
                                     : (((rp->col[x] >> (ch * 8)) & 0xFF) * m->c1[ch] * 257u + 257u) >> 16; /* (/ 255: no divide) */
             o |= ((m->c0[ch] * (255u - (cs > 255u ? 255u : cs)) * 257u + 257u) >> 16) << (16 - ch * 8);
         }
-        sTab[x] = o;
+        rp->tab[x] = o;
     }
-    sTabPart = pi;
-    sTabRamp = ri;
-    sTabArgb = m->argb;
-    sTabC1 = m->c1[0] | m->c1[1] << 8 | m->c1[2] << 16;
+    rp->tabOk = 1;
+    rp->tabArgb = m->argb;
+    rp->tabC1 = c1;
+    return rp->tab;
 }
 
 /* a batch's corners from the clip volume (or the screen): to the screen, their texture coordinates and colours */
@@ -582,12 +590,14 @@ static void corners_put(const FigRec *r, const FigPart *pt, int pi, uint32_t bk,
     const FigVtx *v = (const FigVtx *)(b + 1);
     int ri = layer == 0 ? (sFold[bk] == 0xFF ? -1 : (int)sFold[bk]) : -1;
     float rn = 0.0f;
+    int32_t top = 0;
     uint32_t i;
+    const uint32_t *tab = NULL;
+    (void)pi;
     if (ri >= 0) {
-        if (sTabPart != pi || sTabRamp != ri || sTabArgb != m->argb || sTabC1 != (m->c1[0] | m->c1[1] << 8 | m->c1[2] << 16)) {
-            tab_make(m, pi, ri);
-        }
-        rn = (float)sRamp[ri].n;
+        tab = tab_of(m, ri);
+        rn = sRamp[ri].fn;
+        top = (int32_t)sRamp[ri].n - 1;
     }
     for (i = 0; i < b->n; i++) {
         float w = t[i][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z, u, tt;
@@ -615,7 +625,7 @@ static void corners_put(const FigRec *r, const FigPart *pt, int pi, uint32_t bk,
             float la = pt->l0[0] * v[i].nx + pt->l0[1] * v[i].ny + pt->l0[2] * v[i].nz + pt->l0[3];
             float lb = pt->l1[0] * v[i].nx + pt->l1[1] * v[i].ny + pt->l1[2] * v[i].nz + pt->l1[3];
             int32_t x = (int32_t)(((lb + (la - lb) * v[i].w) * 0.5f + 0.5f) * rn);
-            o->argb = sTab[x < 0 ? 0 : x >= (int32_t)rn ? (int32_t)rn - 1 : x];
+            o->argb = tab[x < 0 ? 0 : x > top ? top : x];
         } else {
             o->argb = m->argb;
         }
@@ -854,7 +864,6 @@ static void fig_draw(const void *blob) {
     Rnd_SnapPut(&r->st);
     Port_TexNotes(r->notes ? r->note : NULL, r->notes);
     sRamps = 0;
-    sTabPart = -1;
     sRel = screen_rel(r->s, r->c, sV);
     sN[9] += !sRel; /* TEMP */
     for (pi = 0; pi < r->parts; pi++) { /* the batches, part by part; each part's matrices */
@@ -958,9 +967,9 @@ static void fig_frame(void) {
     if (gGsFrame - from >= 60) {
         unsigned f = gGsFrame - from ? gGsFrame - from : 1;
         fprintf(stderr, "fig_native per frame: %.1f ms; parts lit %u, fade %u, flat %u, old way %u; batches %u, headers %u, "
-                        "strips by records %u; chains read %u, not read %u; ramp folded %u, as a layer %u; draws by four transforms %u\n",
+                        "strips by records %u; chains read %u, not read %u; ramp folded %u, as a layer %u; draws by four transforms %u; ramp tables made %u\n",
                 (double)sNs / 1e6 / f, sN[0] / f, sN[1] / f, sN[2] / f, sN[3] / f, sN[5] / f, sN[6] / f, sN[4] / f, sRead,
-                sNotRead, sN[7] / f, sN[8] / f, sN[9] / f);
+                sNotRead, sN[7] / f, sN[8] / f, sN[9] / f, sN[10] / f);
         fprintf(stderr, "fig_native steps per frame (ms): table %.2f, Rnd_Direct %.2f, skinning %.2f (%u calls, %u corners, %u one bone's), "
                         "writing and sending %.2f (%u vertices), by records %.2f; queueing (game side) %.2f\n",
                 (double)sTm[0] / 1e6 / f, (double)sTm[1] / 1e6 / f, (double)sTm[2] / 1e6 / f, sCm[0] / f, sCm[1] / f, sCm[3] / f,
