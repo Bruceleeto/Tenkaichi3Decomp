@@ -20,13 +20,23 @@ extern s32 gDmaBufIdx;
 extern u32 *gDmaCur;
 extern s32 gDmaVif1Started;
 
+#if defined(PORT) && defined(__DREAMCAST__)
+/* The Dreamcast: nothing reads the list (Port_ListRead), only the texture uploads' REF tags, the frame's end and the
+   packets Dma_BeginDirect starts land in it (and are dropped). A fight's most was 6.7 KB (BT3_WALK=3 on PC, as the
+   Dreamcast runs); 1 MB each was 2 MB of the game heap. */
+#define DMA_BUF_BYTES 0x20000
+#include <stdio.h>
+#else
+#define DMA_BUF_BYTES DMA_BUF_SIZE
+#endif
+
 /* Allocates the two 1 MB display-list buffers and points the write cursor at the first. */
 void Dma_InitBuffers(void) {
-    gDmaBuf[0] = (u32)Heap_Alloc(DMA_BUF_SIZE, 0x20, 0, HEAP_ANY);
-    gDmaBuf[1] = (u32)Heap_Alloc(DMA_BUF_SIZE, 0x20, 0, HEAP_ANY);
-    gDmaBufEnd[0] = gDmaBuf[0] + DMA_BUF_SIZE;
-    gDmaBufEnd[1] = gDmaBuf[1] + DMA_BUF_SIZE;
-    gDmaBufSize = DMA_BUF_SIZE;
+    gDmaBuf[0] = (u32)Heap_Alloc(DMA_BUF_BYTES, 0x20, 0, HEAP_ANY);
+    gDmaBuf[1] = (u32)Heap_Alloc(DMA_BUF_BYTES, 0x20, 0, HEAP_ANY);
+    gDmaBufEnd[0] = gDmaBuf[0] + DMA_BUF_BYTES;
+    gDmaBufEnd[1] = gDmaBuf[1] + DMA_BUF_BYTES;
+    gDmaBufSize = DMA_BUF_BYTES;
     gDmaCur = (u32 *)gDmaBuf[0];
     gDmaBufIdx = 0;
 }
@@ -90,6 +100,12 @@ void Dma_Flush(void) {
     p[1] = 0;
     p[2] = 0;
     p[3] = 0;
+#if defined(PORT) && defined(__DREAMCAST__)
+    if ((u32)(p + 4) > gDmaBufEnd[gDmaBufIdx]) { /* (the memory behind it is already written over) */
+        fprintf(stderr, "bt3: ERROR: the display list ran past its %u KB (%u KB): DMA_BUF_BYTES in src/sys/dma.c\n",
+                (unsigned)(DMA_BUF_BYTES >> 10), (unsigned)(((u32)(p + 4) - gDmaBuf[gDmaBufIdx]) >> 10));
+    }
+#endif
     Dma_SendVif1(gDmaBuf[gDmaBufIdx]);
     gDmaBufIdx ^= 1;
     gDmaCur = (u32 *)gDmaBuf[gDmaBufIdx];
@@ -129,6 +145,12 @@ void Dma_EndDirect(u64 *end) {
         tag[3] = VIF_DIRECT | qwc;
 #ifdef PORT
         if (!Port_ListRead()) { /* (nothing reads the list: as Dma_AddData) */
+#ifdef __DREAMCAST__
+            if ((u32)end > gDmaBufEnd[gDmaBufIdx]) { /* (the memory behind it is already written over) */
+                fprintf(stderr, "bt3: ERROR: a packet ran past the display list's %u KB (%u KB): DMA_BUF_BYTES in src/sys/dma.c\n",
+                        (unsigned)(DMA_BUF_BYTES >> 10), (unsigned)(((u32)end - gDmaBuf[gDmaBufIdx]) >> 10));
+            }
+#endif
             return;
         }
 #ifdef PORT_GS_REF
@@ -178,14 +200,14 @@ void Dma_LendBufferTails(u32 *tail0, u32 *tail1, s32 *size) {
     gDmaBufEnd[1] = gDmaBuf[1] + 0x51000;
     *tail0 = gDmaBufEnd[0];
     *tail1 = gDmaBufEnd[1];
-    *size = DMA_BUF_SIZE - 0x51000;
+    *size = DMA_BUF_BYTES - 0x51000;
 }
 
 /* Gives the buffers their full 1 MB back. */
 void Dma_ReclaimBufferTails(void) {
-    gDmaBufSize = DMA_BUF_SIZE;
-    gDmaBufEnd[0] = gDmaBuf[0] + DMA_BUF_SIZE;
-    gDmaBufEnd[1] = gDmaBuf[1] + DMA_BUF_SIZE;
+    gDmaBufSize = DMA_BUF_BYTES;
+    gDmaBufEnd[0] = gDmaBuf[0] + DMA_BUF_BYTES;
+    gDmaBufEnd[1] = gDmaBuf[1] + DMA_BUF_BYTES;
 }
 
 /* Enables the DMA controller, sets the channel condition/interrupt mask and clears the status. */
