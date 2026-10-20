@@ -162,7 +162,12 @@ typedef struct RndDirect {
     float zk, zo, z0, z1; /* depth = the program's z * zk + zo, held to z0..z1 */
     int tex;              /* textured */
     int fixa;             /* the alpha: -1 the corners' (0..255 after Rnd_DirectUnit), else this */
+    uint64_t tint;        /* the texture's palette tint (gGsTint's word; 0 none): only with gRndDirectTint, else such a
+                             draw is not taken. Each corner's colour c (white where tflat) becomes c * k, its offset
+                             colour o * c / 255, its alpha replaced as the word says (gs/gs_pvr.c put_vertex) */
+    int tflat;
 } RndDirect;
+extern int gRndDirectTint; /* set by a caller of Rnd_Direct that makes the tint's colours itself (port/src/dc/fig_native.c) */
 typedef struct RndPvrVtx { /* the PVR's vertex (KOS pvr_vertex_t) */
     uint32_t flags;
     float x, y, z, u, v;

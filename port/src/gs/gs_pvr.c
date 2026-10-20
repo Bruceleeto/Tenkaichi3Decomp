@@ -1338,6 +1338,7 @@ static struct {
     const PvrTex *tp, *tout; /* the texture given, the one drawn (NULL: none) */
     PvrTex t;                /* *tp as it was (a texture moved, or another in its record, is another polygon) */
     float us, vs, fixa;
+    int tinted, flat; /* draw_head's sTintCur != NULL, sTintFlat */
     pvr_poly_hdr_t hdr;
 } sDirLast;
 
@@ -1382,6 +1383,10 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     if (sDirLast.ok && sDirLast.sec == sSecAlpha && sDirLast.tp == t && (t == NULL || same_words(&sDirLast.t, t, sizeof(*t))) &&
         same_words(&sDirLast.d, d, sizeof(*d))) {
         /* (draw_head's results as it left them) */
+        if (sDirLast.tinted && !gRndDirectTint) {
+            gGsDirectNot = 15;
+            return 0;
+        }
         t = sDirLast.tout;
         sUs = sDirLast.us;
         sVs = sDirLast.vs;
@@ -1398,7 +1403,7 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
             gGsDirectWhy = 6;
             return 2;
         }
-        if (np != 1 || sTintCur != NULL) {
+        if (np != 1 || (sTintCur != NULL && !gRndDirectTint)) {
             gGsDirectNot = np != 1 ? 14 : 15;
             return 0;
         }
@@ -1413,6 +1418,10 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
         sDirLast.us = sUs;
         sDirLast.vs = sVs;
         sDirLast.fixa = sFixA;
+        sDirLast.tinted = sTintCur != NULL;
+        sDirLast.flat = sTintFlat;
+        sTintCur = NULL; /* (the caller makes the tint's colours: gRndDirectTint) */
+        sTintFlat = 0;
     }
     strip_end();
     hdrBytes = sHdrLive ? 0 : sizeof(*hdr);
@@ -1436,6 +1445,8 @@ int GsPvr_Direct(RndDirect *o, const GsDraw *d, uint32_t tris, uint32_t verts) {
     o->us = t != NULL ? sUs : 0.0f;
     o->vs = t != NULL ? sVs : 0.0f;
     o->fixa = sFixA >= 0.0f ? (int)(sFixA * 255.0f + 0.5f) : -1;
+    o->tint = sDirLast.tinted ? d->tint : 0;
+    o->tflat = sDirLast.tinted && sDirLast.flat;
     return 1;
 }
 

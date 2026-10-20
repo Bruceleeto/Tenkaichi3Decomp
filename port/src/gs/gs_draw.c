@@ -109,6 +109,7 @@ unsigned gGpuTexReplaced; /* textures taken from a texture pack so far */
 uint64_t gGpuTexNs, gGpuPipeNs, gGpuEndNs; /* time spent decoding textures, creating pipelines, in GsGpu_FrameEnd */
 int gGsDirectWhy; /* TEMP: why GsGpu_Direct / GsPvr_Direct last returned 2 */
 int gGsDirectNot; /* TEMP: why the direct path last returned 0 (vu1_native.c p4_fast) */
+int gRndDirectTint; /* (port/rnd.h) */
 uint64_t gGpuWaitNs; /* the Dreamcast: waiting for the PVR's last render to end (gs_pvr.c scene_begin) */
 
 static uint64_t gpu_now(void) {

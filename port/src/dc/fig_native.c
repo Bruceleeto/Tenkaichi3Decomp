@@ -234,7 +234,7 @@ typedef struct FigRec {
     FigPart part[];
 } FigRec;
 
-static unsigned sN[11]; /* TEMP: parts drawn by program 0, 1, 2; the old way; strips by records; batches; headers;
+static unsigned sN[12]; /* TEMP: parts drawn by program 0, 1, 2; the old way; strips by records; batches; headers;
                           program 0's batches with the ramp folded in, with it a layer of its own; draws by four transforms */
 static uint64_t sNs;
 /* TEMP: fig_draw's steps: the batch table and keys, Rnd_Direct, chunk_make, the corners written and sent, the
@@ -242,8 +242,17 @@ static uint64_t sNs;
    vertices sent */
 static uint64_t sTm[6];
 static unsigned sCm[4]; /* (3: corners one bone's) */
+static unsigned sNot[16]; /* TEMP: the keys Rnd_Direct sent by records, by gGsDirectNot (rnd_gs.c, gs_marker.c,
+                             gs_draw.c, gs_pvr.c) */
+static uint64_t sDirNs[3]; /* TEMP: Rnd_Direct's time by what it returned (0 by records, 1 a header, 2 not drawn) */
 static uint64_t sSt[5]; /* TEMP: inside skinning, per batch: bone A, bone B and the clip test, the screen and the rest,
                            the timer itself (two calls back to back); batches timed */
+/* TEMP: FIG_STEPS 1, those steps timed a batch at a time (five calls of the timer a batch, ~2 ms a frame of its own;
+   off, the sending is in skinning's time) */
+#ifndef FIG_STEPS
+#define FIG_STEPS 0
+#endif
+#define FIG_NOW() (FIG_STEPS ? Gs_NowNs() : 0)
 
 /* m with its pivot taken first: m (p - o) = m' p (w 1) */
 static void shifted(float *o, const float *m, const float *ofs) {
@@ -280,8 +289,10 @@ typedef struct FigRamp {
     uint32_t n;              /* texels across (sampled down to FIG_RAMPW); 0 = not read */
     uint32_t decal;          /* TFX decal: its colour as it is, not times the layer's */
     float fn;                /* n */
-    uint32_t tab[FIG_RAMPW]; /* the folded colours (tab_of), for tabArgb and tabC1; tabOk 0: none yet */
+    uint32_t tab[FIG_RAMPW]; /* the folded colours (tab_of), for tabArgb, tabC1 and tabTint; tabOk 0: none yet */
+    uint32_t tabO[FIG_RAMPW]; /* their offset colours (a tint's; else 0) */
     uint32_t tabArgb, tabC1, tabOk;
+    uint64_t tabTint;
     uint32_t col[FIG_RAMPW]; /* as GS memory holds them: r in the low byte */
 } FigRamp;
 static FigRamp sRamp[FIG_RAMPS];
@@ -530,8 +541,10 @@ static void mat_mul(float *o, const float *l, const float *r) {
    z = za + q (zb + Z zc) held to z0..z1, u v times us vs; the PVR's (a header open) or the GS's units (by records). */
 typedef struct FigMap {
     float kx, bx, ky, by, za, zb, zc, z0, z1, us, vs;
-    uint32_t argb;      /* the layer's colour (a batch not folded) */
+    uint32_t argb, oargb; /* the layer's colour and offset colour (a batch not folded) */
     uint32_t c0[4], c1[3]; /* folded: the first layer's colour as the PVR's 0..255, the ramp's (the second's) */
+    uint64_t tint;        /* the header's palette tint (RndDirect's), 0 none */
+    int tflat;
 } FigMap;
 
 /* the corners of some of a part's batches, made: PVR vertices (flags left out), q for the records' way */
@@ -540,8 +553,11 @@ typedef struct FigOut {
     uint32_t pad;
     float x, y, z, u, v;
     uint32_t argb;
-    float q;
-} FigOut; /* (pvr_vertex_t's layout, q in oargb's place) */
+    union {
+        uint32_t oargb; /* (sent under a header) */
+        float q;        /* (by records) */
+    };
+} FigOut; /* (pvr_vertex_t's layout) */
 
 static FigOut sOut[FIG_CHUNK] __attribute__((aligned(32)));
 static uint8_t sAdc[FIG_CHUNK];
@@ -559,12 +575,27 @@ static inline int32_t ftoi(float f) {
     return f >= 2147483648.0f ? 0x7FFFFFFF : f <= -2147483648.0f ? (int32_t)0x80000000u : (int32_t)f;
 }
 
+/* a corner's colour argb under palette tint tw (RndDirect's; gs/gs_pvr.c put_vertex): rgb times k, the alpha
+   replaced where the word says; *oargb the offset colour o times rgb (white for both where flat) */
+static uint32_t tinted(uint32_t argb, uint64_t tw, int flat, uint32_t *oargb) {
+    uint32_t a = flat ? 255u : argb >> 24, o = 0, ch, out;
+    if ((tw >> 56) & 1) { a = (a * (uint32_t)((tw >> 48) & 0xFF) * 257u + 257u) >> 16; }
+    out = a << 24;
+    for (ch = 0; ch < 3; ch++) { /* (ch 0 red: the word's low byte) */
+        uint32_t c = flat ? 255u : (argb >> (16 - ch * 8)) & 0xFF;
+        out |= ((c * (uint32_t)((tw >> (ch * 8)) & 0xFF) * 257u + 257u) >> 16) << (16 - ch * 8);
+        o |= ((c * (uint32_t)((tw >> (24 + ch * 8)) & 0xFF) * 257u + 257u) >> 16) << (16 - ch * 8);
+    }
+    *oargb = o;
+    return out;
+}
+
 /* ramp ri's folded colours for map m's, one a texel: c0 (1 - ramp c1), as the PVR draws the two layers; kept with
    the ramp, made again only for other colours (the parts' are mostly the same) */
 static __attribute__((noinline)) const uint32_t *tab_of(const FigMap *m, int ri) {
     FigRamp *rp = &sRamp[ri];
     uint32_t c1 = m->c1[0] | m->c1[1] << 8 | m->c1[2] << 16;
-    if (rp->tabOk && rp->tabArgb == m->argb && (rp->decal || rp->tabC1 == c1)) {
+    if (rp->tabOk && rp->tabArgb == m->argb && rp->tabTint == m->tint && (rp->decal || rp->tabC1 == c1)) {
         return rp->tab;
     }
     sN[10]++; /* TEMP */
@@ -576,18 +607,17 @@ static __attribute__((noinline)) const uint32_t *tab_of(const FigMap *m, int ri)
                                     : (((rp->col[x] >> (ch * 8)) & 0xFF) * m->c1[ch] * 257u + 257u) >> 16; /* (/ 255: no divide) */
             o |= ((m->c0[ch] * (255u - (cs > 255u ? 255u : cs)) * 257u + 257u) >> 16) << (16 - ch * 8);
         }
-        rp->tab[x] = o;
+        rp->tabO[x] = 0;
+        rp->tab[x] = m->tint ? tinted(o, m->tint, 0, &rp->tabO[x]) : o;
     }
     rp->tabOk = 1;
     rp->tabArgb = m->argb;
     rp->tabC1 = c1;
+    rp->tabTint = m->tint;
     return rp->tab;
 }
 
-/* a batch's corners from the clip volume (or the screen): to the screen, their texture coordinates and colours.
-   Not inlined, and the map's numbers held in locals: in fig_draw it ran out of registers and read them from the
-   stack a corner at a time. The position first (corners_pos), then a loop for each kind of colour and texture
-   coordinates. */
+/* a batch's corners from the clip volume (or the screen) to the screen: x = X q kx + bx, ... (q for the records) */
 static __attribute__((noinline)) void corners_pos(const float (*t)[4], FigOut *out, uint32_t n, const FigMap *m) {
     const float kx = m->kx, bx = m->bx, ky = m->ky, by = m->by, za = m->za, zb = m->zb, zc = m->zc, z0 = m->z0,
                 z1 = m->z1;
@@ -602,62 +632,123 @@ static __attribute__((noinline)) void corners_pos(const float (*t)[4], FigOut *o
     }
 }
 
+/* a batch's texture coordinates and colours (out's u v argb). The light on the normal by ftrv: its two rows, already
+   times the ramp's or the texture's size, in XMTRX (x = row 0 . (n, 1), y = row 1 . (n, 1)); not inlined, its
+   numbers in locals (in fig_draw it ran out of registers and read them from the stack a corner at a time) */
 static __attribute__((noinline)) void corners_put(const FigRec *r, const FigPart *pt, uint32_t bk, const FigBatch *b,
-                                                  float (*t)[4], FigOut *out, int layer, const FigMap *m) {
+                                                  FigOut *out, int layer, const FigMap *m) {
     const FigVtx *v = (const FigVtx *)(b + 1);
     const uint32_t n = b->n;
-    const float us = m->us, vs = m->vs;
-    const float a0 = pt->l0[0], a1 = pt->l0[1], a2 = pt->l0[2], a3 = pt->l0[3];
-    const float b0 = pt->l1[0], b1 = pt->l1[1], b2 = pt->l1[2], b3 = pt->l1[3];
+    const float us = m->us, vs = m->vs, *l0 = pt->l0, *l1 = pt->l1;
     int ri = layer == 0 && sFold[bk] != 0xFF ? (int)sFold[bk] : -1;
-    uint32_t i;
+    uint32_t i, c;
+    float L[16] __attribute__((aligned(8)));
 
-    corners_pos((const float (*)[4])t, out, n, m);
-    if (ri >= 0) { /* the first layer, the ramp's texel at the light's u (nearest) folded in */
-        const uint32_t *tab = tab_of(m, ri);
-        const float h = 0.5f * sRamp[ri].fn;
-        const int32_t top = (int32_t)sRamp[ri].n - 1;
-        for (i = 0; i < n; i++) {
-            const FigVtx *c = &v[i];
-            float la = a0 * c->nx + a1 * c->ny + a2 * c->nz + a3, lb = b0 * c->nx + b1 * c->ny + b2 * c->nz + b3;
-            int32_t x = (int32_t)((lb + (la - lb) * c->w) * h + h);
-            out[i].u = c->u * us;
-            out[i].v = c->v * vs;
-            out[i].argb = tab[x < 0 ? 0 : x > top ? top : x];
-        }
-    } else if (layer == 0) {
-        const uint32_t argb = m->argb;
+    if (ri < 0 && layer == 0) {
+        const uint32_t argb = m->argb, oargb = m->oargb;
         for (i = 0; i < n; i++) {
             out[i].u = v[i].u * us;
             out[i].v = v[i].v * vs;
             out[i].argb = argb;
+            out[i].oargb = oargb;
         }
-    } else if (r->prog == 0) { /* u = 0.5 + 0.5 (light on the normal, blended by the weight).x */
-        const uint32_t argb = m->argb;
-        const float hu = 0.5f * us;
+        return;
+    }
+    memset(L, 0, sizeof(L));
+    if (ri >= 0 || r->prog == 0) { /* x = 0.5 + 0.5 (lb + (la - lb) w) times h: row 0 lb h + h, row 1 (la - lb) h */
+        float h = ri >= 0 ? 0.5f * sRamp[ri].fn : 0.5f * us;
+        for (c = 0; c < 4; c++) {
+            L[c * 4] = l1[c] * h;
+            L[c * 4 + 1] = (l0[c] - l1[c]) * h;
+        }
+        L[12] += h;
+    } else { /* program 1: (u, v) = 0.5 (1 + (light on the normal).xy) times the texture's size */
+        float hu = 0.5f * us, hv = 0.5f * vs;
+        for (c = 0; c < 4; c++) {
+            L[c * 4] = l0[c] * hu;
+            L[c * 4 + 1] = l1[c] * hv;
+        }
+        L[12] += hu;
+        L[13] += hv;
+    }
+    shz_xmtrx_load_unaligned_4x4(L);
+    if (ri >= 0) { /* the first layer, the ramp's texel at the light's u (nearest) folded in */
+        const uint32_t *tab = tab_of(m, ri), *tabO = sRamp[ri].tabO;
+        const int32_t top = (int32_t)sRamp[ri].n - 1;
         for (i = 0; i < n; i++) {
-            const FigVtx *c = &v[i];
-            float la = a0 * c->nx + a1 * c->ny + a2 * c->nz + a3, lb = b0 * c->nx + b1 * c->ny + b2 * c->nz + b3;
-            out[i].u = (lb + (la - lb) * c->w) * hu + hu;
+            const FigVtx *cv = &v[i];
+            shz_vec4_t l = shz_xmtrx_transform_vec4(shz_vec4_init(cv->nx, cv->ny, cv->nz, 1.0f));
+            int32_t x = (int32_t)(l.x + l.y * cv->w);
+            x = x < 0 ? 0 : x > top ? top : x;
+            out[i].u = cv->u * us;
+            out[i].v = cv->v * vs;
+            out[i].argb = tab[x];
+            out[i].oargb = tabO[x];
+        }
+    } else if (r->prog == 0) {
+        const uint32_t argb = m->argb, oargb = m->oargb;
+        for (i = 0; i < n; i++) {
+            const FigVtx *cv = &v[i];
+            shz_vec4_t l = shz_xmtrx_transform_vec4(shz_vec4_init(cv->nx, cv->ny, cv->nz, 1.0f));
+            out[i].u = l.x + l.y * cv->w;
             out[i].v = 0.0f;
             out[i].argb = argb;
+            out[i].oargb = oargb;
         }
-    } else { /* program 1: (u, v) = 0.5 (1 + (light on the normal).xy) */
-        const uint32_t argb = m->argb;
-        const float hu = 0.5f * us, hv = 0.5f * vs;
+    } else {
+        const uint32_t argb = m->argb, oargb = m->oargb;
         for (i = 0; i < n; i++) {
-            const FigVtx *c = &v[i];
-            out[i].u = (a0 * c->nx + a1 * c->ny + a2 * c->nz + a3) * hu + hu;
-            out[i].v = (b0 * c->nx + b1 * c->ny + b2 * c->nz + b3) * hv + hv;
+            const FigVtx *cv = &v[i];
+            shz_vec4_t l = shz_xmtrx_transform_vec4(shz_vec4_init(cv->nx, cv->ny, cv->nz, 1.0f));
+            out[i].u = l.x;
+            out[i].v = l.y;
             out[i].argb = argb;
+            out[i].oargb = oargb;
         }
     }
 }
 
+/* each run of a batch's triangles not left out (adc) as one of the PVR's strips, straight to the TA: the corners
+   (t, in the clip volume or the screen) to the screen as they are sent, their u v argb from o */
+static __attribute__((noinline)) uint32_t batch_send(const float (*t)[4], const FigOut *o, const uint8_t *adc, uint32_t n,
+                                                     const FigMap *m) {
+    const float kx = m->kx, bx = m->bx, ky = m->ky, by = m->by, za = m->za, zb = m->zb, zc = m->zc, z0 = m->z0,
+                z1 = m->z1;
+    uint32_t k = 2, e, i, sent = 0;
+    while (k < n) {
+        if (adc[k]) {
+            k++;
+            continue;
+        }
+        for (e = k + 1; e < n && !adc[e]; e++) {
+        }
+        for (i = k - 2; i < e; i++) {
+            float w = t[i][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z = za + q * (zb + t[i][2] * zc);
+            pvr_vertex_t *pv = (pvr_vertex_t *)pvr_dr_target();
+            pv->flags = i + 1 == e ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+            pv->x = t[i][0] * q * kx + bx;
+            pv->y = t[i][1] * q * ky + by;
+            pv->z = z < z0 ? z0 : z > z1 ? z1 : z;
+            pv->u = o[i].u;
+            pv->v = o[i].v;
+            pv->argb = o[i].argb;
+            pv->oargb = o[i].oargb;
+            pvr_dr_commit(pv);
+        }
+        sent += e - k + 2;
+        k = e;
+    }
+    return sent;
+}
+
 /* the batches bt[0..nb) of part pi (from the draw's ki on: their folds) in layer `layer`: skinned in the clip volume
    (bone A, bone B, blended by the weight), the triangles outside it marked (ADC: four screens wide, or behind the near
-   plane, as vu1_native.c clip_flags), to the screen; their texture coordinates and colours */
-static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb, int layer, const FigMap *m) {
+   plane, as vu1_native.c clip_flags), to the screen; their texture coordinates and colours. Under a header (send 1)
+   each batch is made into sOne and sent at once: its 32-byte lines stay in the cache (sOut's 48 KB do not, and each
+   line written there was read from memory first); by records into sOut, sent after. */
+static FigOut sOne[FIG_MAXV] __attribute__((aligned(32)));
+static uint64_t sSendNs; /* TEMP: the sending inside chunk_make */
+static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb, int layer, const FigMap *m, int send) {
     const FigPart *pt = &r->part[pi];
     uint32_t i, k, j;
 
@@ -666,7 +757,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
         const FigVtx *v = (const FigVtx *)(b + 1);
         static float t[FIG_MAXV][4] __attribute__((aligned(32))); /* (one batch's: in the cache) */
         uint32_t f0 = 0, f1 = 0, f2 = 0;
-        uint64_t s0 = Gs_NowNs(), s1, s2; /* TEMP */
+        uint64_t s0 = FIG_NOW(), s1, s2; /* TEMP */
         shz_xmtrx_load_unaligned_4x4(sMat[pi][0]);
         for (i = 0; i < b->n; i++) { /* (bone A: not for a corner wholly B's) */
             if (v[i].w != 0.0f) {
@@ -677,7 +768,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 t[i][3] = p.w;
             }
         }
-        s1 = Gs_NowNs(); /* TEMP */
+        s1 = FIG_NOW(); /* TEMP */
         sSt[0] += s1 - s0;
         shz_xmtrx_load_unaligned_4x4(sMat[pi][1]);
         for (i = 0; i < b->n; i++) {
@@ -732,42 +823,27 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 t[i][3] = p.w + (sc[i][3] - p.w) * w;
             }
         }
-        s2 = Gs_NowNs(); /* TEMP */
+        s2 = FIG_NOW(); /* TEMP */
         sSt[1] += s2 - s1;
-        corners_put(r, pt, ks[k], b, t, &sOut[j], layer, m);
-        s1 = Gs_NowNs(); /* TEMP */
+        corners_put(r, pt, ks[k], b, send ? sOne : &sOut[j], layer, m);
+        if (!send) {
+            corners_pos((const float (*)[4])t, &sOut[j], b->n, m);
+        }
+        s1 = FIG_NOW(); /* TEMP */
         sSt[2] += s1 - s2;
-        sSt[3] += Gs_NowNs() - s1;
+        if (send) {
+            static const uint8_t none[FIG_MAXV];
+            uint32_t sent = batch_send((const float (*)[4])t, sOne, r->prog == 2 && r->alt ? none : &sAdc[j], b->n,
+                                       m); /* (2b: every triangle) */
+            uint64_t s3 = FIG_NOW(); /* TEMP */
+            gStatVtx += sent;
+            sCm[2] += sent;
+            sSendNs += s3 - s1;
+            s1 = s3;
+        }
+        sSt[3] += FIG_NOW() - s1;
         sSt[4]++;
     }
-}
-
-/* each run of a batch's triangles not left out (adc) as one of the PVR's strips, straight to the TA */
-static uint32_t batch_send(const FigOut *o, const uint8_t *adc, uint32_t n) {
-    uint32_t k = 2, e, i, sent = 0;
-    while (k < n) {
-        if (adc[k]) {
-            k++;
-            continue;
-        }
-        for (e = k + 1; e < n && !adc[e]; e++) {
-        }
-        for (i = k - 2; i < e; i++) {
-            pvr_vertex_t *pv = (pvr_vertex_t *)pvr_dr_target();
-            pv->flags = i + 1 == e ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            pv->x = o[i].x;
-            pv->y = o[i].y;
-            pv->z = o[i].z;
-            pv->u = o[i].u;
-            pv->v = o[i].v;
-            pv->argb = o[i].argb;
-            pv->oargb = 0;
-            pvr_dr_commit(pv);
-        }
-        sent += e - k + 2;
-        k = e;
-    }
-    return sent;
 }
 
 /* A strip the PVR path does not take: as the programs' records (Rnd_DrawStrip; o in the GS's units) */
@@ -832,6 +908,10 @@ static void map_make(FigMap *m, const FigRec *r, int pi, int layer, int open, co
         m->c1[i] = unit(ftoi(c1[i]));
     }
     m->argb = m->c0[3] << 24 | m->c0[0] << 16 | m->c0[1] << 8 | m->c0[2];
+    m->oargb = 0;
+    m->tint = open == 1 ? d->tint : 0;
+    m->tflat = open == 1 && d->tflat;
+    if (m->tint) { m->argb = tinted(m->argb, m->tint, m->tflat, &m->oargb); }
 }
 
 /* the batches ks[0..nb) of one key, in part order: made a part (and a chunk) at a time and sent under header d (open
@@ -850,24 +930,21 @@ static void key_send(const FigRec *r, const uint16_t *ks, uint32_t nb, int layer
         }
         t1 = Gs_NowNs();
         map_make(&m, r, pi, layer, open, d);
-        chunk_make(r, pi, ks + s, e - s, layer, &m);
+        sSendNs = 0;
+        chunk_make(r, pi, ks + s, e - s, layer, &m, open == 1);
         t2 = Gs_NowNs();
-        sTm[2] += t2 - t1;
+        sTm[2] += t2 - t1 - sSendNs;
+        sTm[3] += sSendNs;
         sCm[0]++;
         sCm[1] += total;
-        for (x = s, j = 0; x < e; x++) {
-            const FigBatch *b = sBt[ks[x]];
-            const uint8_t *adc = r->prog == 2 && r->alt ? none : &sAdc[j]; /* (2b: every triangle) */
-            if (open == 1) {
-                uint32_t n = batch_send(&sOut[j], adc, b->n);
-                gStatVtx += n;
-                sCm[2] += n;
-            } else {
-                strip_old(b, &sOut[j], adc, prim, tex0);
+        if (open != 1) {
+            for (x = s, j = 0; x < e; x++) {
+                const FigBatch *b = sBt[ks[x]];
+                strip_old(b, &sOut[j], r->prog == 2 && r->alt ? none : &sAdc[j], prim, tex0); /* (2b: every triangle) */
+                j += b->n;
             }
-            j += b->n;
+            sTm[4] += Gs_NowNs() - t2;
         }
-        sTm[open == 1 ? 3 : 4] += Gs_NowNs() - t2;
         s = e;
     }
 }
@@ -958,12 +1035,20 @@ static void fig_draw(const void *blob) {
                 RndPoly h;
                 RndDirect d;
                 int open;
-                uint64_t t1 = Gs_NowNs();
+                uint64_t t1 = Gs_NowNs(), t2;
+                extern int gGsDirectNot;
                 memset(&h, 0, sizeof(h));
                 h.gsTex0 = (prim >> 4) & 1 ? kTex[id] : 0;
                 h.st.flags = RND_VU;
+                gGsDirectNot = 0;
+                gRndDirectTint = 1; /* (map_make makes the tint's colours) */
                 open = Rnd_Direct(&d, &h, (int)(prim >> 9) & 1, (int)(prim >> 6) & 1, (int)(prim >> 3) & 1, kTris[id], kVerts[id]);
-                sTm[1] += Gs_NowNs() - t1;
+                gRndDirectTint = 0;
+                sN[11] += open == 1 && d.tint != 0; /* TEMP */
+                t2 = Gs_NowNs();
+                sTm[1] += t2 - t1;
+                sDirNs[open & 3 ? (open == 1 ? 1 : 2) : 0] += t2 - t1; /* TEMP */
+                if (open == 0) { sNot[gGsDirectNot & 15]++; } /* TEMP */
                 sN[6]++; /* TEMP */
                 if (open != 2) {
                     key_send(r, sOrder + kAt[id], kAt[id + 1] - kAt[id], layer, prim, kTex[id], open, &d);
@@ -989,14 +1074,25 @@ static void fig_frame(void) {
     if (gGsFrame - from >= 60) {
         unsigned f = gGsFrame - from ? gGsFrame - from : 1;
         fprintf(stderr, "fig_native per frame: %.1f ms; parts lit %u, fade %u, flat %u, old way %u; batches %u, headers %u, "
-                        "strips by records %u; chains read %u, not read %u; ramp folded %u, as a layer %u; draws by four transforms %u; ramp tables made %u\n",
+                        "strips by records %u; chains read %u, not read %u; ramp folded %u, as a layer %u; draws by four transforms %u; ramp tables made %u; tinted keys %u\n",
                 (double)sNs / 1e6 / f, sN[0] / f, sN[1] / f, sN[2] / f, sN[3] / f, sN[5] / f, sN[6] / f, sN[4] / f, sRead,
-                sNotRead, sN[7] / f, sN[8] / f, sN[9] / f, sN[10] / f);
+                sNotRead, sN[7] / f, sN[8] / f, sN[9] / f, sN[10] / f, sN[11] / f);
         fprintf(stderr, "fig_native steps per frame (ms): table %.2f, Rnd_Direct %.2f, skinning %.2f (%u calls, %u corners, %u one bone's), "
                         "writing and sending %.2f (%u vertices), by records %.2f; queueing (game side) %.2f\n",
                 (double)sTm[0] / 1e6 / f, (double)sTm[1] / 1e6 / f, (double)sTm[2] / 1e6 / f, sCm[0] / f, sCm[1] / f, sCm[3] / f,
                 (double)sTm[3] / 1e6 / f, sCm[2] / f, (double)sTm[4] / 1e6 / f, (double)sTm[5] / 1e6 / f);
-        fprintf(stderr, "fig_native skinning per frame (ms): bone A %.2f, bone B and clip %.2f, screen and the rest %.2f; "
+        fprintf(stderr, "fig_native Rnd_Direct per frame: by records %.2f ms, a header %.2f ms, not drawn %.2f ms; by records "
+                        "why (gGsDirectNot):", (double)sDirNs[0] / 1e6 / f, (double)sDirNs[1] / 1e6 / f, (double)sDirNs[2] / 1e6 / f);
+        {
+            unsigned w;
+            for (w = 0; w < 16; w++) {
+                if (sNot[w]) { fprintf(stderr, " %u: %u", w, sNot[w] / f ? sNot[w] / f : 1); }
+            }
+            fprintf(stderr, "\n");
+        }
+        memset(sNot, 0, sizeof(sNot));
+        memset(sDirNs, 0, sizeof(sDirNs));
+        if (FIG_STEPS) fprintf(stderr, "fig_native skinning per frame (ms): bone A %.2f, bone B and clip %.2f, screen and the rest %.2f; "
                         "the timer %.2f (%u batches, %.2f us a call)\n", (double)sSt[0] / 1e6 / f, (double)sSt[1] / 1e6 / f,
                 (double)sSt[2] / 1e6 / f, (double)sSt[3] / 1e6 / f, (unsigned)(sSt[4] / f),
                 sSt[4] ? (double)sSt[3] / 1e3 / (double)sSt[4] : 0.0);
