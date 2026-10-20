@@ -155,6 +155,16 @@ $(NOSTAGE_STAMP): | $(OBJ)
 	touch $@
 $(OBJ)/battle_stgm_a.o: $(NOSTAGE_STAMP)
 $(OBJ)/battle_stgm_a.o: GAME_CFLAGS += $(if $(filter 1,$(DC_NOSTAGE)),-DBT3_NOSTAGE)
+# DC_OLDSTAGE=1: the stage's groups 0..5 drawn the old way, through the VU1 emulation, not natively
+# (port/src/dc/stg_native.c; src/battle/stgm_a.c StgModel_Draw)
+DC_OLDSTAGE ?= 0
+OLDSTAGE_STAMP := $(BUILD)/oldstage_$(DC_OLDSTAGE).stamp
+$(OLDSTAGE_STAMP): | $(OBJ)
+	rm -f $(BUILD)/oldstage_*.stamp
+	touch $@
+$(OBJ)/battle_stgm_a.o $(OBJ)/battle_stg_d_b.o $(OBJ)/dc_stg_native.o: $(OLDSTAGE_STAMP)
+$(OBJ)/battle_stgm_a.o $(OBJ)/battle_stg_d_b.o: GAME_CFLAGS += $(if $(filter 1,$(DC_OLDSTAGE)),-DBT3_OLDSTAGE)
+$(OBJ)/dc_stg_native.o: PC_CFLAGS += $(if $(filter 1,$(DC_OLDSTAGE)),-DBT3_OLDSTAGE)
 # DC_NOFIG=1 (a test): the fighters' models not drawn (src/sys/gfxm_d_c.c ObjDraw_DrawParts); the stage, effects and HUD as ever
 DC_NOFIG ?= 0
 NOFIG_STAMP := $(BUILD)/nofig_$(DC_NOFIG).stamp

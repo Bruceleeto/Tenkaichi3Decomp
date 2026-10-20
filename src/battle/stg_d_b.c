@@ -84,6 +84,12 @@ void StgModel_InitStage(void) {
     void *stage = (u8 *)file + file[1] / 4 * 4;
 
     BtlStage_Init(stage, stage);
+#if defined(PORT) && defined(__DREAMCAST__) && !defined(BT3_DCSIM) && !defined(BT3_OLDSTAGE)
+    {
+        extern void StgNative_Forget(void); /* port/src/dc/stg_native.c: the stage's meshes read again */
+        StgNative_Forget();
+    }
+#endif
 }
 
 /* Gives every animated, whole object a random start frame in its animation. */

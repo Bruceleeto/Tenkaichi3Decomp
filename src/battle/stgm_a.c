@@ -62,6 +62,24 @@ extern void Vu0Cur_StoreMtx(void *m);
 extern void Vu0Cur_LoadMtx(void *m);
 extern void *memset(void *, s32, u32);
 
+/* The Dreamcast draws groups 0..5 natively (port/src/dc/stg_native.c): the matrices and each material's visible meshes
+   handed over, no VU1 program 4 (Makefile.dc DC_OLDSTAGE=1: the old way, through the VU1 emulation) */
+#if defined(PORT) && defined(__DREAMCAST__) && !defined(BT3_DCSIM) && !defined(BT3_OLDSTAGE)
+extern void StgNative_Begin(const void *mdl, const void *mtx);
+extern void StgNative_Mesh(u32 chain);
+extern void StgNative_End(void);
+extern void StgNative_Frame(void);
+#define STGM_LOAD4(m) StgNative_Begin(gBtlStage->mdl, (m))
+#define STGM_CALL4(c) StgNative_Mesh(c)
+#define STGM_MAT_END() StgNative_End()
+#define STGM_FRAME() StgNative_Frame()
+#else
+#define STGM_LOAD4(m) Vu1Pkt_LoadProg4(m)
+#define STGM_CALL4(c) Vu1Pkt_CallProg4(c)
+#define STGM_MAT_END() ((void)0)
+#define STGM_FRAME() ((void)0)
+#endif
+
 /* Draws the animated stage objects: for each animation, every object that plays it, posed at its frame. */
 void StgModel_DrawAnims(void) {
     f32 mtx[16];
@@ -327,9 +345,10 @@ s32 StgModel_DrawDebris(s32 drawn, u8 *vis) {
                     StgModel_SetTexture(mats[i].tex);                           \
                 }                                                               \
                 chain = mesh[j].chain;                                          \
-                Vu1Pkt_CallProg4(chain);                                        \
+                STGM_CALL4(chain);                                              \
             }                                                                   \
         }                                                                       \
+        STGM_MAT_END();                                                         \
     }
 
 /*
@@ -368,7 +387,7 @@ void StgModel_Draw(void *view) {
 
     if (mdl->grp[STGM_GRP_BACK].count != 0) {
         prog = 0;
-        Vu1Pkt_LoadProg4(((StgMView *)view)->mtx100);
+        STGM_LOAD4(((StgMView *)view)->mtx100);
         mats = mdl->grp[STGM_GRP_BACK].mats;
         Dma_AddZbuf(0xE0, 1);
         STGM_DRAW_GROUP(STGM_GRP_BACK)
@@ -384,7 +403,7 @@ void StgModel_Draw(void *view) {
     if (mdl->grp[STGM_GRP_BACK2].count != 0) {
         if (prog != 0) {
             prog = 0;
-            Vu1Pkt_LoadProg4(((StgMView *)view)->mtx100);
+            STGM_LOAD4(((StgMView *)view)->mtx100);
         }
         mats = mdl->grp[STGM_GRP_BACK2].mats;
         Dma_AddZbuf(0xE0, 0);
@@ -395,7 +414,7 @@ void StgModel_Draw(void *view) {
 
     if (mdl->grp[STGM_GRP_MAIN].count != 0) {
         mtx = ((StgMView *)view)->mtx100;
-        Vu1Pkt_LoadProg4(mtx);
+        STGM_LOAD4(mtx);
         mats = mdl->grp[STGM_GRP_MAIN].mats;
         for (i = 0; i < mdl->grp[STGM_GRP_MAIN].count; i++) {
             chain = 0;
@@ -444,7 +463,7 @@ void StgModel_Draw(void *view) {
                 if (mesh[j].prog != prog) {
                     switch (mesh[j].prog) {
                     case 0:
-                        Vu1Pkt_LoadProg4(mtx);
+                        STGM_LOAD4(mtx);
                         break;
                     case 1: /* needed for the match: the program number is read again after the switch */
                         break;
@@ -452,9 +471,10 @@ void StgModel_Draw(void *view) {
                     prog = mesh[j].prog;
                 }
                 if (mesh[j].prog == 0) {
-                    Vu1Pkt_CallProg4(chain);
+                    STGM_CALL4(chain);
                 }
             }
+            STGM_MAT_END();
         }
     }
 
@@ -466,7 +486,7 @@ void StgModel_Draw(void *view) {
 
     if (BtlStage_GetId() != 5 && mdl->grp[STGM_GRP_BLEND_A].count != 0) {
         blend = 1;
-        Vu1Pkt_LoadProg4(((StgMView *)view)->mtx100);
+        STGM_LOAD4(((StgMView *)view)->mtx100);
         Dma_AddZbuf(0xE0, 1);
         Dma_AddFillRect(0x700, 0x720, 0x200, 0x1C0, 0);
         mats = mdl->grp[STGM_GRP_BLEND_A].mats;
@@ -478,7 +498,7 @@ void StgModel_Draw(void *view) {
 
     if (mdl->grp[STGM_GRP_BLEND_B].count != 0) {
         blend = 1;
-        Vu1Pkt_LoadProg4(((StgMView *)view)->mtx100);
+        STGM_LOAD4(((StgMView *)view)->mtx100);
         Dma_AddZbuf(0xE0, 1);
         Dma_AddFillRect(0x700, 0x720, 0x200, 0x1C0, 0);
         mats = mdl->grp[STGM_GRP_BLEND_B].mats;
@@ -490,7 +510,7 @@ void StgModel_Draw(void *view) {
 
     if (mdl->grp[STGM_GRP_BLEND_C].count != 0) {
         blend = 1;
-        Vu1Pkt_LoadProg4(((StgMView *)view)->mtx100);
+        STGM_LOAD4(((StgMView *)view)->mtx100);
         Dma_AddZbuf(0xE0, 1);
         Dma_AddFillRect(0x700, 0x720, 0x200, 0x1C0, 0);
         mats = mdl->grp[STGM_GRP_BLEND_C].mats;
@@ -506,6 +526,7 @@ void StgModel_Draw(void *view) {
     if (blend != 0) {
         StgModel_SetDrawEnv();
     }
+    STGM_FRAME();
 }
 
 /* Queues the stage's GS state: frame buffer of this frame, depth buffer, blend, test, filter, clamps. */
