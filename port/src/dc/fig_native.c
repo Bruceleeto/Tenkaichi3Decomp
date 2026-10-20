@@ -42,16 +42,21 @@ extern uint64_t Gs_NowNs(void);
      chain + 0  the DMA tag's first word, as it was
      chain + 4  "NATF" (a ret tag's address word, 0 in the game's chains)
      chain + 8  its batches, its corners
-     chain + 16 the batches, each a FigBatch and its corners */
+     chain + 16 the batches, each a FigBatch, its corners (each once: nu), which of them each of its n is (a byte a
+                corner, n rounded up to 4; bit 7: a strip starts there). Neighbouring batches of one header made one
+                (fig_merge). */
 #define FIG_MAGIC 0x4654414Eu
 #define FIG_DATA 16
-#define FIG_MAXV 38 /* corners of a batch (what the programs have room for) */
+#define FIG_MAXV 38  /* corners of a batch (what the programs have room for) */
+#define FIG_MAXN 192 /* corners of batches made one */
+#define FIG_MAXU 127 /* and those corners each once (bit 7 of an index: a strip starts) */
 
 typedef struct FigBatch {
     uint32_t tex0[2][2]; /* the TEX0 of each layer its header writes (A+D quadwords +1, +2) */
     uint32_t prim[2];    /* each layer's strip's PRIM, raw (Rnd_Prim when drawn) */
     uint16_t n, fade;    /* corners; the fade pass draws it (its first normal's w) */
-    uint8_t reg[2], pad[2]; /* the register each A+D quadword writes */
+    uint8_t reg[2];      /* the register each A+D quadword writes */
+    uint8_t nu, strips;  /* corners each once; strips */
 } FigBatch; /* 32 bytes */
 
 typedef struct FigVtx {
@@ -59,6 +64,10 @@ typedef struct FigVtx {
     float nx, ny, nz;
     float u, v;
 } FigVtx; /* 36 bytes */
+
+/* which of the batch's corners each of its n is; the batch after it */
+static inline const uint8_t *batch_idx(const FigBatch *b) { return (const uint8_t *)((const FigVtx *)(b + 1) + b->nu); }
+static inline const uint8_t *batch_end(const FigBatch *b) { return batch_idx(b) + ((b->n + 3u) & ~3u); }
 
 static inline uint32_t rd32(const uint8_t *p) { return *(const uint32_t *)p; }
 static inline uint64_t ld64(const uint8_t *p) { return rd32(p) | (uint64_t)rd32(p + 4) << 32; }
@@ -82,11 +91,14 @@ static inline const uint8_t *fig_at(const void *chain) {
 }
 
 /* One batch (fig_batch's checks, program 0's: the strictest): the header's five quadwords (A+D tag, TEX0 of each
-   layer, the two strips' tags), three quadwords a corner (position with the weight, normal, s t q). out: where its
-   FigBatch goes (write 0: only checked, its room too: nothing written past what is read). 0 = not read. */
+   layer, the two strips' tags), three quadwords a corner (position with the weight, normal, s t q); a corner the
+   same as one before it in the batch kept once. out: where its FigBatch goes (write 0: only checked, its room too:
+   the batch is read whole before it is written, nothing written past its corners). 0 = not read. */
 static int fig_conv_batch(uint8_t **out, const uint8_t *hdr, const uint8_t *vtx, uint32_t nv, int write) {
     FigBatch b;
-    uint32_t n, i, c;
+    FigVtx u[FIG_MAXV];
+    uint8_t idx[FIG_MAXV + 3];
+    uint32_t n, i, c, j, nu = 0, size;
 
     if (!ad_tag_ok(hdr) || !tag_ok(hdr + 48, 4, 0) || !tag_ok(hdr + 64, 4, 1)) {
         return 0;
@@ -107,30 +119,39 @@ static int fig_conv_batch(uint8_t **out, const uint8_t *hdr, const uint8_t *vtx,
     }
     b.n = (uint16_t)n;
     b.fade = (rd32(vtx + 28) & 0xFFFF) != 0;
-    if (*out + sizeof(b) > hdr + 80) {
-        return 0;
-    }
-    if (write) { memcpy(*out, &b, sizeof(b)); }
-    *out += sizeof(b);
+    memset(u, 0, sizeof(u));
+    memset(idx, 0, sizeof(idx));
     for (i = 0; i < n; i++) {
         const float *f = (const float *)(vtx + i * 48);
         float q = f[10] != 0.0f ? f[10] : 1.0f;
-        FigVtx v;
-        if (*out + sizeof(v) > (const uint8_t *)(f + 12)) {
-            return 0;
+        FigVtx *v = &u[nu];
+        v->x = f[0];
+        v->y = f[1];
+        v->z = f[2];
+        v->w = f[3];
+        v->nx = f[4];
+        v->ny = f[5];
+        v->nz = f[6];
+        v->u = f[8] / q;
+        v->v = f[9] / q;
+        for (j = 0; j < nu && memcmp(&u[j], v, sizeof(*v)) != 0; j++) {
         }
-        v.x = f[0];
-        v.y = f[1];
-        v.z = f[2];
-        v.w = f[3];
-        v.nx = f[4];
-        v.ny = f[5];
-        v.nz = f[6];
-        v.u = f[8] / q;
-        v.v = f[9] / q;
-        if (write) { memcpy(*out, &v, sizeof(v)); }
-        *out += sizeof(v);
+        idx[i] = (uint8_t)j;
+        nu += j == nu;
     }
+    idx[0] |= 0x80;
+    b.nu = (uint8_t)nu;
+    b.strips = 1;
+    size = sizeof(b) + nu * sizeof(FigVtx) + ((n + 3) & ~3u);
+    if (*out + size > vtx + n * 48) {
+        return 0;
+    }
+    if (write) {
+        memcpy(*out, &b, sizeof(b));
+        memcpy(*out + sizeof(b), u, nu * sizeof(FigVtx));
+        memcpy(*out + sizeof(b) + nu * sizeof(FigVtx), idx, (n + 3) & ~3u);
+    }
+    *out += size;
     return 1;
 }
 
@@ -196,6 +217,52 @@ static int fig_walk(uint8_t *chain, int write, uint32_t *batches, uint32_t *corn
 
 static unsigned sRead, sNotRead; /* TEMP */
 
+/* Neighbouring batches of one header (the same TEX0s, PRIMs, fade, registers) made one, each strip still its own;
+   a corner the same as one before it in the batch kept once. In place: a batch made is read whole first, and is
+   never longer than those it is made from. The batches now. */
+static uint32_t fig_merge(uint8_t *c, uint32_t nb) {
+    static FigVtx u[FIG_MAXU];
+    static uint8_t idx[FIG_MAXN + 3];
+    const uint8_t *in = c + FIG_DATA;
+    uint8_t *out = c + FIG_DATA;
+    uint32_t k = 0, no = 0;
+    while (k < nb) {
+        FigBatch g = *(const FigBatch *)in;
+        uint32_t nu = 0, n = 0, i, j, size;
+        g.strips = 0;
+        while (k < nb) {
+            const FigBatch *b = (const FigBatch *)in;
+            const FigVtx *v = (const FigVtx *)(b + 1);
+            const uint8_t *bi = batch_idx(b);
+            if (g.strips != 0 && (memcmp(b, &g, __builtin_offsetof(FigBatch, n)) != 0 || b->fade != g.fade ||
+                                  b->reg[0] != g.reg[0] || b->reg[1] != g.reg[1] || n + b->n > FIG_MAXN ||
+                                  nu + b->nu > FIG_MAXU)) {
+                break;
+            }
+            for (i = 0; i < b->n; i++) {
+                const FigVtx *cv = &v[bi[i] & 0x7F];
+                for (j = 0; j < nu && memcmp(&u[j], cv, sizeof(*cv)) != 0; j++) {
+                }
+                if (j == nu) { u[nu++] = *cv; }
+                idx[n + i] = (uint8_t)(j | (bi[i] & 0x80));
+            }
+            n += b->n;
+            g.strips = (uint8_t)(g.strips + b->strips);
+            in = batch_end(b);
+            k++;
+        }
+        g.n = (uint16_t)n;
+        g.nu = (uint8_t)nu;
+        for (i = n; i < ((n + 3) & ~3u); i++) { idx[i] = 0; }
+        size = nu * sizeof(FigVtx);
+        memcpy(out, &g, sizeof(g));
+        memcpy(out + sizeof(g), u, size);
+        memcpy(out + sizeof(g) + size, idx, (n + 3) & ~3u);
+        out += sizeof(g) + size + ((n + 3) & ~3u);
+        no++;
+    }
+    return no;
+}
 /* The chain read in place: checked whole first, then written. NULL = not read (as it was). */
 static const uint8_t *fig_read(void *chain) {
     uint8_t *c = (uint8_t *)chain;
@@ -205,6 +272,7 @@ static const uint8_t *fig_read(void *chain) {
         return NULL;
     }
     fig_walk(c, 1, &nb, &nc);
+    nb = fig_merge(c, nb);
     *(uint32_t *)(c + 8) = nb;
     *(uint32_t *)(c + 12) = nc;
     *(uint32_t *)(c + 4) = FIG_MAGIC;
@@ -241,7 +309,7 @@ static uint64_t sNs;
    records' strips; the queueing (FigNative_Draw and End, on the game's side); calls of chunk_make, corners made,
    vertices sent */
 static uint64_t sTm[6];
-static unsigned sCm[4]; /* (3: corners one bone's) */
+static unsigned sCm[5]; /* (3: corners one bone's; 4: corners skinned, each once) */
 static unsigned sNot[16]; /* TEMP: the keys Rnd_Direct sent by records, by gGsDirectNot (rnd_gs.c, gs_marker.c,
                              gs_draw.c, gs_pvr.c) */
 static uint64_t sDirNs[3]; /* TEMP: Rnd_Direct's time by what it returned (0 by records, 1 a header, 2 not drawn) */
@@ -632,13 +700,13 @@ static __attribute__((noinline)) void corners_pos(const float (*t)[4], FigOut *o
     }
 }
 
-/* a batch's texture coordinates and colours (out's u v argb). The light on the normal by ftrv: its two rows, already
+/* a batch's texture coordinates and colours (out's u v argb), each corner once. The light on the normal by ftrv: its two rows, already
    times the ramp's or the texture's size, in XMTRX (x = row 0 . (n, 1), y = row 1 . (n, 1)); not inlined, its
    numbers in locals (in fig_draw it ran out of registers and read them from the stack a corner at a time) */
 static __attribute__((noinline)) void corners_put(const FigRec *r, const FigPart *pt, uint32_t bk, const FigBatch *b,
                                                   FigOut *out, int layer, const FigMap *m) {
     const FigVtx *v = (const FigVtx *)(b + 1);
-    const uint32_t n = b->n;
+    const uint32_t n = b->nu;
     const float us = m->us, vs = m->vs, *l0 = pt->l0, *l1 = pt->l1;
     int ri = layer == 0 && sFold[bk] != 0xFF ? (int)sFold[bk] : -1;
     uint32_t i, c;
@@ -709,9 +777,10 @@ static __attribute__((noinline)) void corners_put(const FigRec *r, const FigPart
 }
 
 /* each run of a batch's triangles not left out (adc) as one of the PVR's strips, straight to the TA: the corners
-   (t, in the clip volume or the screen) to the screen as they are sent, their u v argb from o */
-static __attribute__((noinline)) uint32_t batch_send(const float (*t)[4], const FigOut *o, const uint8_t *adc, uint32_t n,
-                                                     const FigMap *m) {
+   (t, in the clip volume or the screen, each once: ix which each corner is) to the screen as they are sent, their u v
+   argb from o */
+static __attribute__((noinline)) uint32_t batch_send(const float (*t)[4], const FigOut *o, const uint8_t *ix,
+                                                     const uint8_t *adc, uint32_t n, const FigMap *m) {
     const float kx = m->kx, bx = m->bx, ky = m->ky, by = m->by, za = m->za, zb = m->zb, zc = m->zc, z0 = m->z0,
                 z1 = m->z1;
     uint32_t k = 2, e, i, sent = 0;
@@ -723,16 +792,17 @@ static __attribute__((noinline)) uint32_t batch_send(const float (*t)[4], const 
         for (e = k + 1; e < n && !adc[e]; e++) {
         }
         for (i = k - 2; i < e; i++) {
-            float w = t[i][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z = za + q * (zb + t[i][2] * zc);
+            const uint32_t c = ix[i] & 0x7F;
+            float w = t[c][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z = za + q * (zb + t[c][2] * zc);
             pvr_vertex_t *pv = (pvr_vertex_t *)pvr_dr_target();
             pv->flags = i + 1 == e ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-            pv->x = t[i][0] * q * kx + bx;
-            pv->y = t[i][1] * q * ky + by;
+            pv->x = t[c][0] * q * kx + bx;
+            pv->y = t[c][1] * q * ky + by;
             pv->z = z < z0 ? z0 : z > z1 ? z1 : z;
-            pv->u = o[i].u;
-            pv->v = o[i].v;
-            pv->argb = o[i].argb;
-            pv->oargb = o[i].oargb;
+            pv->u = o[c].u;
+            pv->v = o[c].v;
+            pv->argb = o[c].argb;
+            pv->oargb = o[c].oargb;
             pvr_dr_commit(pv);
         }
         sent += e - k + 2;
@@ -746,20 +816,24 @@ static __attribute__((noinline)) uint32_t batch_send(const float (*t)[4], const 
    plane, as vu1_native.c clip_flags), to the screen; their texture coordinates and colours. Under a header (send 1)
    each batch is made into sOne and sent at once: its 32-byte lines stay in the cache (sOut's 48 KB do not, and each
    line written there was read from memory first); by records into sOut, sent after. */
-static FigOut sOne[FIG_MAXV] __attribute__((aligned(32)));
+static FigOut sOne[FIG_MAXU] __attribute__((aligned(32)));
 static uint64_t sSendNs; /* TEMP: the sending inside chunk_make */
 static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb, int layer, const FigMap *m, int send) {
     const FigPart *pt = &r->part[pi];
+    const int alt = r->prog == 2 && r->alt;
     uint32_t i, k, j;
 
     for (k = 0, j = 0; k < nb; j += sBt[ks[k]]->n, k++) { /* (a batch at a time: its corners stay in the cache) */
         const FigBatch *b = sBt[ks[k]];
         const FigVtx *v = (const FigVtx *)(b + 1);
-        static float t[FIG_MAXV][4] __attribute__((aligned(32))); /* (one batch's: in the cache) */
+        const uint8_t *ix = batch_idx(b);
+        const uint32_t nu = b->nu, n = b->n;
+        static float t[FIG_MAXU][4] __attribute__((aligned(32))); /* (one batch's, each corner once: in the cache) */
+        uint8_t fl[FIG_MAXU];
         uint32_t f0 = 0, f1 = 0, f2 = 0;
         uint64_t s0 = FIG_NOW(), s1, s2; /* TEMP */
         shz_xmtrx_load_unaligned_4x4(sMat[pi][0]);
-        for (i = 0; i < b->n; i++) { /* (bone A: not for a corner wholly B's) */
+        for (i = 0; i < nu; i++) { /* (bone A: not for a corner wholly B's) */
             if (v[i].w != 0.0f) {
                 shz_vec4_t p = shz_xmtrx_transform_vec4(shz_vec4_init(v[i].x, v[i].y, v[i].z, 1.0f));
                 t[i][0] = p.x;
@@ -771,9 +845,8 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
         s1 = FIG_NOW(); /* TEMP */
         sSt[0] += s1 - s0;
         shz_xmtrx_load_unaligned_4x4(sMat[pi][1]);
-        for (i = 0; i < b->n; i++) {
+        for (i = 0; i < nu; i++) {
             float w = v[i].w, cx, cy, cz, cw, g;
-            sCm[3] += w == 0.0f || w == 1.0f; /* TEMP */
             if (w == 1.0f) { /* (wholly A's) */
                 cx = t[i][0];
                 cy = t[i][1];
@@ -794,19 +867,26 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 }
             }
             g = cw * 4.0f; /* (no far plane; w <= 0 outside) */
-            f0 = f1;
-            f1 = f2;
-            f2 = cx > g || cx < -g || cy > g || cy < -g || cz < -cw;
-            sAdc[j + i] = (uint8_t)(f0 | f1 | f2);
+            fl[i] = (uint8_t)((__builtin_fabsf(cx) > g) | (__builtin_fabsf(cy) > g) | (cz < -cw));
             t[i][0] = cx;
             t[i][1] = cy;
             t[i][2] = cz;
             t[i][3] = cw;
         }
+        sCm[4] += nu; /* TEMP */
+        for (i = 0; i < n; i++) { /* (a triangle outside if a corner of it is; none across a strip's start; 2b: the
+                                     others every triangle) */
+            const uint32_t x = ix[i];
+            if (x & 0x80) { f1 = f2 = 1; }
+            f0 = f1;
+            f1 = f2;
+            f2 = alt ? 0 : fl[x & 0x7F];
+            sAdc[j + i] = (uint8_t)(f0 | f1 | f2);
+        }
         if (!sRel) { /* (the screen by its own matrices) */
-            float sc[FIG_MAXV][4];
+            float sc[FIG_MAXU][4];
             shz_xmtrx_load_unaligned_4x4(sMat[pi][2]);
-            for (i = 0; i < b->n; i++) {
+            for (i = 0; i < nu; i++) {
                 shz_vec4_t p = shz_xmtrx_transform_vec4(shz_vec4_init(v[i].x, v[i].y, v[i].z, 1.0f));
                 sc[i][0] = p.x;
                 sc[i][1] = p.y;
@@ -814,7 +894,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
                 sc[i][3] = p.w;
             }
             shz_xmtrx_load_unaligned_4x4(sMat[pi][3]);
-            for (i = 0; i < b->n; i++) {
+            for (i = 0; i < nu; i++) {
                 shz_vec4_t p = shz_xmtrx_transform_vec4(shz_vec4_init(v[i].x, v[i].y, v[i].z, 1.0f));
                 float w = v[i].w;
                 t[i][0] = p.x + (sc[i][0] - p.x) * w;
@@ -825,16 +905,15 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
         }
         s2 = FIG_NOW(); /* TEMP */
         sSt[1] += s2 - s1;
-        corners_put(r, pt, ks[k], b, send ? sOne : &sOut[j], layer, m);
-        if (!send) {
-            corners_pos((const float (*)[4])t, &sOut[j], b->n, m);
+        corners_put(r, pt, ks[k], b, sOne, layer, m);
+        if (!send) { /* (each corner of the batch in sOut) */
+            corners_pos((const float (*)[4])t, sOne, nu, m);
+            for (i = 0; i < b->n; i++) { sOut[j + i] = sOne[ix[i] & 0x7F]; }
         }
         s1 = FIG_NOW(); /* TEMP */
         sSt[2] += s1 - s2;
         if (send) {
-            static const uint8_t none[FIG_MAXV];
-            uint32_t sent = batch_send((const float (*)[4])t, sOne, r->prog == 2 && r->alt ? none : &sAdc[j], b->n,
-                                       m); /* (2b: every triangle) */
+            uint32_t sent = batch_send((const float (*)[4])t, sOne, ix, &sAdc[j], b->n, m);
             uint64_t s3 = FIG_NOW(); /* TEMP */
             gStatVtx += sent;
             sCm[2] += sent;
@@ -848,7 +927,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
 
 /* A strip the PVR path does not take: as the programs' records (Rnd_DrawStrip; o in the GS's units) */
 static void strip_old(const FigBatch *b, const FigOut *o, const uint8_t *adc, uint32_t prim, uint64_t tex0) {
-    static RndVtx rv[FIG_MAXV];
+    static RndVtx rv[FIG_MAXN];
     uint32_t i, ch, ctx = (prim >> 9) & 1;
     RndPoly h;
     for (i = 0; i < b->n; i++) {
@@ -918,7 +997,6 @@ static void map_make(FigMap *m, const FigRec *r, int pi, int layer, int open, co
    1) or by records (0) */
 static void key_send(const FigRec *r, const uint16_t *ks, uint32_t nb, int layer, uint32_t prim, uint64_t tex0, int open,
                      const RndDirect *d) {
-    static const uint8_t none[FIG_MAXV];
     uint32_t s = 0;
     while (s < nb) {
         int pi = sPart[ks[s]];
@@ -940,7 +1018,7 @@ static void key_send(const FigRec *r, const uint16_t *ks, uint32_t nb, int layer
         if (open != 1) {
             for (x = s, j = 0; x < e; x++) {
                 const FigBatch *b = sBt[ks[x]];
-                strip_old(b, &sOut[j], r->prog == 2 && r->alt ? none : &sAdc[j], prim, tex0); /* (2b: every triangle) */
+                strip_old(b, &sOut[j], &sAdc[j], prim, tex0);
                 j += b->n;
             }
             sTm[4] += Gs_NowNs() - t2;
@@ -977,7 +1055,7 @@ static void fig_draw(const void *blob) {
         for (i = 0; i < nb && n < FIG_BATCHES; i++) {
             const FigBatch *b = (const FigBatch *)p;
             int f;
-            p += sizeof(FigBatch) + b->n * sizeof(FigVtx);
+            p = batch_end(b);
             if (r->prog == 1 && !b->fade) { continue; } /* (a batch without the fade layer: program 1 draws nothing) */
             f = fold_of(r, b);
             sFold[n] = f < 0 ? 0xFF : (uint8_t)f;
@@ -1012,8 +1090,8 @@ static void fig_draw(const void *blob) {
                     nk++;
                 }
                 sKid[k] = (uint8_t)id;
-                kTris[id] += sBt[k]->n - 2u;
-                kVerts[id] += sBt[k]->n + 2u; /* (as many as the strips send at the most: a bound) */
+                kTris[id] += sBt[k]->n - 2u * sBt[k]->strips;
+                kVerts[id] += sBt[k]->n + 2u * sBt[k]->strips; /* (as many as the strips send at the most: a bound) */
                 kAt[id]++;
             }
             for (id = 0, i = 0; id < nk; id++) {
@@ -1077,9 +1155,9 @@ static void fig_frame(void) {
                         "strips by records %u; chains read %u, not read %u; ramp folded %u, as a layer %u; draws by four transforms %u; ramp tables made %u; tinted keys %u\n",
                 (double)sNs / 1e6 / f, sN[0] / f, sN[1] / f, sN[2] / f, sN[3] / f, sN[5] / f, sN[6] / f, sN[4] / f, sRead,
                 sNotRead, sN[7] / f, sN[8] / f, sN[9] / f, sN[10] / f, sN[11] / f);
-        fprintf(stderr, "fig_native steps per frame (ms): table %.2f, Rnd_Direct %.2f, skinning %.2f (%u calls, %u corners, %u one bone's), "
+        fprintf(stderr, "fig_native steps per frame (ms): table %.2f, Rnd_Direct %.2f, skinning %.2f (%u calls, %u corners, %u skinned), "
                         "writing and sending %.2f (%u vertices), by records %.2f; queueing (game side) %.2f\n",
-                (double)sTm[0] / 1e6 / f, (double)sTm[1] / 1e6 / f, (double)sTm[2] / 1e6 / f, sCm[0] / f, sCm[1] / f, sCm[3] / f,
+                (double)sTm[0] / 1e6 / f, (double)sTm[1] / 1e6 / f, (double)sTm[2] / 1e6 / f, sCm[0] / f, sCm[1] / f, sCm[4] / f,
                 (double)sTm[3] / 1e6 / f, sCm[2] / f, (double)sTm[4] / 1e6 / f, (double)sTm[5] / 1e6 / f);
         fprintf(stderr, "fig_native Rnd_Direct per frame: by records %.2f ms, a header %.2f ms, not drawn %.2f ms; by records "
                         "why (gGsDirectNot):", (double)sDirNs[0] / 1e6 / f, (double)sDirNs[1] / 1e6 / f, (double)sDirNs[2] / 1e6 / f);
@@ -1143,7 +1221,7 @@ void FigNative_End(void) {
         for (i = 0; i < nb; i++) {
             const FigBatch *b = (const FigBatch *)p;
             int layer;
-            p += sizeof(FigBatch) + b->n * sizeof(FigVtx);
+            p = batch_end(b);
             if (r->prog == 1 && !b->fade) { continue; }
             for (layer = 0; layer < layers_of(r); layer++) {
                 uint32_t prim = Rnd_Prim(b->prim[layer_prim(r, layer)]), j;
