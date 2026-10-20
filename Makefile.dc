@@ -107,6 +107,9 @@ $(OBJ)/gs_%.o: port/src/gs/%.c | $(OBJ)
 RENDER_OBJ := $(addprefix $(OBJ)/,gs_gs_pvr.o gs_gs_draw.o gs_gs_walk.o pc_vu1_native.o pc_vu0_native.o pc_rnd_gs.o pc_gs_marker.o pc_rnd_fx.o pc_plat_fastvec.o)
 $(filter $(OBJ)/gs_%,$(RENDER_OBJ)): GS_CFLAGS += -O3
 $(filter $(OBJ)/pc_%,$(RENDER_OBJ)): PC_CFLAGS += -O3
+# the native stage and fighters (port/src/dc/stg_native.c, fig_native.c) -O3 too, and fmac (only the picture rests
+# on their sums, not the game's state): at -Os the fighters' corner loop read its numbers from the stack a corner at a time
+$(OBJ)/dc_stg_native.o $(OBJ)/dc_fig_native.o: PC_CFLAGS += -O3 -ffp-contract=fast
 $(OBJ)/gs_gs_pvr.o: GS_CFLAGS += -DBT3_PVR
 $(OBJ)/gs_gs_draw.o: GS_CFLAGS += -DBT3_PVR
 # DC_RTT=1: drawing into frame buffers and reading them (the screen effects, the cross-fade); off, they are left out

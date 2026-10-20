@@ -561,7 +561,7 @@ static inline int32_t ftoi(float f) {
 
 /* ramp ri's folded colours for map m's, one a texel: c0 (1 - ramp c1), as the PVR draws the two layers; kept with
    the ramp, made again only for other colours (the parts' are mostly the same) */
-static const uint32_t *tab_of(const FigMap *m, int ri) {
+static __attribute__((noinline)) const uint32_t *tab_of(const FigMap *m, int ri) {
     FigRamp *rp = &sRamp[ri];
     uint32_t c1 = m->c1[0] | m->c1[1] << 8 | m->c1[2] << 16;
     if (rp->tabOk && rp->tabArgb == m->argb && (rp->decal || rp->tabC1 == c1)) {
@@ -584,50 +584,72 @@ static const uint32_t *tab_of(const FigMap *m, int ri) {
     return rp->tab;
 }
 
-/* a batch's corners from the clip volume (or the screen): to the screen, their texture coordinates and colours */
-static void corners_put(const FigRec *r, const FigPart *pt, int pi, uint32_t bk, const FigBatch *b, float (*t)[4], FigOut *out,
-                        int layer, const FigMap *m) {
-    const FigVtx *v = (const FigVtx *)(b + 1);
-    int ri = layer == 0 ? (sFold[bk] == 0xFF ? -1 : (int)sFold[bk]) : -1;
-    float rn = 0.0f;
-    int32_t top = 0;
+/* a batch's corners from the clip volume (or the screen): to the screen, their texture coordinates and colours.
+   Not inlined, and the map's numbers held in locals: in fig_draw it ran out of registers and read them from the
+   stack a corner at a time. The position first (corners_pos), then a loop for each kind of colour and texture
+   coordinates. */
+static __attribute__((noinline)) void corners_pos(const float (*t)[4], FigOut *out, uint32_t n, const FigMap *m) {
+    const float kx = m->kx, bx = m->bx, ky = m->ky, by = m->by, za = m->za, zb = m->zb, zc = m->zc, z0 = m->z0,
+                z1 = m->z1;
     uint32_t i;
-    const uint32_t *tab = NULL;
-    (void)pi;
-    if (ri >= 0) {
-        tab = tab_of(m, ri);
-        rn = sRamp[ri].fn;
-        top = (int32_t)sRamp[ri].n - 1;
-    }
-    for (i = 0; i < b->n; i++) {
-        float w = t[i][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z, u, tt;
+    for (i = 0; i < n; i++) {
+        float w = t[i][3], q = w != 0.0f ? shz_invf(w) : 0.0f, z = za + q * (zb + t[i][2] * zc);
         FigOut *o = &out[i];
-        z = m->za + q * (m->zb + t[i][2] * m->zc);
-        o->x = t[i][0] * q * m->kx + m->bx;
-        o->y = t[i][1] * q * m->ky + m->by;
-        o->z = z < m->z0 ? m->z0 : z > m->z1 ? m->z1 : z;
+        o->x = t[i][0] * q * kx + bx;
+        o->y = t[i][1] * q * ky + by;
+        o->z = z < z0 ? z0 : z > z1 ? z1 : z;
         o->q = q;
-        if (layer == 0) {
-            u = v[i].u;
-            tt = v[i].v;
-        } else if (r->prog == 0) { /* u = 0.5 + 0.5 (light on the normal, blended by the weight).x */
-            float la = pt->l0[0] * v[i].nx + pt->l0[1] * v[i].ny + pt->l0[2] * v[i].nz + pt->l0[3];
-            float lb = pt->l1[0] * v[i].nx + pt->l1[1] * v[i].ny + pt->l1[2] * v[i].nz + pt->l1[3];
-            u = (lb + (la - lb) * v[i].w) * 0.5f + 0.5f;
-            tt = 0.0f;
-        } else { /* program 1: (u, v) = 0.5 (1 + (light on the normal).xy) */
-            u = (1.0f + pt->l0[0] * v[i].nx + pt->l0[1] * v[i].ny + pt->l0[2] * v[i].nz + pt->l0[3]) * 0.5f;
-            tt = (1.0f + pt->l1[0] * v[i].nx + pt->l1[1] * v[i].ny + pt->l1[2] * v[i].nz + pt->l1[3]) * 0.5f;
+    }
+}
+
+static __attribute__((noinline)) void corners_put(const FigRec *r, const FigPart *pt, uint32_t bk, const FigBatch *b,
+                                                  float (*t)[4], FigOut *out, int layer, const FigMap *m) {
+    const FigVtx *v = (const FigVtx *)(b + 1);
+    const uint32_t n = b->n;
+    const float us = m->us, vs = m->vs;
+    const float a0 = pt->l0[0], a1 = pt->l0[1], a2 = pt->l0[2], a3 = pt->l0[3];
+    const float b0 = pt->l1[0], b1 = pt->l1[1], b2 = pt->l1[2], b3 = pt->l1[3];
+    int ri = layer == 0 && sFold[bk] != 0xFF ? (int)sFold[bk] : -1;
+    uint32_t i;
+
+    corners_pos((const float (*)[4])t, out, n, m);
+    if (ri >= 0) { /* the first layer, the ramp's texel at the light's u (nearest) folded in */
+        const uint32_t *tab = tab_of(m, ri);
+        const float h = 0.5f * sRamp[ri].fn;
+        const int32_t top = (int32_t)sRamp[ri].n - 1;
+        for (i = 0; i < n; i++) {
+            const FigVtx *c = &v[i];
+            float la = a0 * c->nx + a1 * c->ny + a2 * c->nz + a3, lb = b0 * c->nx + b1 * c->ny + b2 * c->nz + b3;
+            int32_t x = (int32_t)((lb + (la - lb) * c->w) * h + h);
+            out[i].u = c->u * us;
+            out[i].v = c->v * vs;
+            out[i].argb = tab[x < 0 ? 0 : x > top ? top : x];
         }
-        o->u = u * m->us;
-        o->v = tt * m->vs;
-        if (ri >= 0) { /* (the ramp's texel at the light's u, nearest) */
-            float la = pt->l0[0] * v[i].nx + pt->l0[1] * v[i].ny + pt->l0[2] * v[i].nz + pt->l0[3];
-            float lb = pt->l1[0] * v[i].nx + pt->l1[1] * v[i].ny + pt->l1[2] * v[i].nz + pt->l1[3];
-            int32_t x = (int32_t)(((lb + (la - lb) * v[i].w) * 0.5f + 0.5f) * rn);
-            o->argb = tab[x < 0 ? 0 : x > top ? top : x];
-        } else {
-            o->argb = m->argb;
+    } else if (layer == 0) {
+        const uint32_t argb = m->argb;
+        for (i = 0; i < n; i++) {
+            out[i].u = v[i].u * us;
+            out[i].v = v[i].v * vs;
+            out[i].argb = argb;
+        }
+    } else if (r->prog == 0) { /* u = 0.5 + 0.5 (light on the normal, blended by the weight).x */
+        const uint32_t argb = m->argb;
+        const float hu = 0.5f * us;
+        for (i = 0; i < n; i++) {
+            const FigVtx *c = &v[i];
+            float la = a0 * c->nx + a1 * c->ny + a2 * c->nz + a3, lb = b0 * c->nx + b1 * c->ny + b2 * c->nz + b3;
+            out[i].u = (lb + (la - lb) * c->w) * hu + hu;
+            out[i].v = 0.0f;
+            out[i].argb = argb;
+        }
+    } else { /* program 1: (u, v) = 0.5 (1 + (light on the normal).xy) */
+        const uint32_t argb = m->argb;
+        const float hu = 0.5f * us, hv = 0.5f * vs;
+        for (i = 0; i < n; i++) {
+            const FigVtx *c = &v[i];
+            out[i].u = (a0 * c->nx + a1 * c->ny + a2 * c->nz + a3) * hu + hu;
+            out[i].v = (b0 * c->nx + b1 * c->ny + b2 * c->nz + b3) * hv + hv;
+            out[i].argb = argb;
         }
     }
 }
@@ -712,7 +734,7 @@ static void chunk_make(const FigRec *r, int pi, const uint16_t *ks, uint32_t nb,
         }
         s2 = Gs_NowNs(); /* TEMP */
         sSt[1] += s2 - s1;
-        corners_put(r, pt, pi, ks[k], b, t, &sOut[j], layer, m);
+        corners_put(r, pt, ks[k], b, t, &sOut[j], layer, m);
         s1 = Gs_NowNs(); /* TEMP */
         sSt[2] += s1 - s2;
         sSt[3] += Gs_NowNs() - s1;
