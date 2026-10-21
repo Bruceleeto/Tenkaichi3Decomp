@@ -34,7 +34,7 @@
 #endif
 #define DC_RAM_BASE 0x8C000000u
 #define KERNEL_STACK (64 * 1024)
-#define GAME_HEAP (0x02000000u - 0x003BE000u) /* plat_mem.c HEAP_END - HEAP_BASE */
+#define GAME_HEAP (0x01EFC000u - 0x003BE000u) /* plat_mem.c HEAP_END - HEAP_BASE (the Dreamcast's: as far as the game heap goes) */
 #define FILE_BYTES (1024 + 112) /* newlib: an open file's buffer (BUFSIZ) and its FILE */
 
 static uintptr_t sTop;           /* as a Dreamcast address */

@@ -223,7 +223,17 @@ $(EXE): $(OBJS) $(DATA)/.stamp port/tools/link_dc.py
 # again to convert them again
 HOSTCC ?= cc
 ASSETS := $(BUILD)/assets
-dc-assets: $(ASSETS)/tex.pak $(if $(filter 1,$(DC_MOVIE)),$(ASSETS)/ZS3USOP.mpg $(ASSETS)/ZS3USED.mpg)
+# the files whose 4- and 8-bit textures' pixels are left out (port/tools/dc_strip.c: the PVR draws them from tex.pak,
+# the game only reads their key), in mods/ (port/src/plat_file.c reads one there before the original): common data
+# 1 (id 3) and the battle's HUD textures of both languages (ids 6 and 7, battle_load.c); the game writes none of
+# their pixels
+DC_STRIP := 00002 00005 00006
+STRIPPED := $(DC_STRIP:%=$(ASSETS)/mods/pzs3us1/%.bin)
+dc-assets: $(ASSETS)/tex.pak $(STRIPPED) $(if $(filter 1,$(DC_MOVIE)),$(ASSETS)/ZS3USOP.mpg $(ASSETS)/ZS3USED.mpg)
+$(ASSETS)/mods/pzs3us1/%.bin: gamedata/pzs3us1/%.bin $(ASSETS)/tex.pak port/tools/dc_strip.c
+	mkdir -p $(dir $@)
+	$(HOSTCC) -O2 -o $(BUILD)/dc_strip port/tools/dc_strip.c
+	$(BUILD)/dc_strip $(ASSETS)/tex.pak $< $@
 # the movies as pl_mpeg plays them (port/tools/dc_movie.sh: MPEG-1, with ffmpeg)
 $(ASSETS)/%.mpg: gamedata/disc/DATA/%.PSS port/tools/dc_movie.sh
 	mkdir -p $(ASSETS)
@@ -236,7 +246,7 @@ $(ASSETS)/tex.pak: port/tools/dc_tex.c Makefile.dc
 # make -f Makefile.dc disc: the program and the data on a selfboot disc image (port/build/dc/disc/bt3.cdi, mkdcdisc),
 # as the game reads it from /cd (port/src/plat_file.c): partitions 0 and 1 as `make extract` wrote them
 # (pzs3usN/NNNNN.bin), the disc's loose data (disc/DATA, without the PS2 movies and their sound), the PVR's textures
-# (tex.pak) and the movies as pl_mpeg plays them (if made). No sound files (partition 2, 1.07 GB): there is no sound
+# (tex.pak), the files with their pixels left out (mods/) and the movies as pl_mpeg plays them (if made). No sound files (partition 2, 1.07 GB): there is no sound
 # output yet, and a stream lasts the original's length without its file (gs/snd_adx.c by_table). The files are
 # hard links into gamedata. About 2 GB, for Flycast. mkdcdisc copies the data to TMPDIR first (/tmp is often in
 # memory: here a folder of the build) and takes about 3.5 GB of memory itself; it is stopped past 4 GB. Needs
@@ -250,6 +260,7 @@ disc: $(EXE)
 	cp -al gamedata/pzs3us0 gamedata/pzs3us1 $(DISC_FS)/
 	for f in gamedata/disc/DATA/*; do case "$$f" in *.PSS|*.ADX) ;; *) ln "$$f" $(DISC_FS)/disc/DATA/ ;; esac; done
 	ln $(ASSETS)/tex.pak $(DISC_FS)/
+	mkdir -p $(DISC_FS)/mods/pzs3us1 && for f in $(wildcard $(ASSETS)/mods/pzs3us1/*.bin); do ln "$$f" $(DISC_FS)/mods/pzs3us1/; done
 	for f in $(wildcard $(ASSETS)/*.mpg); do ln "$$f" $(DISC_FS)/; done
 	ulimit -v 4194304 && TMPDIR=$(abspath $(DISC_DIR)/tmp) $(MKDCDISC) -e $(EXE) -D $(DISC_FS) -o $(DISC_DIR)/bt3.cdi -n "Budokai Tenkaichi 3" -N
 	rm -rf $(DISC_FS) $(DISC_DIR)/tmp

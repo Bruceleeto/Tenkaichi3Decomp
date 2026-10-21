@@ -1780,11 +1780,16 @@ static uint32_t pkt_sample(const uint8_t *p, uint32_t size) {
 /* The hash the converted ones are keyed by (port/tools/dc_tex.c): the upload packet's image data, its first
    width x height pixels. A palette of 32 bits (pal) leaves out the alpha of its first 16 colours: the game writes
    its objects' alpha table slots there (gfxm_e_b.c BtlObjMdl_InitAlphaSlots), and Port_PalNative puts the live
-   ones in. *img: where the image data starts. 0 = not such a packet. */
+   ones in. *img: where the image data starts. 0 = not such a packet. A packet the Dreamcast's data left the pixels
+   out of (port/tools/dc_strip.c: "DCKY" 1, then the key) is its key, and no palette. */
 static int pkt_key(const uint8_t *p, uint32_t size, uint32_t blt, uint64_t *key, int pal, const uint8_t **img) {
     uint32_t dpsm = (blt >> 8) & 63, bits = dpsm == 0 ? 32 : dpsm == 1 ? 24 : dpsm == 2 || dpsm == 0xA ? 16 : dpsm == 0x13 ? 8 : 4;
     uint32_t rw = 0, rh = 0, at = 0, want = 0, images = 0, i, skip = pal && dpsm == 0 ? 64 : 0;
     uint64_t h = 0xCBF29CE484222325ull;
+    if (size >= 32 && rd32(p) == 0x594B4344u && rd32(p + 4) == 1) { /* "DCKY" */
+        *key = (uint64_t)rd32(p + 8) | (uint64_t)rd32(p + 12) << 32;
+        return !pal;
+    }
     if (size >= 16 && (p[15] & 0x7F) == 0x50) { at = 16; } /* VIF DIRECT */
     while (at + 16 <= size) {
         uint64_t tag = (uint64_t)rd32(p + at) | (uint64_t)rd32(p + at + 4) << 32;
@@ -1910,12 +1915,27 @@ int Port_TexNative(void *e, int tbp) {
     extern void Port_MarkReg(uint32_t reg, uint64_t v); /* gs_marker.c */
     uint32_t blocks;
     NatTex *n;
-    if (!nat_on()) { return 0; }
+    const uint8_t *pkt = Port_Ptr(rd32((uint8_t *)e + 0x38));
+    /* a packet the Dreamcast's data left the pixels out of (port/tools/dc_strip.c) has nothing to upload: it is
+       native or it is a fault, its file or tex.pak to be made again */
+    int stub = rd32((uint8_t *)e + 8) >= 32 && rd32(pkt) == 0x594B4344u && rd32(pkt + 4) == 1;
+    if (!nat_on()) {
+        if (stub) {
+            fprintf(stderr, "bt3: texture entry %08X: its pixels are left out of the file (dc_strip) but textures are not native now\n", (unsigned)Port_Addr(e));
+            abort();
+        }
+        return 0;
+    }
     if ((n = nat_get(e)) == NULL || n->none) {
         static const char *const kWhy[] = {
             "a texture not in tex.pak (its entry's address)", "a texture of a format tex.pak does not have (its entry's address)",
             "a texture whose upload packet was not read (its entry's address)", "a texture of another size in tex.pak (its entry's address)",
             "a texture: no PVR memory for it (its entry's address)", "a texture: tex.pak could not be read (its entry's address)"};
+        if (stub) {
+            fprintf(stderr, "bt3: texture entry %08X: its pixels are left out of the file (dc_strip) but it is not native: %s\n", (unsigned)Port_Addr(e),
+                    n == NULL ? "no record for it (MAX_NAT)" : kWhy[n->why]);
+            abort();
+        }
         sNatMiss[3]++;
         Port_Lost(n == NULL ? "a texture: no record for it (MAX_NAT; its entry's address)" : kWhy[n->why], Port_Addr(e), __builtin_return_address(0));
         return 0;
